@@ -98,6 +98,8 @@ except ImportError:
             extra_cuda_cflags = ["-O3"] # O3 is not used
         else:
             extra_cuda_cflags = ["--use_fast_math", "-O3"] # O3 is not used
+        # Suppress GLM/Torch spammy warnings
+        extra_cuda_cflags += ["-diag-suppress", "20012,186"]
         sources = list(glob.glob(os.path.join(PATH, "csrc/*.cu"))) + list(
             glob.glob(os.path.join(PATH, "csrc/*.cpp"))
         )

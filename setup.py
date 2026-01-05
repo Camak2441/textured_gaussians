@@ -19,7 +19,7 @@ MAX_JOBS = os.getenv("MAX_JOBS")
 need_to_unset_max_jobs = False
 if not MAX_JOBS:
     need_to_unset_max_jobs = True
-    os.environ["MAX_JOBS"] = "10"
+    os.environ["MAX_JOBS"] = "5"
     print(f"Setting MAX_JOBS to {os.environ['MAX_JOBS']}")
 
 
@@ -107,7 +107,7 @@ def get_extensions():
 setup(
     name="textured_gaussians",
     version=__version__,
-    description=" Python package for differentiable rasterization of textured gaussians",
+    description="Python package for differentiable rasterization of textured gaussians",
     keywords="gaussian, splatting, cuda",
     url=URL,
     download_url=f"{URL}/archive/textured_gaussians-{__version__}.tar.gz",

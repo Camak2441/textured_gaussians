@@ -1,6 +1,9 @@
 name: textured_gaussians
 channels:
   - defaults
+  - nvidia
+  - conda-forge
+  - pytorch
 dependencies:
   - jpeg==9e=h5eee18b_3
   - cuda-cupti==12.4.127=0
@@ -67,6 +70,7 @@ dependencies:
   - libgomp==11.2.0=h1234567_1
   - tbb==2021.8.0=hdb19cb5_0
   - cuda-version==12.6=3
+  - cuda-nvcc==12.6
   - libuv==1.48.0=h5eee18b_0
   - libunistring==0.9.10=h27cfd23_0
   - ipykernel==6.29.5=pyh3099207_0
@@ -137,3 +141,12 @@ dependencies:
   - traitlets==5.14.3=pyhd8ed1ab_0
   - cuda-libraries==12.4.0=0
   - tzdata==2024b=h04d1e81_0
+  - imageio==2.37.2=py312h7040dfc_0
+  - matplotlib==3.10.0=py312h06a4308_0
+  - splines==0.3.3=pyhd8ed1ab_0
+  - tyro==0.9.1=pyhff2d567_0
+  - opencv==4.10.0=py312h907dce5_0
+  - tensorboard==2.20.0=py312h06a4308_0
+  - torchmetrics==1.8.2=py312h06a4308_0
+  - scikit-learn==1.7.2=py312h505adc9_0
+  - cuda-toolkit==12.4.0=0

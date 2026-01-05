@@ -628,7 +628,7 @@ class Runner:
             self.step = step
 
             if not cfg.disable_viewer:
-                while self.viewer.state.status == "paused":
+                while self.viewer.state == "paused":
                     time.sleep(0.01)
                 self.viewer.lock.acquire()
                 tic = time.time()
@@ -898,7 +898,7 @@ class Runner:
                     num_train_rays_per_step * num_train_steps_per_sec
                 )
                 # Update the viewer state.
-                self.viewer.state.num_train_rays_per_sec = num_train_rays_per_sec
+                # self.viewer.state.num_train_rays_per_sec = num_train_rays_per_sec
                 # Update the scene.
                 self.viewer.update(step, num_train_rays_per_step)
 
