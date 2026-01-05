@@ -1,0 +1,3 @@
+[submodule "textured_gaussians/cuda/csrc/third_party/glm"]
+	path = textured_gaussians/cuda/csrc/third_party/glm
+	url = https://github.com/icaven/glm
