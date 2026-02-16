@@ -21,6 +21,7 @@ from torch import Tensor
 from torch.utils.tensorboard import SummaryWriter
 from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
+from examples.texture_models import canonical_model_name, load_model
 from utils import (
     AppearanceOptModule,
     CameraOptModule,
@@ -31,7 +32,11 @@ from utils import (
     set_random_seed,
 )
 
-from textured_gaussians.rendering import rasterization_2dgs, rasterization_textured_gaussians
+from textured_gaussians.rendering import (
+    rasterization_2dgs,
+    rasterization_textured_gaussians,
+    rasterization_implicit_textured_gaussians,
+)
 from textured_gaussians.strategy import DefaultStrategy, MCMCStrategy
 
 
@@ -171,11 +176,14 @@ class Config:
     alpha_lambda: float = 1e-1
 
     # scale_loss
-    scale_loss: bool = False 
+    scale_loss: bool = False
     scale_lambda: float = 1e-1
-    
+
     # Model for splatting.
-    model_type: Literal["2dgs", "textured_gaussians"] = "2dgs"
+    model_type: Literal["2dgs", "textured_gaussians", "implicit_textured_gaussians"] = (
+        "2dgs"
+    )
+    texture_model: Optional[str] = None
 
     # Dump information to tensorboard every this steps
     tb_every: int = 100
@@ -183,17 +191,18 @@ class Config:
     tb_save_image: bool = False
 
     # Strategy for GS densification
-    strategy: Union[DefaultStrategy, MCMCStrategy] = field(
-        default_factory=MCMCStrategy
-    )
+    strategy: Union[DefaultStrategy, MCMCStrategy] = field(default_factory=MCMCStrategy)
 
     # Pretrained checkpoints
-    pretrained_path: str = None
+    pretrained_path: Optional[str] = None
 
     # textured gaussians
     texture_resolution: int = 50
     textured_rgb: bool = False
     textured_alpha: bool = False
+
+    mipmapped: bool = False
+    anisotropic: bool = False
 
     def adjust_steps(self, factor: float):
         self.eval_steps = [int(i * factor) for i in self.eval_steps]
@@ -215,8 +224,6 @@ class Config:
         else:
             assert_never(strategy)
 
-        
-
 
 def create_splats_with_optimizers(
     parser: Parser,
@@ -232,12 +239,16 @@ def create_splats_with_optimizers(
     batch_size: int = 1,
     feature_dim: Optional[int] = None,
     device: str = "cuda",
-) -> Tuple[torch.nn.ParameterDict, Dict[str, torch.optim.Optimizer]]:
+) -> Tuple[
+    torch.nn.ParameterDict, Dict[str, torch.optim.Optimizer], Optional[torch.nn.Module]
+]:
     if init_type == "sfm":
         points = torch.from_numpy(parser.points).float()
         rgbs = torch.from_numpy(parser.points_rgb / 255.0).float()
         if init_num_pts < points.shape[0]:
-            sampled_pts_idx = np.random.choice(points.shape[0], init_num_pts, replace=False)
+            sampled_pts_idx = np.random.choice(
+                points.shape[0], init_num_pts, replace=False
+            )
         else:
             sampled_pts_idx = np.arange(points.shape[0])
         # randomly sample points from the SfM points
@@ -247,7 +258,9 @@ def create_splats_with_optimizers(
         assert cfg.pretrained_path is not None
         ckpt = torch.load(cfg.pretrained_path)["splats"]
         if init_num_pts < ckpt["means"].shape[0]:
-            sampled_pts_idx = np.random.choice(ckpt["means"].shape[0], init_num_pts, replace=False)
+            sampled_pts_idx = np.random.choice(
+                ckpt["means"].shape[0], init_num_pts, replace=False
+            )
         else:
             sampled_pts_idx = np.arange(ckpt["means"].shape[0])
         points = ckpt["means"][sampled_pts_idx]
@@ -257,7 +270,7 @@ def create_splats_with_optimizers(
         rgbs = torch.rand((init_num_pts, 3))
     else:
         raise ValueError("Please specify a correct init_type: sfm or random")
-    
+
     if init_type == "pretrained":
         scales = ckpt["scales"][sampled_pts_idx]
         quats = ckpt["quats"][sampled_pts_idx]
@@ -283,8 +296,12 @@ def create_splats_with_optimizers(
     if feature_dim is None:
         # color is SH coefficients.
         if init_type == "pretrained":
-            params.append(("sh0", torch.nn.Parameter(ckpt["sh0"][sampled_pts_idx]), 2.5e-3))
-            params.append(("shN", torch.nn.Parameter(ckpt["shN"][sampled_pts_idx]), 2.5e-3 / 20))
+            params.append(
+                ("sh0", torch.nn.Parameter(ckpt["sh0"][sampled_pts_idx]), 2.5e-3)
+            )
+            params.append(
+                ("shN", torch.nn.Parameter(ckpt["shN"][sampled_pts_idx]), 2.5e-3 / 20)
+            )
         else:
             colors = torch.zeros((N, (sh_degree + 1) ** 2, 3))  # [N, K, 3]
             colors[:, 0, :] = rgb_to_sh(rgbs)
@@ -295,13 +312,21 @@ def create_splats_with_optimizers(
         features = torch.rand(N, feature_dim)  # [N, feature_dim]
         params.append(("features", torch.nn.Parameter(features), 2.5e-3))
         colors = torch.logit(rgbs)  # [N, 3]
-        params.append(("colors", torch.nn.Parameter(colors), 2.5e-3))  
+        params.append(("colors", torch.nn.Parameter(colors), 2.5e-3))
 
+    texture_model = None
     if cfg.model_type == "textured_gaussians":
-        textures = torch.ones(points.shape[0], cfg.texture_resolution, cfg.texture_resolution, 4)
-        textures[:, :, :, :3] = 0.1 # init color to low value
-        textures[:, :, :, 3] = 1.0 # init alpha to 1.0
+        textures = torch.ones(
+            points.shape[0], cfg.texture_resolution, cfg.texture_resolution, 4
+        )
+        textures[:, :, :, :3] = 0.1  # init color to low value
+        textures[:, :, :, 3] = 1.0  # init alpha to 1.0
         params.append(("textures", torch.nn.Parameter(textures), 2.5e-3))
+    elif cfg.model_type == "implicit_textured_gaussians":
+        texture_model_name = canonical_model_name(cfg.texture_model)
+        print(f"Loading model {texture_model_name}")
+        texture_model = load_model(texture_model_name)
+        texture_model.to(device)
 
     splats = torch.nn.ParameterDict({n: v for n, v, _ in params}).to(device)
     # Scale learning rate based on batch size, reference:
@@ -316,7 +341,7 @@ def create_splats_with_optimizers(
         )
         for name, _, lr in params
     }
-    return splats, optimizers
+    return splats, optimizers, texture_model
 
 
 class Runner:
@@ -327,7 +352,7 @@ class Runner:
 
         self.cfg = cfg
         self.device = "cuda"
-        self.step = 0 # current optimization step
+        self.step = 0  # current optimization step
 
         # Where to dump results.
         os.makedirs(cfg.result_dir, exist_ok=True)
@@ -365,33 +390,43 @@ class Runner:
                 bg_color = (255, 255, 255)
             else:
                 bg_color = (0, 0, 0)
-            self.trainset = BlenderDataset(data_dir=cfg.data_dir, split="train", bg_color=bg_color)
-            self.valset = BlenderDataset(data_dir=cfg.data_dir, split="val", bg_color=bg_color)
-            self.scene_scale = 1.0 # no scaling required
+            self.trainset = BlenderDataset(
+                data_dir=cfg.data_dir, split="train", bg_color=bg_color
+            )
+            self.valset = BlenderDataset(
+                data_dir=cfg.data_dir, split="val", bg_color=bg_color
+            )
+            self.scene_scale = 1.0  # no scaling required
         else:
             raise ValueError(f"Dataset mode {cfg.dataset} not supported!")
 
         # Model
         feature_dim = 32 if cfg.app_opt else None
-        self.splats, self.optimizers = create_splats_with_optimizers(
-            self.parser,
-            self.cfg,
-            init_type=cfg.init_type,
-            init_num_pts=cfg.init_num_pts,
-            init_extent=cfg.init_extent,
-            init_opacity=cfg.init_opa,
-            init_scale=cfg.init_scale,
-            scene_scale=self.scene_scale,
-            sh_degree=cfg.sh_degree,
-            sparse_grad=cfg.sparse_grad,
-            batch_size=cfg.batch_size,
-            feature_dim=feature_dim,
-            device=self.device,
+        self.splats, self.optimizers, self.texture_model = (
+            create_splats_with_optimizers(
+                self.parser,
+                self.cfg,
+                init_type=cfg.init_type,
+                init_num_pts=cfg.init_num_pts,
+                init_extent=cfg.init_extent,
+                init_opacity=cfg.init_opa,
+                init_scale=cfg.init_scale,
+                scene_scale=self.scene_scale,
+                sh_degree=cfg.sh_degree,
+                sparse_grad=cfg.sparse_grad,
+                batch_size=cfg.batch_size,
+                feature_dim=feature_dim,
+                device=self.device,
+            )
         )
         print("Model initialized. Number of GS:", len(self.splats["means"]))
         self.model_type = cfg.model_type
 
-        if self.model_type in ["2dgs", "textured_gaussians"]:
+        if self.model_type in [
+            "2dgs",
+            "textured_gaussians",
+            "implicit_textured_gaussians",
+        ]:
             key_for_gradient = "gradient_2dgs"
         else:
             key_for_gradient = "means2d"
@@ -414,6 +449,17 @@ class Runner:
         )
         self.strategy.check_sanity(self.splats, self.optimizers)
         self.strategy_state = self.cfg.strategy.initialize_state()
+
+        self.texture_optimizers = []
+        if self.texture_model is not None:
+            self.texture_optimizers = [
+                torch.optim.Adam(
+                    self.texture_model.parameters(),
+                    lr=2.5e-3 * math.sqrt(cfg.batch_size),
+                    eps=1e-15 / math.sqrt(cfg.batch_size),
+                    betas=(1 - cfg.batch_size * (1 - 0.9), 1 - cfg.batch_size * (1 - 0.999)),
+                )
+            ]
 
         self.pose_optimizers = []
         if cfg.pose_opt:
@@ -471,17 +517,143 @@ class Runner:
         # textures: [N, L, L, 4]
         textures = self.splats["textures"]
         if not self.cfg.textured_rgb:
-            rgb_textures = torch.zeros_like(textures[..., :3]) # [N, L, L, 3]
+            rgb_textures = torch.zeros_like(textures[..., :3])  # [N, L, L, 3]
         else:
-            rgb_textures = textures[..., :3] # [N, L, L, 3]
+            rgb_textures = textures[..., :3]  # [N, L, L, 3]
         if not self.cfg.textured_alpha:
-            alpha_textures = torch.ones_like(textures[..., 3:4]) # [N, L, L, 1]
+            alpha_textures = torch.ones_like(textures[..., 3:4])  # [N, L, L, 1]
         else:
-            alpha_textures = textures[..., 3:4] # [N, L, L, 1]
-            alpha_textures = alpha_textures / (alpha_textures.amax(dim=[1, 2], keepdim=True) + 1e-6) # normalize so that the max is 1
-        textures = torch.cat([rgb_textures, alpha_textures], dim=-1) # [N, L, L, 4]
+            alpha_textures = textures[..., 3:4]  # [N, L, L, 1]
+            alpha_textures = alpha_textures / (
+                alpha_textures.amax(dim=[1, 2], keepdim=True) + 1e-6
+            )  # normalize so that the max is 1
+        textures = torch.cat([rgb_textures, alpha_textures], dim=-1)  # [N, L, L, 4]
         textures = textures.clamp(0.0, 1.0)
         return textures
+
+    @torch.no_grad()
+    def render_textures(self, width: int, height: int) -> Optional[Tensor]:
+        """Render textures for all Gaussians.
+
+        Args:
+            width: Width to render each texture at.
+            height: Height to render each texture at.
+
+        Returns:
+            Tensor of shape [N, height, width, 4] (RGBA in [0, 1]), or None
+            if the model type has no textures.
+        """
+        if self.model_type == "textured_gaussians":
+            textures = self.get_textures()  # [N, L, L, 4]
+            textures = textures.permute(0, 3, 1, 2)  # [N, 4, L, L]
+            textures = F.interpolate(
+                textures, size=(height, width), mode="bilinear", align_corners=False
+            )
+            return textures.permute(0, 2, 3, 1)  # [N, height, width, 4]
+        elif self.model_type == "implicit_textured_gaussians":
+            N = len(self.splats["means"])
+            device = self.device
+            v_coords = torch.linspace(0, 1, height, device=device)
+            u_coords = torch.linspace(0, 1, width, device=device)
+            grid_v, grid_u = torch.meshgrid(v_coords, u_coords, indexing="ij")
+            uv_flat = torch.stack(
+                [grid_u.reshape(-1), grid_v.reshape(-1)], dim=-1
+            )  # [H*W, 2]
+
+            textures = torch.empty(N, height, width, 4, device=device)
+            batch_size = max(1, 1024 * 1024 // (height * width))
+            for start in range(0, N, batch_size):
+                end = min(start + batch_size, N)
+                B = end - start
+                g_indices = (
+                    torch.arange(start, end, device=device, dtype=torch.float32)
+                    / max(N - 1, 1)
+                )
+                g_coords = g_indices[:, None, None].expand(B, height * width, 1)
+                uv_expanded = uv_flat[None].expand(B, -1, -1)
+                inputs = torch.cat([g_coords, uv_expanded], dim=-1).reshape(
+                    B * height * width, 3
+                )
+                outputs = self.texture_model(inputs)
+                textures[start:end] = outputs.reshape(B, height, width, 4)
+            return textures
+        return None
+
+    @torch.no_grad()
+    def render_textures_video(self, width: int, height: int, step: int):
+        """Render all Gaussian textures into a video (RGB only).
+
+        Args:
+            width: Width to render each texture at.
+            height: Height to render each texture at.
+            step: Training step, used for the output filename.
+        """
+        if self.model_type not in (
+            "textured_gaussians",
+            "implicit_textured_gaussians",
+        ):
+            print("No textures to render for model type:", self.model_type)
+            return
+
+        print("Rendering texture video...")
+        N = len(self.splats["means"])
+        video_dir = f"{self.cfg.result_dir}/videos"
+        os.makedirs(video_dir, exist_ok=True)
+        video_path = f"{video_dir}/textures_{step}.mp4"
+        writer = imageio.get_writer(video_path, fps=30)
+
+        if self.model_type == "textured_gaussians":
+            all_textures = self.get_textures()  # [N, L, L, 4]
+            batch_size = 4096
+            for start in tqdm.trange(
+                0, N, batch_size, desc="Rendering texture video"
+            ):
+                end = min(start + batch_size, N)
+                batch = all_textures[start:end].permute(0, 3, 1, 2)  # [B, 4, L, L]
+                batch = F.interpolate(
+                    batch, size=(height, width), mode="bilinear", align_corners=False
+                )
+                batch = batch.permute(0, 2, 3, 1)  # [B, H, W, 4]
+                for j in range(end - start):
+                    frame = (
+                        (batch[j, :, :, :3].clamp(0, 1).cpu().numpy() * 255)
+                        .astype(np.uint8)
+                    )
+                    writer.append_data(frame)
+        elif self.model_type == "implicit_textured_gaussians":
+            device = self.device
+            v_coords = torch.linspace(0, 1, height, device=device)
+            u_coords = torch.linspace(0, 1, width, device=device)
+            grid_v, grid_u = torch.meshgrid(v_coords, u_coords, indexing="ij")
+            uv_flat = torch.stack(
+                [grid_u.reshape(-1), grid_v.reshape(-1)], dim=-1
+            )  # [H*W, 2]
+
+            batch_size = max(1, 1024 * 1024 // (height * width))
+            for start in tqdm.trange(
+                0, N, batch_size, desc="Rendering texture video"
+            ):
+                end = min(start + batch_size, N)
+                B = end - start
+                g_indices = (
+                    torch.arange(start, end, device=device, dtype=torch.float32)
+                    / max(N - 1, 1)
+                )
+                g_coords = g_indices[:, None, None].expand(B, height * width, 1)
+                uv_expanded = uv_flat[None].expand(B, -1, -1)
+                inputs = torch.cat([g_coords, uv_expanded], dim=-1).reshape(
+                    B * height * width, 3
+                )
+                outputs = self.texture_model(inputs).reshape(B, height, width, 4)
+                for j in range(B):
+                    frame = (
+                        (outputs[j, :, :, :3].clamp(0, 1).cpu().numpy() * 255)
+                        .astype(np.uint8)
+                    )
+                    writer.append_data(frame)
+
+        writer.close()
+        print(f"Texture video saved to {video_path}")
 
     def rasterize_splats(
         self,
@@ -497,8 +669,7 @@ class Runner:
         quats = self.splats["quats"]  # [N, 4]
         scales = torch.exp(self.splats["scales"])  # [N, 3]
 
-        opacities = torch.sigmoid(self.splats["opacities"]) # [N,]
-        
+        opacities = torch.sigmoid(self.splats["opacities"])  # [N,]
 
         image_ids = kwargs.pop("image_ids", None)
         if self.cfg.app_opt:
@@ -569,6 +740,33 @@ class Runner:
                 sparse_grad=self.cfg.sparse_grad,
                 **kwargs,
             )
+        elif self.model_type == "implicit_textured_gaussians":
+            (
+                render_colors,
+                render_alphas,
+                render_normals,
+                normals_from_depth,
+                render_distort,
+                render_median,
+                _,
+                _,
+                info,
+            ) = rasterization_implicit_textured_gaussians(
+                means=means,
+                quats=quats,
+                scales=scales,
+                opacities=opacities,
+                colors=colors,
+                textures=self.texture_model,
+                viewmats=torch.linalg.inv(camtoworlds),  # [C, 4, 4]
+                Ks=Ks,  # [C, 3, 3]
+                width=width,
+                height=height,
+                packed=self.cfg.packed,
+                absgrad=self.cfg.absgrad,
+                sparse_grad=self.cfg.sparse_grad,
+                **kwargs,
+            )
         return (
             render_colors,
             render_alphas,
@@ -591,7 +789,6 @@ class Runner:
 
         with open(f"{cfg.result_dir}/cfg.yml", "w") as f:
             yaml.dump(vars(cfg), f)
-
 
         max_steps = cfg.max_steps
         init_step = 0
@@ -650,7 +847,7 @@ class Runner:
                 points = data["points"].to(device)  # [1, M, 2]
                 depths_gt = data["depths"].to(device)  # [1, M]
             if cfg.alpha_loss:
-                alphas_gt = data["alpha"].to(device) # [1, H, W]
+                alphas_gt = data["alpha"].to(device)  # [1, H, W]
 
             height, width = pixels.shape[1:3]
 
@@ -688,13 +885,13 @@ class Runner:
                 image_ids=image_ids,
                 render_mode="RGB+ED" if cfg.depth_loss else "RGB+D",
                 distloss=self.cfg.dist_loss,
+                mipmapped=self.cfg.mipmapped,
             )
             if renders.shape[-1] == 4:
                 colors, depths = renders[..., 0:3], renders[..., 3:4]
             else:
                 colors, depths = renders, None
 
-            
             if cfg.background_mode is not None:
                 if cfg.background_mode == "random":
                     bkgd = torch.rand(1, 3, device=device)
@@ -704,7 +901,9 @@ class Runner:
                 elif cfg.background_mode == "black":
                     colors = colors + 0.0 * (1.0 - alphas)
                 else:
-                    raise ValueError(f"Background mode {cfg.background_mode} not supported!")
+                    raise ValueError(
+                        f"Background mode {cfg.background_mode} not supported!"
+                    )
 
             self.strategy.step_pre_backward(
                 params=self.splats,
@@ -762,9 +961,9 @@ class Runner:
                     curr_dist_lambda = 0.0
                 distloss = render_distort.mean()
                 loss += distloss * curr_dist_lambda
-            
+
             if cfg.alpha_loss:
-                alphas = alphas.squeeze(-1) # [1, H, W]
+                alphas = alphas.squeeze(-1)  # [1, H, W]
                 alpha_error = (alphas - alphas_gt).abs().mean()
                 alpha_loss = cfg.alpha_lambda * alpha_error
                 loss += alpha_loss
@@ -864,6 +1063,9 @@ class Runner:
             for optimizer in self.app_optimizers:
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
+            for optimizer in self.texture_optimizers:
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
             for scheduler in schedulers:
                 scheduler.step()
 
@@ -878,18 +1080,23 @@ class Runner:
                 print("Step: ", step, stats)
                 with open(f"{self.stats_dir}/train_step{step:04d}.json", "w") as f:
                     json.dump(stats, f)
-                torch.save(
-                    {
-                        "step": step,
-                        "splats": self.splats.state_dict(),
-                    },
-                    f"{self.ckpt_dir}/ckpt_{step}.pt",
-                )
+                ckpt_data = {
+                    "step": step,
+                    "splats": self.splats.state_dict(),
+                }
+                if self.texture_model is not None:
+                    ckpt_data["texture_model"] = self.texture_model.state_dict()
+                torch.save(ckpt_data, f"{self.ckpt_dir}/ckpt_{step}.pt")
 
             # eval the full set
             if step in [i - 1 for i in cfg.eval_steps] or step == max_steps - 1:
                 self.eval(step)
                 self.render_traj(step)
+                self.render_textures_video(
+                    width=cfg.texture_resolution,
+                    height=cfg.texture_resolution,
+                    step=step,
+                )
 
             if not cfg.disable_viewer:
                 self.viewer.lock.release()
@@ -953,10 +1160,11 @@ class Runner:
                 elif cfg.background_mode == "black":
                     colors = colors + 0.0 * (1.0 - alphas)
                 else:
-                    raise ValueError(f"Background mode {cfg.background_mode} not supported!")
+                    raise ValueError(
+                        f"Background mode {cfg.background_mode} not supported!"
+                    )
             colors = torch.clamp(colors, 0.0, 1.0)
 
-                
             torch.cuda.synchronize()
             ellipse_time += time.time() - tic
 
@@ -1060,21 +1268,29 @@ class Runner:
             camtoworlds = np.concatenate(
                 [
                     camtoworlds,
-                    np.repeat(np.array([[[0.0, 0.0, 0.0, 1.0]]]), len(camtoworlds), axis=0),
+                    np.repeat(
+                        np.array([[[0.0, 0.0, 0.0, 1.0]]]), len(camtoworlds), axis=0
+                    ),
                 ],
                 axis=1,
             )  # [N, 4, 4]
 
             camtoworlds = torch.from_numpy(camtoworlds).float().to(device)
-            K = torch.from_numpy(list(self.parser.Ks_dict.values())[0]).float().to(device)
+            K = (
+                torch.from_numpy(list(self.parser.Ks_dict.values())[0])
+                .float()
+                .to(device)
+            )
             width, height = list(self.parser.imsize_dict.values())[0]
         elif cfg.dataset == "blender":
-            camtoworlds = np.stack(self.trainset.camtoworlds) # [N, 4, 4]
+            camtoworlds = np.stack(self.trainset.camtoworlds)  # [N, 4, 4]
             camtoworlds = generate_interpolated_path(camtoworlds, 1)  # [N, 3, 4]
             camtoworlds = np.concatenate(
                 [
                     camtoworlds,
-                    np.repeat(np.array([[[0.0, 0.0, 0.0, 1.0]]]), len(camtoworlds), axis=0),
+                    np.repeat(
+                        np.array([[[0.0, 0.0, 0.0, 1.0]]]), len(camtoworlds), axis=0
+                    ),
                 ],
                 axis=1,
             )  # [N, 4, 4]
@@ -1148,8 +1364,15 @@ def main(cfg: Config):
         ckpt = torch.load(cfg.ckpt, map_location=runner.device)
         for k in runner.splats.keys():
             runner.splats[k].data = ckpt["splats"][k]
+        if runner.texture_model is not None and "texture_model" in ckpt:
+            runner.texture_model.load_state_dict(ckpt["texture_model"])
         runner.eval(step=ckpt["step"])
         runner.render_traj(step=ckpt["step"])
+        runner.render_textures_video(
+            width=cfg.texture_resolution,
+            height=cfg.texture_resolution,
+            step=ckpt["step"],
+        )
     else:
         runner.train()
 

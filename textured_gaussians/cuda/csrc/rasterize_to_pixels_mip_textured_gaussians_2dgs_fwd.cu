@@ -1,7 +1,7 @@
 #include "bindings.h"
 #include "helpers.cuh"
 #include "types.cuh"
-#include "filters/bilinear.cuh"
+#include "filters/mip.cuh"
 #include <cooperative_groups.h>
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
@@ -21,7 +21,7 @@ namespace gsplat
      *
      */
     template <uint32_t COLOR_DIM, typename S>
-    __global__ void rasterize_to_pixels_fwd_textured_gaussians_kernel(
+    __global__ void rasterize_to_pixels_fwd_mip_textured_gaussians_kernel(
         const uint32_t C,                                                       // number of cameras
         const uint32_t N,                                                       // number of gaussians
         const uint32_t n_isects,                                                // number of ray-primitive intersections.
@@ -287,29 +287,47 @@ namespace gsplat
                 const vec3<S> v_M = v_Ms_batch[t];
                 const vec3<S> w_M = w_Ms_batch[t];
 
-                // h_u and h_v are the homogeneous plane representations (they are contravariant to the points on the primitive plane)
-                const vec3<S> h_u = px * w_M - u_M;
-                const vec3<S> h_v = py * w_M - v_M;
+                // h_x and h_y are the homogeneous plane representations (they are contravariant to the points on the primitive plane)
+                const vec3<S> h_x = px * w_M - u_M;
+                const vec3<S> h_y = py * w_M - v_M;
 
-                const vec3<S> ray_cross = glm::cross(h_u, h_v);
-                if (ray_cross.z == 0.0)
+                const vec3<S> minh_x = h_x - (S)0.5f * w_M;
+                const vec3<S> maxh_x = h_x + (S)0.5f * w_M;
+                const vec3<S> minh_y = h_y - (S)0.5f * w_M;
+                const vec3<S> maxh_y = h_y + (S)0.5f * w_M;
+
+                const vec3<S> ray_cross = glm::cross(h_x, h_y);
+                if (ray_cross.z == 0.0f)
+                    continue;
+
+                const vec3<S> minxray_cross = glm::cross(minh_x, h_y);
+                const vec3<S> maxxray_cross = glm::cross(maxh_x, h_y);
+                const vec3<S> minyray_cross = glm::cross(h_x, minh_y);
+                const vec3<S> maxyray_cross = glm::cross(h_x, maxh_y);
+                if (minxray_cross.z == 0.0f || maxxray_cross.z == 0.0f || minyray_cross.z == 0.0f || maxyray_cross.z == 0.0f)
                     continue;
 
                 const vec2<S> s = vec2<S>(ray_cross.x / ray_cross.z, ray_cross.y / ray_cross.z);
 
-                // calculate texture coordinates and bilinear interpolation weights
-                int32_t ucoords[4];
-                int32_t vcoords[4];
-                S bilerp_weights[4];
-                int32_t valid_texture = compute_bilinear_coords_weights(s.x, s.y, texture_res_x, texture_res_y, ucoords, vcoords, bilerp_weights);
+                const vec2<S> dsdx = vec2<S>(maxxray_cross.x / maxxray_cross.z - minxray_cross.x / minxray_cross.z,
+                                             maxxray_cross.y / maxxray_cross.z - minxray_cross.y / minxray_cross.z);
+                const vec2<S> dsdy = vec2<S>(maxyray_cross.x / maxyray_cross.z - minyray_cross.x / minyray_cross.z,
+                                             maxyray_cross.y / maxyray_cross.z - minyray_cross.y / minyray_cross.z);
+
+                // calculate texture coordinates and trilinear interpolation weights
+                int32_t ucoords[8];
+                int32_t vcoords[8];
+                int32_t tcoords[8];
+                S trilerp_weights[8];
+                int32_t valid_texture = compute_trilinear_coords_weights(s.x, s.y, dsdx, dsdy, texture_res_x, texture_res_y, ucoords, vcoords, tcoords, trilerp_weights);
 
                 // calculate alpha texture scaling factor
                 S alpha_scaling_factor = 0.0f;
                 if (valid_texture > 0)
                 {
-                    for (uint32_t i = 0; i < 4; ++i)
+                    for (uint32_t i = 0; i < 8; ++i)
                     {
-                        alpha_scaling_factor += bilerp_weights[i] * textures[g][ucoords[i]][vcoords[i]][3];
+                        alpha_scaling_factor += trilerp_weights[i] * mip_sample(textures, g, 3, ucoords[i], vcoords[i], tcoords[i]);
                     }
                 }
                 else
@@ -357,9 +375,9 @@ namespace gsplat
                     auto tex_color = 0.0;
                     if (valid_texture > 0)
                     {
-                        for (uint32_t i = 0; i < 4; ++i)
+                        for (uint32_t i = 0; i < 8; ++i)
                         {
-                            tex_color += bilerp_weights[i] * textures[g][ucoords[i]][vcoords[i]][k];
+                            tex_color += trilerp_weights[i] * mip_sample(textures, g, k, ucoords[i], vcoords[i], tcoords[i]);
                         }
                     }
                     pix_out[k] += (base_color + tex_color) * vis;
@@ -541,7 +559,7 @@ namespace gsplat
         // channels into the kernel functions and avoid necessary global memory
         // writes. This requires moving the channel padding from python to C side.
         if (cudaFuncSetAttribute(
-                rasterize_to_pixels_fwd_textured_gaussians_kernel<CDIM, float>,
+                rasterize_to_pixels_fwd_mip_textured_gaussians_kernel<CDIM, float>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
                 shared_mem) != cudaSuccess)
         {
@@ -550,7 +568,7 @@ namespace gsplat
                 shared_mem,
                 " bytes), try lowering tile_size.");
         }
-        rasterize_to_pixels_fwd_textured_gaussians_kernel<CDIM, float>
+        rasterize_to_pixels_fwd_mip_textured_gaussians_kernel<CDIM, float>
             <<<blocks, threads, shared_mem, stream>>>(
                 C,
                 N,
@@ -605,7 +623,7 @@ namespace gsplat
         torch::Tensor,
         torch::Tensor,
         torch::Tensor>
-    rasterize_to_pixels_fwd_textured_gaussians_tensor(
+    rasterize_to_pixels_fwd_mip_textured_gaussians_tensor(
         // Gaussian parameters
         const torch::Tensor &means2d,                   // [C, N, 2] or [nnz, 2]
         const torch::Tensor &ray_transforms,            // [C, N, 3, 3] or [nnz, 3, 3]

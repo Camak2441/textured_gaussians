@@ -1,6 +1,7 @@
 #include "bindings.h"
 
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
+{
     py::enum_<gsplat::CameraModelType>(m, "CameraModelType")
         .value("PINHOLE", gsplat::CameraModelType::PINHOLE)
         .value("ORTHO", gsplat::CameraModelType::ORTHO)
@@ -12,12 +13,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
     m.def(
         "quat_scale_to_covar_preci_fwd",
-        &gsplat::quat_scale_to_covar_preci_fwd_tensor
-    );
+        &gsplat::quat_scale_to_covar_preci_fwd_tensor);
     m.def(
         "quat_scale_to_covar_preci_bwd",
-        &gsplat::quat_scale_to_covar_preci_bwd_tensor
-    );
+        &gsplat::quat_scale_to_covar_preci_bwd_tensor);
 
     m.def("proj_fwd", &gsplat::proj_fwd_tensor);
     m.def("proj_bwd", &gsplat::proj_bwd_tensor);
@@ -26,11 +25,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("world_to_cam_bwd", &gsplat::world_to_cam_bwd_tensor);
 
     m.def(
-        "fully_fused_projection_fwd", &gsplat::fully_fused_projection_fwd_tensor
-    );
+        "fully_fused_projection_fwd", &gsplat::fully_fused_projection_fwd_tensor);
     m.def(
-        "fully_fused_projection_bwd", &gsplat::fully_fused_projection_bwd_tensor
-    );
+        "fully_fused_projection_bwd", &gsplat::fully_fused_projection_bwd_tensor);
 
     m.def("isect_tiles", &gsplat::isect_tiles_tensor);
     m.def("isect_offset_encode", &gsplat::isect_offset_encode_tensor);
@@ -40,65 +37,77 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
     m.def(
         "rasterize_to_indices_in_range",
-        &gsplat::rasterize_to_indices_in_range_tensor
-    );
+        &gsplat::rasterize_to_indices_in_range_tensor);
 
     // packed version
     m.def(
         "fully_fused_projection_packed_fwd",
-        &gsplat::fully_fused_projection_packed_fwd_tensor
-    );
+        &gsplat::fully_fused_projection_packed_fwd_tensor);
     m.def(
         "fully_fused_projection_packed_bwd",
-        &gsplat::fully_fused_projection_packed_bwd_tensor
-    );
+        &gsplat::fully_fused_projection_packed_bwd_tensor);
 
     m.def("compute_relocation", &gsplat::compute_relocation_tensor);
 
     // 2DGS
     m.def(
         "fully_fused_projection_fwd_2dgs",
-        &gsplat::fully_fused_projection_fwd_2dgs_tensor
-    );
+        &gsplat::fully_fused_projection_fwd_2dgs_tensor);
     m.def(
         "fully_fused_projection_bwd_2dgs",
-        &gsplat::fully_fused_projection_bwd_2dgs_tensor
-    );
+        &gsplat::fully_fused_projection_bwd_2dgs_tensor);
 
     m.def(
         "fully_fused_projection_packed_fwd_2dgs",
-        &gsplat::fully_fused_projection_packed_fwd_2dgs_tensor
-    );
+        &gsplat::fully_fused_projection_packed_fwd_2dgs_tensor);
     m.def(
         "fully_fused_projection_packed_bwd_2dgs",
-        &gsplat::fully_fused_projection_packed_bwd_2dgs_tensor
-    );
+        &gsplat::fully_fused_projection_packed_bwd_2dgs_tensor);
+
+    m.def("selective_adam_update", &gsplat::selective_adam_update);
 
     m.def(
         "rasterize_to_pixels_fwd_2dgs",
-        &gsplat::rasterize_to_pixels_fwd_2dgs_tensor
-    );
+        &gsplat::rasterize_to_pixels_fwd_2dgs_tensor);
     m.def(
         "rasterize_to_pixels_bwd_2dgs",
-        &gsplat::rasterize_to_pixels_bwd_2dgs_tensor
-    );
-
-
-    m.def(
-        "rasterize_to_pixels_fwd_textured_gaussians",
-        &gsplat::rasterize_to_pixels_fwd_textured_gaussians_tensor
-    );
-
-    m.def(
-        "rasterize_to_pixels_bwd_textured_gaussians",
-        &gsplat::rasterize_to_pixels_bwd_textured_gaussians_tensor
-    );
-    
-
+        &gsplat::rasterize_to_pixels_bwd_2dgs_tensor);
     m.def(
         "rasterize_to_indices_in_range_2dgs",
-        &gsplat::rasterize_to_indices_in_range_2dgs_tensor
-    );
+        &gsplat::rasterize_to_indices_in_range_2dgs_tensor);
 
-    m.def("selective_adam_update", &gsplat::selective_adam_update);
+    // Textured Gaussians
+    m.def(
+        "rasterize_to_pixels_fwd_textured_gaussians",
+        &gsplat::rasterize_to_pixels_fwd_textured_gaussians_tensor);
+    m.def(
+        "rasterize_to_pixels_bwd_textured_gaussians",
+        &gsplat::rasterize_to_pixels_bwd_textured_gaussians_tensor);
+
+    // Mipmapped Textured Gaussians
+    m.def(
+        "rasterize_to_pixels_fwd_mip_textured_gaussians",
+        &gsplat::rasterize_to_pixels_fwd_mip_textured_gaussians_tensor);
+    m.def(
+        "rasterize_to_pixels_bwd_mip_textured_gaussians",
+        &gsplat::rasterize_to_pixels_bwd_mip_textured_gaussians_tensor);
+
+    // Anistroptic Textured Gaussians
+    m.def(
+        "rasterize_to_pixels_fwd_aniso_textured_gaussians",
+        &gsplat::rasterize_to_pixels_fwd_aniso_textured_gaussians_tensor);
+    m.def(
+        "rasterize_to_pixels_bwd_aniso_textured_gaussians",
+        &gsplat::rasterize_to_pixels_bwd_aniso_textured_gaussians_tensor);
+
+    // Implicit Textured Gaussians
+    m.def(
+        "rasterize_to_samples_fwd_textured_gaussians",
+        &gsplat::rasterize_to_samples_fwd_textured_gaussians_tensor);
+    m.def(
+        "rasterize_to_pixels_fwd_implicit_textured_gaussians",
+        &gsplat::rasterize_to_pixels_fwd_implicit_textured_gaussians_tensor);
+    m.def(
+        "rasterize_to_pixels_bwd_implicit_textured_gaussians",
+        &gsplat::rasterize_to_pixels_bwd_implicit_textured_gaussians_tensor);
 }
