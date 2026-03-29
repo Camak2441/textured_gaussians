@@ -24,16 +24,14 @@ namespace gsplat
         const uint32_t n_isects, // number of ray-primitive intersections.
         const bool packed,       // whether the input tensors are packed
         // fwd inputs
-        const vec2<S> *__restrict__ means2d,   // Projected Gaussian means. [C, N, 2] if packed is False, [nnz, 2] if packed is True.
-        const S *__restrict__ ray_transforms,  // transformation matrices that transforms xy-planes in pixel spaces into splat coordinates. [C, N, 3, 3] if packed is False, [nnz, channels] if packed is True.
-                                               // This is (KWH)^{-1} in the paper (takes screen [x,y] and map to [u,v])
-        const S *__restrict__ colors,          // [C, N, COLOR_DIM] or [nnz, COLOR_DIM]  // Gaussian colors or ND features.
-        const S *__restrict__ normals,         // [C, N, 3] or [nnz, 3]                  // The normals in camera space.
-        const S *__restrict__ opacities,       // [C, N] or [nnz]                        // Gaussian opacities that support per-view values.
-        int32_t *__restrict__ gaussian_counts, // [C, image_height, image_width]
-        const S *__restrict__ texture_outputs, // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM] // Gaussian textures or ND features.
-        const S *__restrict__ backgrounds,     // [C, COLOR_DIM]                         // Background colors on camera basis
-        const bool *__restrict__ masks,        // [C, tile_height, tile_width]           // Optional tile mask to skip rendering GS to masked tiles.
+        const vec2<S> *__restrict__ means2d,  // Projected Gaussian means. [C, N, 2] if packed is False, [nnz, 2] if packed is True.
+        const S *__restrict__ ray_transforms, // transformation matrices that transforms xy-planes in pixel spaces into splat coordinates. [C, N, 3, 3] if packed is False, [nnz, channels] if packed is True.
+                                              // This is (KWH)^{-1} in the paper (takes screen [x,y] and map to [u,v])
+        const S *__restrict__ colors,         // [C, N, COLOR_DIM] or [nnz, COLOR_DIM]  // Gaussian colors or ND features.
+        const S *__restrict__ normals,        // [C, N, 3] or [nnz, 3]                  // The normals in camera space.
+        const S *__restrict__ opacities,      // [C, N] or [nnz]                        // Gaussian opacities that support per-view values.
+        const S *__restrict__ backgrounds,    // [C, COLOR_DIM]                         // Background colors on camera basis
+        const bool *__restrict__ masks,       // [C, tile_height, tile_width]           // Optional tile mask to skip rendering GS to masked tiles.
 
         const uint32_t image_width,
         const uint32_t image_height,
@@ -43,7 +41,9 @@ namespace gsplat
         const int32_t *__restrict__ tile_offsets, // [C, tile_height, tile_width]
         const int32_t *__restrict__ flatten_ids,  // [n_isects]
 
-        const uint32_t sample_count,
+        int32_t *__restrict__ sample_counts,   // [C, image_height, image_width]
+        const S *__restrict__ texture_outputs, // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM] // Gaussian textures or ND features.
+        const uint32_t num_texture_samples,
 
         // fwd outputs
         const S *__restrict__ render_colors,    // [C, image_height, image_width,
@@ -83,18 +83,19 @@ namespace gsplat
         uint32_t j = block.group_index().z * tile_size + block.thread_index().x;
 
         tile_offsets += camera_id * tile_height * tile_width;
+        render_colors += camera_id * image_height * image_width * COLOR_DIM;
         render_alphas += camera_id * image_height * image_width;
 
         last_ids += camera_id * image_height * image_width;
         median_ids += camera_id * image_height * image_width;
-        texture_outputs += camera_id * image_height * image_width * sample_count * COLOR_DIM;
-        gaussian_counts += camera_id * image_height * image_width;
+        sample_counts += camera_id * image_height * image_width;
+        texture_outputs += camera_id * image_height * image_width * num_texture_samples * COLOR_DIM;
 
         v_render_colors += camera_id * image_height * image_width * COLOR_DIM;
         v_render_alphas += camera_id * image_height * image_width;
         v_render_normals += camera_id * image_height * image_width * 3;
         v_render_median += camera_id * image_height * image_width;
-        v_texture_outputs += camera_id * image_height * image_width * N * COLOR_DIM;
+        v_texture_outputs += camera_id * image_height * image_width * num_texture_samples * COLOR_DIM;
 
         if (backgrounds != nullptr)
         {
@@ -243,7 +244,7 @@ namespace gsplat
             // These values can be negative so must be int32 instead of uint32
 
             // loop factors:
-            // we start with loop end and interate backwards
+            // we start with loop end and iterate backwards
             const int32_t batch_end = range_end - 1 - block_size * b;
             const int32_t batch_size = min(block_size, batch_end + 1 - range_start);
 
@@ -319,7 +320,7 @@ namespace gsplat
                 vec3<S> ray_cross; // ray cross product, the ray of plane intersection, per pixel
                 vec3<S> w_M;       // depth component of the ray transform matrix, per pixel
                 S dist;
-                int32_t sample_num = 0;
+                int32_t sample_num = -1;
 
                 // texture coordinates and bilinear interpolation weights
                 int32_t valid_texture = -1;
@@ -361,14 +362,21 @@ namespace gsplat
                     if (dist <= 9.0)
                     {
                         valid_texture = 1;
-                        sample_num = gaussian_counts[pix_id];
-                        atomicAdd(gaussian_counts + pix_id, 1);
+                        sample_num = sample_counts[pix_id];
+                        if (sample_num < num_texture_samples)
+                        {
+                            atomicAdd(sample_counts + pix_id, 1);
+                        }
+                        else
+                        {
+                            sample_num = -1;
+                        }
                     }
 
                     // computer alpha scaling factor
-                    if (valid_texture > 0)
+                    if (valid_texture > 0 && sample_num >= 0)
                     {
-                        alpha_scaling_factor = texture_outputs[(pix_id * sample_count + sample_num) * COLOR_DIM + 3];
+                        alpha_scaling_factor = texture_outputs[(pix_id * num_texture_samples + sample_num) * COLOR_DIM + 3];
                     }
                     else
                     {
@@ -468,10 +476,10 @@ namespace gsplat
                     {
                         v_rgb_local[k] += fac * v_render_c[k];
 
-                        if (valid_texture > 0)
+                        if (valid_texture > 0 && sample_num >= 0)
                         {
-                            v_texture_outputs[(pix_id * sample_count + sample_num) * COLOR_DIM + k] += fac * v_render_c[k];
-                            tex_colors[k] += texture_outputs[(pix_id * sample_count + sample_num) * COLOR_DIM + k];
+                            v_texture_outputs[(pix_id * num_texture_samples + sample_num) * COLOR_DIM + k] += fac * v_render_c[k];
+                            tex_colors[k] += texture_outputs[(pix_id * num_texture_samples + sample_num) * COLOR_DIM + k];
                         }
                     }
 
@@ -482,7 +490,11 @@ namespace gsplat
                     for (uint32_t k = 0; k < COLOR_DIM; ++k)
                     {
                         auto base_color = rgbs_batch[t * COLOR_DIM + k];
-                        auto full_color = tex_colors[k] + base_color;
+                        auto full_color = base_color;
+                        if (valid_texture > 0 && sample_num >= 0)
+                        {
+                            full_color = tex_colors[k];
+                        }
                         v_alpha += (full_color * T - buffer[k] * ra) * v_render_c[k];
                     }
 
@@ -595,9 +607,9 @@ namespace gsplat
                         v_opacity_local = vis * v_alpha * alpha_scaling_factor;
 
                         // update alpha scaling factor gradients
-                        if (valid_texture > 0)
+                        if (valid_texture > 0 && sample_num >= 0)
                         {
-                            v_texture_outputs[(pix_id * sample_count + sample_num) * COLOR_DIM + 3] += vis * opac * v_alpha;
+                            v_texture_outputs[(pix_id * num_texture_samples + sample_num) * COLOR_DIM + 3] += vis * opac * v_alpha;
                         }
                     }
 
@@ -607,7 +619,7 @@ namespace gsplat
                     GSPLAT_PRAGMA_UNROLL
                     for (uint32_t k = 0; k < COLOR_DIM; ++k)
                     {
-                        buffer[k] += rgbs_batch[t * COLOR_DIM + k] * fac;
+                        buffer[k] += (tex_colors[k] + rgbs_batch[t * COLOR_DIM + k]) * fac;
                     }
 
                     /**
@@ -707,12 +719,11 @@ namespace gsplat
         torch::Tensor>
     call_kernel_with_dim(
         // Gaussian parameters
-        const torch::Tensor &means2d,         // [C, N, 2] or [nnz, 2]
-        const torch::Tensor &ray_transforms,  // [C, N, 3, 3] or [nnz, 3, 3]
-        const torch::Tensor &colors,          // [C, N, 3] or [nnz, 3]
-        const torch::Tensor &opacities,       // [C, N] or [nnz]
-        const torch::Tensor &texture_outputs, //
-        const torch::Tensor &normals,         // [C, N, 3] or [nnz, 3]
+        const torch::Tensor &means2d,        // [C, N, 2] or [nnz, 2]
+        const torch::Tensor &ray_transforms, // [C, N, 3, 3] or [nnz, 3, 3]
+        const torch::Tensor &colors,         // [C, N, 3] or [nnz, 3]
+        const torch::Tensor &opacities,      // [C, N] or [nnz]
+        const torch::Tensor &normals,        // [C, N, 3] or [nnz, 3]
         const torch::Tensor &densify,
         const at::optional<torch::Tensor> &backgrounds, // [C, 3]
         const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
@@ -724,7 +735,8 @@ namespace gsplat
         const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
         const torch::Tensor &flatten_ids,  // [n_isects]
 
-        const uint32_t sample_count,
+        const torch::Tensor &texture_outputs, //
+        const uint32_t num_texture_samples,
         // forward outputs
         const torch::Tensor
             &render_colors,                 // [C, image_height, image_width, COLOR_DIM]
@@ -783,7 +795,7 @@ namespace gsplat
         dim3 threads = {tile_size, tile_size, 1};
         dim3 blocks = {C, tile_height, tile_width};
 
-        torch::Tensor gaussian_counts = torch::zeros(
+        torch::Tensor sample_counts = torch::zeros(
             {C, image_height, image_width},
             means2d.options().dtype(torch::kInt32));
 
@@ -830,8 +842,6 @@ namespace gsplat
                     colors.data_ptr<float>(),
                     normals.data_ptr<float>(),
                     opacities.data_ptr<float>(),
-                    gaussian_counts.data_ptr<int32_t>(),
-                    texture_outputs.data_ptr<float>(),
                     backgrounds.has_value() ? backgrounds.value().data_ptr<float>()
                                             : nullptr,
                     masks.has_value() ? masks.value().data_ptr<bool>() : nullptr,
@@ -842,7 +852,9 @@ namespace gsplat
                     tile_height,
                     tile_offsets.data_ptr<int32_t>(),
                     flatten_ids.data_ptr<int32_t>(),
-                    sample_count,
+                    sample_counts.data_ptr<int32_t>(),
+                    texture_outputs.data_ptr<float>(),
+                    num_texture_samples,
                     render_colors.data_ptr<float>(),
                     render_alphas.data_ptr<float>(),
                     last_ids.data_ptr<int32_t>(),
@@ -886,12 +898,11 @@ namespace gsplat
         torch::Tensor>
     rasterize_to_pixels_bwd_implicit_textured_gaussians_tensor(
         // Gaussian parameters
-        const torch::Tensor &means2d,         // [C, N, 2] or [nnz, 2]
-        const torch::Tensor &ray_transforms,  // [C, N, 3, 3] or [nnz, 3, 3]
-        const torch::Tensor &colors,          // [C, N, 3] or [nnz, 3]
-        const torch::Tensor &opacities,       // [C, N] or [nnz]
-        const torch::Tensor &texture_outputs, //
-        const torch::Tensor &normals,         // [C, N, 3] or [nnz, 3]
+        const torch::Tensor &means2d,        // [C, N, 2] or [nnz, 2]
+        const torch::Tensor &ray_transforms, // [C, N, 3, 3] or [nnz, 3, 3]
+        const torch::Tensor &colors,         // [C, N, 3] or [nnz, 3]
+        const torch::Tensor &opacities,      // [C, N] or [nnz]
+        const torch::Tensor &normals,        // [C, N, 3] or [nnz, 3]
         const torch::Tensor &densify,
         const at::optional<torch::Tensor> &backgrounds, // [C, 3]
         const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
@@ -903,7 +914,8 @@ namespace gsplat
         const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
         const torch::Tensor &flatten_ids,  // [n_isects]
 
-        const uint32_t sample_count,
+        const torch::Tensor &texture_outputs, //
+        const uint32_t num_texture_samples,
         // forward outputs
         const torch::Tensor
             &render_colors,                 // [C, image_height, image_width, COLOR_DIM]
@@ -930,7 +942,6 @@ namespace gsplat
             ray_transforms,             \
             colors,                     \
             opacities,                  \
-            texture_outputs,            \
             normals,                    \
             densify,                    \
             backgrounds,                \
@@ -940,7 +951,8 @@ namespace gsplat
             tile_size,                  \
             tile_offsets,               \
             flatten_ids,                \
-            sample_count,               \
+            texture_outputs,            \
+            num_texture_samples,        \
             render_colors,              \
             render_alphas,              \
             last_ids,                   \
@@ -959,20 +971,20 @@ namespace gsplat
             __GS__CALL_(3)
             __GS__CALL_(4)
             __GS__CALL_(5)
-            __GS__CALL_(8)
-            __GS__CALL_(9)
-            __GS__CALL_(16)
-            __GS__CALL_(17)
-            __GS__CALL_(32)
-            __GS__CALL_(33)
-            __GS__CALL_(64)
-            __GS__CALL_(65)
-            __GS__CALL_(128)
-            __GS__CALL_(129)
-            __GS__CALL_(256)
-            __GS__CALL_(257)
-            __GS__CALL_(512)
-            __GS__CALL_(513)
+            // __GS__CALL_(8)
+            // __GS__CALL_(9)
+            // __GS__CALL_(16)
+            // __GS__CALL_(17)
+            // __GS__CALL_(32)
+            // __GS__CALL_(33)
+            // __GS__CALL_(64)
+            // __GS__CALL_(65)
+            // __GS__CALL_(128)
+            // __GS__CALL_(129)
+            // __GS__CALL_(256)
+            // __GS__CALL_(257)
+            // __GS__CALL_(512)
+            // __GS__CALL_(513)
         default:
             AT_ERROR("Unsupported number of channels: ", COLOR_DIM);
         }

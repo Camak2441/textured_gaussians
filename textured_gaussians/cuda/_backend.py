@@ -48,8 +48,9 @@ def load_extension(
             extra_include_paths=extra_include_paths,
             build_directory=build_directory,
         )
-    except OSError:
+    except OSError as e:
         # The module should be already compiled
+        print(f"OSError {e}")
         return _import_module_from_library(name, build_directory, True)
 
 
@@ -95,14 +96,21 @@ except ImportError:
         extra_cflags = ["-O3"]
         # extra_cuda_cflags=["-G", "-lineinfo"]
         if NO_FAST_MATH:
-            extra_cuda_cflags = ["-O3"] # O3 is not used
+            extra_cuda_cflags = ["-O3"]  # O3 is not used
         else:
-            extra_cuda_cflags = ["--use_fast_math", "-O3"] # O3 is not used
+            extra_cuda_cflags = ["--use_fast_math", "-O3"]  # O3 is not used
         # Suppress GLM/Torch spammy warnings
         extra_cuda_cflags += ["-diag-suppress", "20012,186"]
-        sources = list(glob.glob(os.path.join(PATH, "csrc/*.cu"))) + list(
-            glob.glob(os.path.join(PATH, "csrc/*.cpp"))
+        sources = list(
+            glob.glob(os.path.join(PATH, "csrc/**/*.cu"), recursive=True)
+        ) + list(glob.glob(os.path.join(PATH, "csrc/**/*.cpp"), recursive=True))
+        third_party_sources = list(
+            glob.glob(os.path.join(PATH, "csrc/third_party/**/*.cu"), recursive=True)
+        ) + list(
+            glob.glob(os.path.join(PATH, "csrc/third_party/**/*.cpp"), recursive=True)
         )
+
+        sources = [path for path in sources if path not in third_party_sources]
 
         # If JIT is interrupted it might leave a lock in the build directory.
         # We dont want it to exist in any case.
@@ -111,10 +119,18 @@ except ImportError:
         except OSError:
             pass
 
+        so_path = os.path.join(build_dir, "gsplat_cuda.so")
+        lib_path = os.path.join(build_dir, "gsplat_cuda.lib")
+        built_path = (
+            so_path
+            if os.path.exists(so_path)
+            else lib_path if os.path.exists(lib_path) else None
+        )
+
         if os.path.exists(os.path.join(build_dir, "gsplat_cuda.so")) or os.path.exists(
             os.path.join(build_dir, "gsplat_cuda.lib")
         ):
-            print("build exists")
+            print(f"build exists in {build_dir}")
             # If the build exists, we assume the extension has been built
             # and we can load it.
             _C = load_extension(

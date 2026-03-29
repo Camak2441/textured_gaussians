@@ -43,11 +43,12 @@ namespace gsplat
         const int32_t *__restrict__ tile_offsets, // [C, tile_height, tile_width]    // Intersection offsets outputs from `isect_offset_encode()`, this is the result of a prefix sum, and
                                                   // gives the interval that our gaussians are gonna use.
         const int32_t *__restrict__ flatten_ids,  // [n_isects]                      // The global flatten indices in [C * N] or [nnz] from  `isect_tiles()`.
-        const uint32_t sample_count,
+        const uint32_t num_texture_samples,
 
         // outputs
-        int32_t *__restrict__ gaussian_count, // [C, image_height, image_width]
-        S *__restrict__ texture_inputs        // [C, image_height, image_width, samples, 3] // Stores the per-pixel gaussian samnples
+        int32_t *__restrict__ sample_counts,       // [C, image_height, image_width]
+        int32_t *__restrict__ sample_gaussian_ids, // [C, image_height, image_width]
+        S *__restrict__ texture_inputs             // [C, image_height, image_width, num_texture_samples, 3] // Stores the per-pixel gaussian samnples
         // Good chance will have to cap the number of gaussians which can contribute to the per-pixel colours because I think this matrix might be too large
     )
     {
@@ -73,8 +74,9 @@ namespace gsplat
         // printf("texture resolution: %d, %d\n", texture_res_x, texture_res_y);
 
         tile_offsets += camera_id * tile_height * tile_width; // get the global offset of the tile w.r.t the camera
-        gaussian_count += camera_id * image_height * image_width;
-        texture_inputs += camera_id * image_height * image_width * N * COLOR_DIM;
+        sample_counts += camera_id * image_height * image_width;
+        sample_gaussian_ids += camera_id * image_height * image_width;
+        texture_inputs += camera_id * image_height * image_width * num_texture_samples * 3;
 
         // get the global offset of the background and mask
         if (backgrounds != nullptr)
@@ -182,16 +184,20 @@ namespace gsplat
                 break;
             }
 
-            // each thread fetch 1 gaussian from front to back
-            // index of gaussian to load
-            uint32_t batch_start = range_start + block_size * b;
-            uint32_t idx = batch_start + tr;
+            const int32_t batch_end = range_end - 1 - block_size * b;
+            const int32_t batch_size = min(block_size, batch_end + 1 - range_start);
+
+            // VERY IMPORTANT HERE!
+            // we are looping from back to front
+            // so we are processing the gaussians in the order of closest to furthest
+            // if you use symbolic solver on splatting rendering equations you will see
+            const int32_t idx = batch_end - tr;
 
             // only threads within the range of the tile will fetch gaussians
             /**
              * Launch this block with each thread responsible for one gaussian.
              */
-            if (idx < range_end)
+            if (idx >= range_start)
             {
                 int32_t g = flatten_ids[idx]; // flatten index in [C * N] or [nnz]
                 id_batch[tr] = g;
@@ -254,7 +260,7 @@ namespace gsplat
              * Note: in some cases, we use the minimum of ray-intersection kernels and 2D projected gaussian kernels
              */
             // process gaussians in the current batch for this pixel
-            uint32_t batch_size = min(block_size, range_end - batch_start);
+
             for (uint32_t t = 0; (t < batch_size) && !done; ++t)
             {
                 int32_t g = id_batch[t]; // id of the gaussian currently being rendered
@@ -284,21 +290,28 @@ namespace gsplat
 
                 if (valid_texture > 0)
                 {
-                    const vec3<S> world_coord = vec3<S>(g / (N - 1.0), s.x / 6.0 + 0.5, s.y / 6.0 + 0.5);
+                    const vec3<S> texture_input = vec3<S>(g / (N - 1.0), s.x / 6.0 + 0.5, s.y / 6.0 + 0.5);
 
-                    const int sample = gaussian_count[pix_id];
-                    atomicAdd(gaussian_count + pix_id, 1);
+                    const int sample = sample_counts[pix_id] >> 1;
 
-                    texture_inputs[(pix_id * sample_count + sample) * 3] = world_coord[0];
-                    texture_inputs[(pix_id * sample_count + sample) * 3 + 1] = world_coord[1];
-                    texture_inputs[(pix_id * sample_count + sample) * 3 + 2] = world_coord[2];
+                    if (sample < num_texture_samples)
+                    {
+                        atomicAdd(sample_counts + pix_id, 2);
+                        sample_gaussian_ids[pix_id] = g;
+                        texture_inputs[(pix_id * num_texture_samples + sample) * 3] = texture_input[0];
+                        texture_inputs[(pix_id * num_texture_samples + sample) * 3 + 1] = texture_input[1];
+                        texture_inputs[(pix_id * num_texture_samples + sample) * 3 + 2] = texture_input[2];
+                    }
                 }
             }
         }
     }
 
     template <uint32_t CDIM>
-    torch::Tensor
+    std::tuple<
+        torch::Tensor,
+        torch::Tensor,
+        torch::Tensor>
     call_kernel_with_dim(
         // Gaussian parameters
         const torch::Tensor &means2d,                   // [C, N, 2] or [nnz, 2]
@@ -316,7 +329,7 @@ namespace gsplat
         const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
         const torch::Tensor &flatten_ids,  // [n_isects]
 
-        const uint32_t sample_count)
+        const uint32_t num_texture_samples)
     {
         GSPLAT_DEVICE_GUARD(means2d);
         GSPLAT_CHECK_INPUT(means2d);
@@ -349,11 +362,14 @@ namespace gsplat
         dim3 threads = {tile_size, tile_size, 1};
         dim3 blocks = {C, tile_height, tile_width};
 
-        torch::Tensor gaussian_counts = torch::zeros(
+        torch::Tensor sample_counts = torch::ones(
             {C, image_height, image_width},
             means2d.options().dtype(torch::kInt32));
+        torch::Tensor sample_gaussian_ids = torch::full(
+            {C, image_height, image_width}, -1,
+            means2d.options().dtype(torch::kInt32));
         torch::Tensor texture_inputs = torch::zeros(
-            {C, image_height, image_width, sample_count, 3},
+            {C, image_height, image_width, num_texture_samples, 3},
             means2d.options().dtype(torch::kFloat32));
 
         at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
@@ -397,15 +413,22 @@ namespace gsplat
                 tile_offsets.data_ptr<int32_t>(),
                 flatten_ids.data_ptr<int32_t>(),
 
-                sample_count,
+                num_texture_samples,
 
-                gaussian_counts.data_ptr<int32_t>(),
+                sample_counts.data_ptr<int32_t>(),
+                sample_gaussian_ids.data_ptr<int32_t>(),
                 texture_inputs.data_ptr<float>());
 
-        return texture_inputs;
+        return std::make_tuple(
+            sample_counts,
+            sample_gaussian_ids,
+            texture_inputs);
     }
 
-    torch::Tensor
+    std::tuple<
+        torch::Tensor,
+        torch::Tensor,
+        torch::Tensor>
     rasterize_to_samples_fwd_textured_gaussians_tensor(
         // Gaussian parameters
         const torch::Tensor &means2d,                   // [C, N, 2] or [nnz, 2]
@@ -422,7 +445,7 @@ namespace gsplat
         // intersections
         const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
         const torch::Tensor &flatten_ids,  // [n_isects]
-        const uint32_t sample_count)
+        const uint32_t num_texture_samples)
     {
         GSPLAT_CHECK_INPUT(colors);
         uint32_t channels = colors.size(-1);
@@ -442,7 +465,7 @@ namespace gsplat
             tile_size,                  \
             tile_offsets,               \
             flatten_ids,                \
-            sample_count);
+            num_texture_samples);
         // TODO: an optimization can be done by passing the actual number of
         // channels into the kernel functions and avoid necessary global memory
         // writes. This requires moving the channel padding from python to C side.
@@ -453,20 +476,20 @@ namespace gsplat
             __GS__CALL_(3)
             __GS__CALL_(4)
             __GS__CALL_(5)
-            __GS__CALL_(8)
-            __GS__CALL_(9)
-            __GS__CALL_(16)
-            __GS__CALL_(17)
-            __GS__CALL_(32)
-            __GS__CALL_(33)
-            __GS__CALL_(64)
-            __GS__CALL_(65)
-            __GS__CALL_(128)
-            __GS__CALL_(129)
-            __GS__CALL_(256)
-            __GS__CALL_(257)
-            __GS__CALL_(512)
-            __GS__CALL_(513)
+            // __GS__CALL_(8)
+            // __GS__CALL_(9)
+            // __GS__CALL_(16)
+            // __GS__CALL_(17)
+            // __GS__CALL_(32)
+            // __GS__CALL_(33)
+            // __GS__CALL_(64)
+            // __GS__CALL_(65)
+            // __GS__CALL_(128)
+            // __GS__CALL_(129)
+            // __GS__CALL_(256)
+            // __GS__CALL_(257)
+            // __GS__CALL_(512)
+            // __GS__CALL_(513)
         default:
             AT_ERROR("Unsupported number of channels: ", channels);
         }

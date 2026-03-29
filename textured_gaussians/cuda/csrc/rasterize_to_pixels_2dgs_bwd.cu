@@ -75,6 +75,7 @@ namespace gsplat
         uint32_t j = block.group_index().z * tile_size + block.thread_index().x;
 
         tile_offsets += camera_id * tile_height * tile_width;
+        render_colors += camera_id * image_height * image_width;
         render_alphas += camera_id * image_height * image_width;
 
         last_ids += camera_id * image_height * image_width;
@@ -880,20 +881,20 @@ namespace gsplat
             __GS__CALL_(3)
             __GS__CALL_(4)
             __GS__CALL_(5)
-            __GS__CALL_(8)
-            __GS__CALL_(9)
-            __GS__CALL_(16)
-            __GS__CALL_(17)
-            __GS__CALL_(32)
-            __GS__CALL_(33)
-            __GS__CALL_(64)
-            __GS__CALL_(65)
-            __GS__CALL_(128)
-            __GS__CALL_(129)
-            __GS__CALL_(256)
-            __GS__CALL_(257)
-            __GS__CALL_(512)
-            __GS__CALL_(513)
+            // __GS__CALL_(8)
+            // __GS__CALL_(9)
+            // __GS__CALL_(16)
+            // __GS__CALL_(17)
+            // __GS__CALL_(32)
+            // __GS__CALL_(33)
+            // __GS__CALL_(64)
+            // __GS__CALL_(65)
+            // __GS__CALL_(128)
+            // __GS__CALL_(129)
+            // __GS__CALL_(256)
+            // __GS__CALL_(257)
+            // __GS__CALL_(512)
+            // __GS__CALL_(513)
         default:
             AT_ERROR("Unsupported number of channels: ", COLOR_DIM);
         }

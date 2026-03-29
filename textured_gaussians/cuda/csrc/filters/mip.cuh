@@ -20,8 +20,8 @@ namespace gsplat
     {
         // Map s_x, s_y in [-3, 3] to texture coordinates
 
-        vec2<T> duvdx = vec2<T>((T)(dsdx.x / 6.0f * (texture_res_x - 1) / 2.0f), (T)(dsdx.y / 6.0f * (texture_res_y - 1) / 2.0f));
-        vec2<T> duvdy = vec2<T>((T)(dsdy.x / 6.0f * (texture_res_x - 1) / 2.0f), (T)(dsdy.y / 6.0f * (texture_res_y - 1) / 2.0f));
+        vec2<T> duvdx = vec2<T>((T)(dsdx.x / 6.0f * (texture_res_x - 1)), (T)(dsdx.y / 6.0f * (texture_res_y - 1)));
+        vec2<T> duvdy = vec2<T>((T)(dsdy.x / 6.0f * (texture_res_x - 1)), (T)(dsdy.y / 6.0f * (texture_res_y - 1)));
         T duv = (T)max(glm::length(duvdx), glm::length(duvdy));
         T t = (T)log2(duv);
         if (t < 0)

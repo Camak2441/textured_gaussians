@@ -97,7 +97,7 @@ namespace gsplat
     template <typename T>
     inline __device__ vec2<T> convert_s_to_uv(vec2<T> s, int texture_res_x, int texture_res_y)
     {
-        return vec2<T>((T)((s.x + 3.0f) / 6.0f * (texture_res_x - 1) / 2.0f), (T)((s.y + 3.0f) / 6.0f * (texture_res_y - 1) / 2.0f));
+        return vec2<T>((T)((s.x + 3.0f) / 6.0f * (texture_res_x - 1)), (T)((s.y + 3.0f) / 6.0f * (texture_res_y - 1)));
     }
 
     template <typename T>
