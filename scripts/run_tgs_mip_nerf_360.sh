@@ -1,0 +1,9 @@
+bash run_tgs.sh bicycle
+bash run_tgs.sh bonsai
+bash run_tgs.sh counter
+bash run_tgs.sh flowers
+bash run_tgs.sh garden
+bash run_tgs.sh kitchen
+bash run_tgs.sh room
+bash run_tgs.sh stump
+bash run_tgs.sh treehill

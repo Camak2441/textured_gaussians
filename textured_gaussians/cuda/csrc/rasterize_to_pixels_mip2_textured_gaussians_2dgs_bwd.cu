@@ -1,7 +1,7 @@
 #include "bindings.h"
 #include "helpers.cuh"
 #include "types.cuh"
-#include "filters/dct.cuh"
+#include "filters/mip2.cuh"
 #include <cooperative_groups.h>
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
@@ -17,7 +17,7 @@ namespace gsplat
      * Rasterization to Pixels Backward Pass Textured Gaussians
      ****************************************************************************/
     template <uint32_t COLOR_DIM, typename S>
-    __global__ void rasterize_to_pixels_bwd_dct_textured_gaussians_kernel(
+    __global__ void rasterize_to_pixels_bwd_mip2_textured_gaussians_kernel(
         const uint32_t C,        // number of cameras
         const uint32_t N,        // number of gaussians
         const uint32_t n_isects, // number of ray-primitive intersections.
@@ -29,9 +29,10 @@ namespace gsplat
         const S *__restrict__ colors,                                           // [C, N, COLOR_DIM] or [nnz, COLOR_DIM]  // Gaussian colors or ND features.
         const S *__restrict__ normals,                                          // [C, N, 3] or [nnz, 3]                  // The normals in camera space.
         const S *__restrict__ opacities,                                        // [C, N] or [nnz]                        // Gaussian opacities that support per-view values.
-        at::PackedTensorAccessor32<const S, 4, at::RestrictPtrTraits> textures, // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM] // Gaussian textures or ND features.
-        const S *__restrict__ backgrounds,                                      // [C, COLOR_DIM]                         // Background colors on camera basis
-        const bool *__restrict__ masks,                                         // [C, tile_height, tile_width]           // Optional tile mask to skip rendering GS to masked tiles.
+        at::PackedTensorAccessor32<const S, 3, at::RestrictPtrTraits> textures, // [N, total_mip_texels, channels] flat mip pyramid
+        const uint32_t log_texture_res,
+        const S *__restrict__ backgrounds, // [C, COLOR_DIM]                         // Background colors on camera basis
+        const bool *__restrict__ masks,    // [C, tile_height, tile_width]           // Optional tile mask to skip rendering GS to masked tiles.
 
         const uint32_t image_width,
         const uint32_t image_height,
@@ -62,7 +63,7 @@ namespace gsplat
         S *__restrict__ v_ray_transforms,                                   // [C, N, 3, 3] or [nnz, 3, 3]
         S *__restrict__ v_colors,                                           // [C, N, COLOR_DIM] or [nnz, COLOR_DIM]
         S *__restrict__ v_opacities,                                        // [C, N] or [nnz]
-        at::PackedTensorAccessor32<S, 4, at::RestrictPtrTraits> v_textures, // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM]
+        at::PackedTensorAccessor32<S, 3, at::RestrictPtrTraits> v_textures, // [N, total_mip_texels, channels] flat mip pyramid
         S *__restrict__ v_normals,                                          // [C, N, 3] or [nnz, 3]
         S *__restrict__ v_densify)
     {
@@ -78,8 +79,7 @@ namespace gsplat
         uint32_t i = block.group_index().y * tile_size + block.thread_index().y;
         uint32_t j = block.group_index().z * tile_size + block.thread_index().x;
 
-        uint32_t texture_res_y = textures.size(1);
-        uint32_t texture_res_x = textures.size(2);
+        uint32_t texture_res = 1 << log_texture_res;
 
         tile_offsets += camera_id * tile_height * tile_width;
         render_colors += camera_id * image_height * image_width * COLOR_DIM;
@@ -317,12 +317,12 @@ namespace gsplat
                 vec3<S> w_M;       // depth component of the ray transform matrix, per pixel
 
                 // texture coordinates and bilinear interpolation weights
-                S u;
-                S v;
+                uint32_t mipcoords[8];
+                S trilerp_weights[8];
                 int32_t valid_texture = -1;
 
                 // alpha scaling factor
-                S alpha_scaling_factor = 0.0f;
+                S alpha_scaling_factor = (S)0.0f;
 
                 /**
                  * ==================================================
@@ -343,30 +343,41 @@ namespace gsplat
                     h_u = px * w_M - u_M;
                     h_v = py * w_M - v_M;
 
+                    const vec3<S> minh_x = h_u - (S)0.5f * w_M;
+                    const vec3<S> maxh_x = h_u + (S)0.5f * w_M;
+                    const vec3<S> minh_y = h_v - (S)0.5f * w_M;
+                    const vec3<S> maxh_y = h_v + (S)0.5f * w_M;
+
                     ray_cross = glm::cross(h_u, h_v);
 
                     // no ray_crossion
-                    if (ray_cross.z == 0.0)
+                    if (ray_cross.z == 0.0f)
                         valid = false;
+
+                    const vec3<S> minxray_cross = glm::cross(minh_x, h_v);
+                    const vec3<S> maxxray_cross = glm::cross(maxh_x, h_v);
+                    const vec3<S> minyray_cross = glm::cross(h_u, minh_y);
+                    const vec3<S> maxyray_cross = glm::cross(h_u, maxh_y);
+                    if (minxray_cross.z == 0.0f || maxxray_cross.z == 0.0f || minyray_cross.z == 0.0f || maxyray_cross.z == 0.0f)
+                        valid = false;
+
                     s = {ray_cross.x / ray_cross.z, ray_cross.y / ray_cross.z};
+                    const vec2<S> dsdx = vec2<S>(maxxray_cross.x / maxxray_cross.z - minxray_cross.x / minxray_cross.z,
+                                                 maxxray_cross.y / maxxray_cross.z - minxray_cross.y / minxray_cross.z);
+                    const vec2<S> dsdy = vec2<S>(maxyray_cross.x / maxyray_cross.z - minyray_cross.x / minyray_cross.z,
+                                                 maxyray_cross.y / maxyray_cross.z - minyray_cross.y / minyray_cross.z);
 
-                    if (s.x < -3.0f || s.x > 3.0f || s.y < -3.0f || s.y > 3.0f)
-                    {
-                        valid_texture = -1;
-                    }
-                    else
-                    {
-                        valid_texture = 1;
-                    }
+                    // compute texture coordinates and bilinear interpolation weights
+                    valid_texture = compute_trilinear_coords_weights2(s.x, s.y, dsdx, dsdy, texture_res, log_texture_res, mipcoords, trilerp_weights);
 
-                    u = (S)((s.x + 3.0f) / 6.0f * (texture_res_x - 1));
-                    v = (S)((s.y + 3.0f) / 6.0f * (texture_res_y - 1));
-
-                    // computer alpha scaling factor
+                    // calculate alpha texture scaling factor
                     if (valid_texture > 0)
                     {
-                        alpha_scaling_factor = 0.0f;
-                        alpha_scaling_factor += dct_sample(textures, texture_res_x, texture_res_y, g, u, v, 3);
+                        GSPLAT_PRAGMA_UNROLL
+                        for (uint32_t i = 0; i < 8; ++i)
+                        {
+                            alpha_scaling_factor += trilerp_weights[i] * textures[g][mipcoords[i]][3];
+                        }
                     }
                     else
                     {
@@ -468,8 +479,13 @@ namespace gsplat
 
                         if (valid_texture > 0)
                         {
-                            dct_update(v_textures, texture_res_x, texture_res_y, g, u, v, k, fac * v_render_c[k]);
-                            tex_colors[k] += dct_sample(textures, texture_res_x, texture_res_y, g, u, v, k);
+                            // update texture gradients
+                            GSPLAT_PRAGMA_UNROLL
+                            for (uint32_t i = 0; i < 8; ++i)
+                            {
+                                gpuAtomicAdd(&v_textures[g][mipcoords[i]][k], fac * trilerp_weights[i] * v_render_c[k]);
+                                tex_colors[k] += trilerp_weights[i] * textures[g][mipcoords[i]][k];
+                            }
                         }
                     }
 
@@ -595,7 +611,11 @@ namespace gsplat
                         // update alpha scaling factor gradients
                         if (valid_texture > 0)
                         {
-                            dct_update(v_textures, texture_res_x, texture_res_y, g, u, v, 3, vis * opac * v_alpha);
+                            GSPLAT_PRAGMA_UNROLL
+                            for (uint32_t i = 0; i < 8; ++i)
+                            {
+                                gpuAtomicAdd(&v_textures[g][mipcoords[i]][3], trilerp_weights[i] * vis * opac * v_alpha);
+                            }
                         }
                     }
 
@@ -703,13 +723,14 @@ namespace gsplat
         torch::Tensor,
         torch::Tensor,
         torch::Tensor>
-    call_dct_bwd_kernel_with_dim(
+    call_bwd_mip2_kernel_with_dim(
         // Gaussian parameters
         const torch::Tensor &means2d,        // [C, N, 2] or [nnz, 2]
         const torch::Tensor &ray_transforms, // [C, N, 3, 3] or [nnz, 3, 3]
         const torch::Tensor &colors,         // [C, N, 3] or [nnz, 3]
         const torch::Tensor &opacities,      // [C, N] or [nnz]
         const torch::Tensor &textures,       //
+        const uint32_t log_texture_res,      //
         const torch::Tensor &normals,        // [C, N, 3] or [nnz, 3]
         const torch::Tensor &densify,
         const at::optional<torch::Tensor> &backgrounds, // [C, 3]
@@ -802,7 +823,7 @@ namespace gsplat
             at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
 
             if (cudaFuncSetAttribute(
-                    rasterize_to_pixels_bwd_dct_textured_gaussians_kernel<CDIM, float>,
+                    rasterize_to_pixels_bwd_mip2_textured_gaussians_kernel<CDIM, float>,
                     cudaFuncAttributeMaxDynamicSharedMemorySize,
                     shared_mem) != cudaSuccess)
             {
@@ -811,7 +832,7 @@ namespace gsplat
                     shared_mem,
                     " bytes), try lowering tile_size.");
             }
-            rasterize_to_pixels_bwd_dct_textured_gaussians_kernel<CDIM, float>
+            rasterize_to_pixels_bwd_mip2_textured_gaussians_kernel<CDIM, float>
                 <<<blocks, threads, shared_mem, stream>>>(
                     C,
                     N,
@@ -822,7 +843,8 @@ namespace gsplat
                     colors.data_ptr<float>(),
                     normals.data_ptr<float>(),
                     opacities.data_ptr<float>(),
-                    textures.packed_accessor32<const float, 4, at::RestrictPtrTraits>(),
+                    textures.packed_accessor32<const float, 3, at::RestrictPtrTraits>(),
+                    log_texture_res,
                     backgrounds.has_value() ? backgrounds.value().data_ptr<float>()
                                             : nullptr,
                     masks.has_value() ? masks.value().data_ptr<bool>() : nullptr,
@@ -849,7 +871,7 @@ namespace gsplat
                     v_ray_transforms.data_ptr<float>(),
                     v_colors.data_ptr<float>(),
                     v_opacities.data_ptr<float>(),
-                    v_textures.packed_accessor32<float, 4, at::RestrictPtrTraits>(),
+                    v_textures.packed_accessor32<float, 3, at::RestrictPtrTraits>(),
                     v_normals.data_ptr<float>(),
                     v_densify.data_ptr<float>());
         }
@@ -874,13 +896,14 @@ namespace gsplat
         torch::Tensor,
         torch::Tensor,
         torch::Tensor>
-    rasterize_to_pixels_bwd_dct_textured_gaussians_tensor(
+    rasterize_to_pixels_bwd_mip2_textured_gaussians_tensor(
         // Gaussian parameters
         const torch::Tensor &means2d,        // [C, N, 2] or [nnz, 2]
         const torch::Tensor &ray_transforms, // [C, N, 3, 3] or [nnz, 3, 3]
         const torch::Tensor &colors,         // [C, N, 3] or [nnz, 3]
         const torch::Tensor &opacities,      // [C, N] or [nnz]
         const torch::Tensor &textures,       //
+        const uint32_t log_texture_res,      //
         const torch::Tensor &normals,        // [C, N, 3] or [nnz, 3]
         const torch::Tensor &densify,
         const at::optional<torch::Tensor> &backgrounds, // [C, 3]
@@ -911,32 +934,33 @@ namespace gsplat
         GSPLAT_CHECK_INPUT(colors);
         uint32_t COLOR_DIM = colors.size(-1);
 
-#define __GS__CALL_(N)                          \
-    case N:                                     \
-        return call_dct_bwd_kernel_with_dim<N>( \
-            means2d,                            \
-            ray_transforms,                     \
-            colors,                             \
-            opacities,                          \
-            textures,                           \
-            normals,                            \
-            densify,                            \
-            backgrounds,                        \
-            masks,                              \
-            image_width,                        \
-            image_height,                       \
-            tile_size,                          \
-            tile_offsets,                       \
-            flatten_ids,                        \
-            render_colors,                      \
-            render_alphas,                      \
-            last_ids,                           \
-            median_ids,                         \
-            v_render_colors,                    \
-            v_render_alphas,                    \
-            v_render_normals,                   \
-            v_render_distort,                   \
-            v_render_median,                    \
+#define __GS__CALL_(N)                           \
+    case N:                                      \
+        return call_bwd_mip2_kernel_with_dim<N>( \
+            means2d,                             \
+            ray_transforms,                      \
+            colors,                              \
+            opacities,                           \
+            textures,                            \
+            log_texture_res,                     \
+            normals,                             \
+            densify,                             \
+            backgrounds,                         \
+            masks,                               \
+            image_width,                         \
+            image_height,                        \
+            tile_size,                           \
+            tile_offsets,                        \
+            flatten_ids,                         \
+            render_colors,                       \
+            render_alphas,                       \
+            last_ids,                            \
+            median_ids,                          \
+            v_render_colors,                     \
+            v_render_alphas,                     \
+            v_render_normals,                    \
+            v_render_distort,                    \
+            v_render_median,                     \
             absgrad);
 
         switch (COLOR_DIM)

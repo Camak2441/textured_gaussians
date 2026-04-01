@@ -24,7 +24,7 @@ namespace gsplat
         T ratio_out = 0.0f;
         T height;
         T max_height = max_axis - min_axis;
-        T nxy = n.x * n.y;
+        T nxy = abs(n.x * n.y);
         height = max(0.0f, min(max_axis - d, max_height));
         ratio_out += 0.5f * height * height / nxy;
         height = max(0.0f, min(min_axis - d, 2 * min_axis));
@@ -113,6 +113,13 @@ namespace gsplat
             }
         }
         *n01 /= glm::length(*n01);
+        // Ensure the normal points away from the polygon center (outward).
+        // ratio_inside_pixel assumes outward normals: inside = dot(p - s0, n) <= 0.
+        // If the winding is CW the raw perpendicular is inward, so flip it.
+        if (glm::dot(*n01, center - s0) > 0)
+        {
+            *n01 = -(*n01);
+        }
         return true;
     }
 
@@ -166,7 +173,7 @@ namespace gsplat
             for (int v = minv; v <= maxv; v++)
             {
                 T pixel_area = ratio_inside_pixel(s0, s1, s2, s3, n01, n12, n23, n30, vec2<T>(u, v));
-                color += textures[g][u][v][k] * pixel_area;
+                color += textures[g][v][u][k] * pixel_area;
                 area += pixel_area;
             }
         }
@@ -227,7 +234,7 @@ namespace gsplat
         {
             for (int v = minv; v <= maxv; v++)
             {
-                gpuAtomicAdd(&v_textures[g][u][v][k], delta * ratio_inside_pixel(s0, s1, s2, s3, n01, n12, n23, n30, vec2<T>(u, v)) / area);
+                gpuAtomicAdd(&v_textures[g][v][u][k], delta * ratio_inside_pixel(s0, s1, s2, s3, n01, n12, n23, n30, vec2<T>(u, v)) / area);
             }
         }
         return;

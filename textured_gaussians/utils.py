@@ -1,8 +1,12 @@
 import math
+from typing import Literal
 
 import torch
 import torch.nn.functional as F
 from torch import Tensor
+
+
+type Filtering = Literal["bilinear", "mipmapped", "anisotropic"]
 
 
 def normalized_quat_to_rotmat(quat: Tensor) -> Tensor:

@@ -1,4 +1,5 @@
 import random
+from typing import Optional
 
 import numpy as np
 import torch
@@ -7,6 +8,8 @@ from torch import Tensor
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from matplotlib import colormaps
+import os
+import re
 
 
 class CameraOptModule(torch.nn.Module):
@@ -222,3 +225,38 @@ def apply_depth_colormap(
     if acc is not None:
         img = img * acc + (1.0 - acc)
     return img
+
+
+def remove_from_kwargs(kwargs, remove):
+    for key in remove:
+        if key in kwargs:
+            kwargs.pop(key)
+
+
+def get_file_with_max_int(
+    ckpt_dir: str, prefix: str, suffix: str, limit: Optional[int] = None
+):
+    if limit is not None and limit < 0:
+        return None, None
+    max_value = None
+    for file in os.listdir(ckpt_dir):
+        if (
+            file.startswith(prefix)
+            and file.endswith(suffix)
+            and len(file) > len(prefix) + len(suffix)
+        ):
+            if len(suffix) == 0:
+                value = file[len(prefix) :]
+            else:
+                value = file[len(prefix) : -len(suffix)]
+            if re.fullmatch(r"0|([1-9][0-9]*)", value):
+                num = int(value)
+                if limit is None or num <= limit:
+                    if max_value is None:
+                        max_value = int(value)
+                    else:
+                        max_value = max(int(value), max_value)
+    if max_value:
+        return max_value, f"{prefix}{max_value}{suffix}"
+    else:
+        return None, None

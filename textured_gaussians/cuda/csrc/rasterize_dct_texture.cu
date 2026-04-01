@@ -28,11 +28,11 @@ namespace gsplat
         const uint32_t tile_size,
 
         // outputs
-        S *__restrict__ render_colors    // [C, image_height, image_width, COLOR_DIM]
-        )
+        S *__restrict__ render_colors // [C, image_height, image_width, COLOR_DIM]
+    )
     {
         // Each thread draws one pixel of the image
-        
+
         auto block = cg::this_thread_block();
         uint32_t g = block.group_index().x;
         uint32_t pixel_y = block.group_index().y * tile_size + block.thread_index().y;
@@ -43,14 +43,14 @@ namespace gsplat
         int texture_res_x = textures.size(2);
 
         render_colors += g * image_height * image_width * COLOR_DIM + pix_id * COLOR_DIM;
-        
-        if(pixel_x >= image_width || pixel_y >= image_height) 
+
+        if (pixel_x >= image_width || pixel_y >= image_height)
         {
             return;
         }
 
-        S u = ((S) pixel_x + 0.5f) / (image_width - 1);
-        S v = ((S) pixel_y + 0.5f) / (image_height - 1);
+        S u = ((S)pixel_x + 0.5f) / (image_width - 1);
+        S v = ((S)pixel_y + 0.5f) / (image_height - 1);
 
         GSPLAT_PRAGMA_UNROLL
         for (uint32_t k = 0; k < COLOR_DIM; ++k)
@@ -60,10 +60,11 @@ namespace gsplat
         }
     }
 
-    template <uint32_t CDIM> torch::Tensor
-    call_kernel_with_dim(
+    template <uint32_t CDIM>
+    torch::Tensor
+    call_dct_kernel_with_dim(
         // Gaussian parameters
-        const torch::Tensor &textures,                  //
+        const torch::Tensor &textures, //
         // image size
         const uint32_t image_width,
         const uint32_t image_height,
@@ -99,7 +100,7 @@ namespace gsplat
     torch::Tensor
     rasterize_dct_textures_tensor(
         // Gaussian parameters
-        const torch::Tensor &textures,                  //
+        const torch::Tensor &textures, //
         // image size
         const uint32_t image_width,
         const uint32_t image_height,
@@ -107,12 +108,12 @@ namespace gsplat
     {
         uint32_t channels = textures.size(-1);
 
-#define __GS__CALL_(N)                  \
-    case N:                             \
-        return call_kernel_with_dim<N>( \
-            textures,                   \
-            image_width,                \
-            image_height,               \
+#define __GS__CALL_(N)                      \
+    case N:                                 \
+        return call_dct_kernel_with_dim<N>( \
+            textures,                       \
+            image_width,                    \
+            image_height,                   \
             tile_size);
         // TODO: an optimization can be done by passing the actual number of
         // channels into the kernel functions and avoid necessary global memory

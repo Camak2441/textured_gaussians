@@ -28,7 +28,7 @@ namespace gsplat
         {
             for (int j = 0; j < texture_res_y; ++j)
             {
-                col += textures[g][i][j][k] * cos(M_PI * i * u) * cos(M_PI * j * v);
+                col += textures[g][j][i][k] * cos(M_PI * i * u) * cos(M_PI * j * v);
             }
         }
         return col;
@@ -49,7 +49,7 @@ namespace gsplat
         {
             for (int j = 0; j < texture_res_y; ++j)
             {
-                gpuAtomicAdd(&v_textures[g][i][j][k], delta * cos(M_PI * i * u) * cos(M_PI * j * v));
+                gpuAtomicAdd(&v_textures[g][j][i][k], delta * cos(M_PI * i * u) * cos(M_PI * j * v));
             }
         }
         return;

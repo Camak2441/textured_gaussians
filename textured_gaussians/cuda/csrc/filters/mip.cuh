@@ -34,8 +34,8 @@ namespace gsplat
         }
 
         // For ease of mipmapping, coordinate textures give the tl of the pixel
-        T u = (T)((s_x + 3.0f) / 6.0f * (texture_res_x - 1) / 2.0f);
-        T v = (T)((s_y + 3.0f) / 6.0f * (texture_res_y - 1) / 2.0f);
+        T u = (T)((s_x + 3.0f) / 6.0f * (texture_res_x - 1));
+        T v = (T)((s_y + 3.0f) / 6.0f * (texture_res_y - 1));
         int32_t t_low = (int32_t)floor(t);
         int32_t t_high = (int32_t)ceil(t);
 
@@ -57,8 +57,8 @@ namespace gsplat
         int32_t v_high_large = (int32_t)ceil(v_large);
 
         if (u_low_small < 0 || u_low_large < 0 || v_low_small < 0 || v_low_large < 0 ||
-            u_high_small > (texture_res_x - 1) / scale_small || u_high_large > (texture_res_x - 1) / scale_large ||
-            v_high_small > (texture_res_y - 1) / scale_small || v_high_large > (texture_res_y - 1) / scale_large)
+            u_high_small > (texture_res_x - 1) >> t_low || u_high_large > (texture_res_x - 1) >> t_high ||
+            v_high_small > (texture_res_y - 1) >> t_low || v_high_large > (texture_res_y - 1) >> t_high)
         {
             return -1;
         }
@@ -112,6 +112,11 @@ namespace gsplat
         int32_t vcoord,
         int32_t tcoord)
     {
+        if (tcoord == 0)
+        {
+            return textures[g][vcoord][ucoord][k];
+        }
+
         T c = 0;
 
         int32_t scale = 1 << tcoord;
@@ -120,11 +125,81 @@ namespace gsplat
         {
             for (int32_t v = vcoord * scale; v < (vcoord + 1) * scale; v++)
             {
-                c += textures[g][u][v][k];
+                c += textures[g][v][u][k];
             }
         }
 
-        return c / scale / scale;
+        return c * (1.0f / (scale * scale));
+    }
+
+    template <typename T>
+    inline __device__ T mip_efficient_sample(
+        at::PackedTensorAccessor32<const T, 4, at::RestrictPtrTraits> textures, // [N, Texture_Resolution, Texture_Resolution, 4]
+        int32_t g,
+        int32_t k,
+        int32_t (&ucoords)[8],
+        int32_t (&vcoords)[8],
+        int32_t (&tcoords)[8],
+        T (&trilerp_weights)[8])
+    {
+        if (tcoords[0] == tcoords[4])
+        {
+            if (ucoords[0] == ucoords[1] && vcoords[0] == vcoords[2])
+            {
+                return mip_sample(textures, g, k, ucoords[0], vcoords[0], tcoords[0]);
+            }
+            else if (ucoords[0] == ucoords[1])
+            {
+                T sample0 = mip_sample(textures, g, k, ucoords[0], vcoords[0], tcoords[0]);
+                T sample1 = mip_sample(textures, g, k, ucoords[2], vcoords[2], tcoords[2]);
+                T weight = trilerp_weights[0] + trilerp_weights[1];
+                return weight * sample0 + (1.0 - weight) * sample1;
+            }
+            else if (vcoords[0] == vcoords[2])
+            {
+                T sample0 = mip_sample(textures, g, k, ucoords[0], vcoords[0], tcoords[0]);
+                T sample1 = mip_sample(textures, g, k, ucoords[1], vcoords[1], tcoords[1]);
+                T weight = trilerp_weights[0] + trilerp_weights[2];
+                return weight * sample0 + (1.0 - weight) * sample1;
+            }
+            else
+            {
+                T sample0 = mip_sample(textures, g, k, ucoords[0], vcoords[0], tcoords[0]);
+                T sample1 = mip_sample(textures, g, k, ucoords[1], vcoords[1], tcoords[1]);
+                T sample2 = mip_sample(textures, g, k, ucoords[2], vcoords[2], tcoords[2]);
+                T sample3 = mip_sample(textures, g, k, ucoords[3], vcoords[3], tcoords[3]);
+                return trilerp_weights[0] * sample0 + trilerp_weights[1] * sample1 + trilerp_weights[2] * sample2 + trilerp_weights[3] * sample3;
+            }
+        }
+
+        T samples[4][4];
+
+        int minu = ucoords[4] * 2;
+        int minv = vcoords[4] * 2;
+
+        for (int u = ucoords[4] * 2; u < ucoords[5] * 2 + 2; ++u)
+        {
+            for (int v = vcoords[4] * 2; v < vcoords[6] * 2 + 2; ++v)
+            {
+                samples[v - minv][u - minu] = mip_sample(textures, g, k, u, v, tcoords[0]);
+            }
+        }
+
+        T c = 0;
+        int i = 0;
+
+        for (; i < 4; i++)
+        {
+            c += trilerp_weights[i] * samples[vcoords[i] - minv][ucoords[i] - minu];
+        }
+        for (; i < 8; i++)
+        {
+            c += trilerp_weights[i] * samples[vcoords[i] * 2 - minv][ucoords[i] * 2 - minu] / 4;
+            c += trilerp_weights[i] * samples[vcoords[i] * 2 + 1 - minv][ucoords[i] * 2 - minu] / 4;
+            c += trilerp_weights[i] * samples[vcoords[i] * 2 - minv][ucoords[i] * 2 + 1 - minu] / 4;
+            c += trilerp_weights[i] * samples[vcoords[i] * 2 + 1 - minv][ucoords[i] * 2 + 1 - minu] / 4;
+        }
+        return c;
     }
 
     template <typename T>
@@ -137,7 +212,11 @@ namespace gsplat
         int32_t tcoord,
         T delta)
     {
-        T c = 0;
+        if (tcoord == 0)
+        {
+            gpuAtomicAdd(&v_textures[g][vcoord][ucoord][k], delta);
+            return;
+        }
 
         int32_t scale = 1 << tcoord;
 
@@ -145,9 +224,81 @@ namespace gsplat
         {
             for (int32_t v = vcoord * scale; v < (vcoord + 1) * scale; v++)
             {
-                gpuAtomicAdd(&v_textures[g][u][v][k], delta / scale / scale);
+                gpuAtomicAdd(&v_textures[g][v][u][k], delta * (1.0f / (scale * scale)));
             }
         }
+    }
+
+    template <typename T>
+    inline __device__ void mip_efficient_update(
+        at::PackedTensorAccessor32<T, 4, at::RestrictPtrTraits> v_textures, // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM]
+        int32_t g,
+        int32_t k,
+        int32_t (&ucoords)[8],
+        int32_t (&vcoords)[8],
+        int32_t (&tcoords)[8],
+        T (&trilerp_weights)[8],
+        T delta)
+    {
+        if (tcoords[0] == tcoords[4])
+        {
+            if (ucoords[0] == ucoords[1] && vcoords[0] == vcoords[2])
+            {
+                mip_update(v_textures, g, k, ucoords[0], vcoords[0], tcoords[0], delta);
+                return;
+            }
+            else if (ucoords[0] == ucoords[1])
+            {
+                T weight = trilerp_weights[0] + trilerp_weights[1];
+                mip_update(v_textures, g, k, ucoords[0], vcoords[0], tcoords[0], weight * delta);
+                mip_update(v_textures, g, k, ucoords[2], vcoords[2], tcoords[2], (((T)1.0) - weight) * delta);
+                return;
+            }
+            else if (vcoords[0] == vcoords[2])
+            {
+                T weight = trilerp_weights[0] + trilerp_weights[2];
+                mip_update(v_textures, g, k, ucoords[0], vcoords[0], tcoords[0], weight * delta);
+                mip_update(v_textures, g, k, ucoords[1], vcoords[1], tcoords[1], (((T)1.0) - weight) * delta);
+                return;
+            }
+            else
+            {
+                mip_update(v_textures, g, k, ucoords[0], vcoords[0], tcoords[0], trilerp_weights[0] * delta);
+                mip_update(v_textures, g, k, ucoords[1], vcoords[1], tcoords[1], trilerp_weights[1] * delta);
+                mip_update(v_textures, g, k, ucoords[2], vcoords[2], tcoords[2], trilerp_weights[2] * delta);
+                mip_update(v_textures, g, k, ucoords[3], vcoords[3], tcoords[3], trilerp_weights[3] * delta);
+                return;
+            }
+        }
+
+        T deltas[4][4] = {0.0};
+
+        int minu = ucoords[4] * 2;
+        int minv = vcoords[4] * 2;
+
+        int i = 0;
+
+        for (; i < 4; i++)
+        {
+            deltas[vcoords[i] - minv][ucoords[i] - minu] += trilerp_weights[i] * delta;
+        }
+        for (; i < 8; i++)
+        {
+            deltas[vcoords[i] * 2 - minv][ucoords[i] * 2 - minu] += trilerp_weights[i] * delta / 4;
+            deltas[vcoords[i] * 2 + 1 - minv][ucoords[i] * 2 - minu] += trilerp_weights[i] * delta / 4;
+            deltas[vcoords[i] * 2 - minv][ucoords[i] * 2 + 1 - minu] += trilerp_weights[i] * delta / 4;
+            deltas[vcoords[i] * 2 + 1 - minv][ucoords[i] * 2 + 1 - minu] += trilerp_weights[i] * delta / 4;
+        }
+
+        for (int u = ucoords[4] * 2; u < ucoords[5] * 2 + 2; ++u)
+        {
+            for (int v = vcoords[4] * 2; v < vcoords[6] * 2 + 2; ++v)
+            {
+                mip_update(v_textures, g, k, u, v, tcoords[0], deltas[v - minv][u - minu]);
+            }
+        }
+
+        return;
     }
 }
 

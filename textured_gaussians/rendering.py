@@ -25,7 +25,7 @@ from .distributed import (
     all_to_all_int32,
     all_to_all_tensor_list,
 )
-from .utils import depth_to_normal, get_projection_matrix
+from .utils import Filtering, depth_to_normal, get_projection_matrix
 
 
 def rasterization(
@@ -1026,7 +1026,6 @@ def rasterization_2dgs(
     distloss: bool = False,
     depth_mode: Literal["expected", "median"] = "expected",
     gs_contrib_threshold: float = 0.0,
-    mipmapped: float = False,
 ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Dict]:
     """Rasterize a set of 2D Gaussians (N) to a batch of image planes (C).
 
@@ -1359,8 +1358,7 @@ def rasterization_textured_gaussians(
     distloss: bool = False,
     depth_mode: Literal["expected", "median"] = "expected",
     gs_contrib_threshold: float = 0.0,
-    mipmapped: bool = False,
-    anisotropic: bool = False,
+    filtering: Filtering = "bilinear",
 ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Dict]:
     """Rasterize a set of 2D Gaussians (N) to a batch of image planes (C).
 
@@ -1610,8 +1608,7 @@ def rasterization_textured_gaussians(
         absgrad=absgrad,
         distloss=distloss,
         gs_contrib_threshold=gs_contrib_threshold,
-        mipmapped=mipmapped,
-        anisotropic=anisotropic,
+        filtering=filtering,
     )
     render_normals_from_depth = None
     if render_mode in ["ED", "RGB+ED"]:
@@ -1700,8 +1697,6 @@ def rasterization_implicit_textured_gaussians(
     distloss: bool = False,
     depth_mode: Literal["expected", "median"] = "expected",
     gs_contrib_threshold: float = 0.0,
-    mipmapped: bool = False,
-    anisotropic: bool = False,
     num_texture_samples: int = 10,
 ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Dict]:
     """Rasterize a set of 2D Gaussians (N) to a batch of image planes (C).
@@ -1949,8 +1944,6 @@ def rasterization_implicit_textured_gaussians(
         absgrad=absgrad,
         distloss=distloss,
         gs_contrib_threshold=gs_contrib_threshold,
-        mipmapped=mipmapped,
-        anisotropic=anisotropic,
         num_texture_samples=num_texture_samples,
     )
     render_normals_from_depth = None
@@ -2040,8 +2033,6 @@ def rasterization_dct_textured_gaussians(
     distloss: bool = False,
     depth_mode: Literal["expected", "median"] = "expected",
     gs_contrib_threshold: float = 0.0,
-    mipmapped: bool = False,
-    anisotropic: bool = False,
 ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Dict]:
     """Rasterize a set of 2D Gaussians (N) to a batch of image planes (C).
 
@@ -2291,8 +2282,6 @@ def rasterization_dct_textured_gaussians(
         absgrad=absgrad,
         distloss=distloss,
         gs_contrib_threshold=gs_contrib_threshold,
-        mipmapped=mipmapped,
-        anisotropic=anisotropic,
     )
     render_normals_from_depth = None
     if render_mode in ["ED", "RGB+ED"]:

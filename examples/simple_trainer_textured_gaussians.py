@@ -21,7 +21,8 @@ from torch import Tensor
 from torch.utils.tensorboard import SummaryWriter
 from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
-from examples.texture_models import canonical_model_name, load_model
+from examples.scene_args_loader import process_config
+from texture_models import canonical_model_name, load_model
 from utils import (
     AppearanceOptModule,
     CameraOptModule,
@@ -30,6 +31,7 @@ from utils import (
     knn,
     rgb_to_sh,
     set_random_seed,
+    remove_from_kwargs,
 )
 
 from textured_gaussians.rendering import (
@@ -51,8 +53,13 @@ class Config:
     # Path to the .pt file. If provide, it will skip training and render a video
     ckpt: Optional[str] = None
 
+    scene: Optional[str] = None
+
     # Dataset mode
-    dataset: str = "colmap"
+    dataset_type: str = "colmap"
+
+    # Whether to attempt to resume from a previous checkpoint
+    resume: bool = False
 
     # Path to the Mip-NeRF 360 dataset
     data_dir: str = "data/360_v2/garden"
@@ -78,9 +85,38 @@ class Config:
     # Number of training steps
     max_steps: int = 30_000
     # Steps to evaluate the model
-    eval_steps: List[int] = field(default_factory=lambda: [100, 1_000, 7_000, 30_000])
+    eval_steps: List[int] = field(default_factory=lambda: [7_000, 30_000])
     # Steps to save the model
-    save_steps: List[int] = field(default_factory=lambda: [100, 1_000, 7_000, 30_000])
+    save_steps: List[int] = field(
+        default_factory=lambda: list(range(500, 100_000, 500))
+    )
+    # Steps to save the model textures
+    render_traj_steps: List[int] = field(
+        default_factory=lambda: [
+            100,
+            1_000,
+            2_000,
+            4_000,
+            7_000,
+            10_000,
+            20_000,
+            30_000,
+        ]
+    )
+    render_texture_steps: List[int] = field(
+        default_factory=lambda: [
+            100,
+            1_000,
+            2_000,
+            4_000,
+            7_000,
+            10_000,
+            20_000,
+            30_000,
+        ]
+    )
+    # The step to start from, mostly used for resume
+    init_step: int = 0
 
     # Initialization strategy
     init_type: str = "sfm"
@@ -186,9 +222,9 @@ class Config:
     # Model for splatting.
     model_type: Literal[
         "2dgs",
-        "textured_gaussians",
-        "dct_textured_gaussians",
-        "implicit_textured_gaussians",
+        "tgs",
+        "dtgs",
+        "itgs",
     ] = "2dgs"
     texture_model: Optional[str] = None
     num_texture_samples: int = 10
@@ -203,14 +239,21 @@ class Config:
 
     # Pretrained checkpoints
     pretrained_path: Optional[str] = None
+    # Checkpoint for resuming training
+    checkpoint_path: Optional[Tuple[str, str]] = None
 
     # textured gaussians
-    texture_resolution: int = 50
+    texture_resolution: int = 64
+    texture_height: Optional[int] = None
+    saved_texture_resolution: Optional[int] = None
+    saved_texture_width: Optional[int] = None
+    saved_texture_height: Optional[int] = None
     textured_rgb: bool = False
     textured_alpha: bool = False
 
-    mipmapped: bool = False
-    anisotropic: bool = False
+    filtering: Literal["bilinear", "mipmapped", "mipmapped2", "anisotropic"] = (
+        "bilinear"
+    )
 
     def adjust_steps(self, factor: float):
         self.eval_steps = [int(i * factor) for i in self.eval_steps]
@@ -250,34 +293,35 @@ def create_splats_with_optimizers(
 ) -> Tuple[
     torch.nn.ParameterDict, Dict[str, torch.optim.Optimizer], Optional[torch.nn.Module]
 ]:
-    if init_type == "sfm":
-        points = torch.from_numpy(parser.points).float()
-        rgbs = torch.from_numpy(parser.points_rgb / 255.0).float()
-        if init_num_pts < points.shape[0]:
-            sampled_pts_idx = np.random.choice(
-                points.shape[0], init_num_pts, replace=False
-            )
-        else:
-            sampled_pts_idx = np.arange(points.shape[0])
-        # randomly sample points from the SfM points
-        points = points[sampled_pts_idx]
-        rgbs = rgbs[sampled_pts_idx]
-    elif init_type == "pretrained":
-        assert cfg.pretrained_path is not None
-        ckpt = torch.load(cfg.pretrained_path)["splats"]
-        if init_num_pts < ckpt["means"].shape[0]:
-            sampled_pts_idx = np.random.choice(
-                ckpt["means"].shape[0], init_num_pts, replace=False
-            )
-        else:
-            sampled_pts_idx = np.arange(ckpt["means"].shape[0])
-        points = ckpt["means"][sampled_pts_idx]
-        rgbs = torch.rand((points.shape[0], 3))
-    elif init_type == "random":
-        points = init_extent * scene_scale * (torch.rand((init_num_pts, 3)) * 2 - 1)
-        rgbs = torch.rand((init_num_pts, 3))
-    else:
-        raise ValueError("Please specify a correct init_type: sfm or random")
+    match init_type:
+        case "sfm":
+            points = torch.from_numpy(parser.points).float()
+            rgbs = torch.from_numpy(parser.points_rgb / 255.0).float()
+            if init_num_pts < points.shape[0]:
+                sampled_pts_idx = np.random.choice(
+                    points.shape[0], init_num_pts, replace=False
+                )
+            else:
+                sampled_pts_idx = np.arange(points.shape[0])
+            # randomly sample points from the SfM points
+            points = points[sampled_pts_idx]
+            rgbs = rgbs[sampled_pts_idx]
+        case "pretrained":
+            assert cfg.pretrained_path is not None
+            ckpt = torch.load(cfg.pretrained_path)["splats"]
+            if init_num_pts < ckpt["means"].shape[0]:
+                sampled_pts_idx = np.random.choice(
+                    ckpt["means"].shape[0], init_num_pts, replace=False
+                )
+            else:
+                sampled_pts_idx = np.arange(ckpt["means"].shape[0])
+            points = ckpt["means"][sampled_pts_idx]
+            rgbs = torch.rand((points.shape[0], 3))
+        case "random":
+            points = init_extent * scene_scale * (torch.rand((init_num_pts, 3)) * 2 - 1)
+            rgbs = torch.rand((init_num_pts, 3))
+        case _:
+            raise ValueError("Please specify a correct init_type: sfm or random")
 
     if init_type == "pretrained":
         scales = ckpt["scales"][sampled_pts_idx]
@@ -324,14 +368,19 @@ def create_splats_with_optimizers(
 
     texture_model = None
     match cfg.model_type:
-        case "textured_gaussians" | "dct_textured_gaussians":
-            textures = torch.ones(
-                points.shape[0], cfg.texture_resolution, cfg.texture_resolution, 4
-            )
+        case "tgs" | "dtgs":
+            if cfg.texture_height is None:
+                textures = torch.ones(
+                    points.shape[0], cfg.texture_height, cfg.texture_width, 4
+                )
+            else:
+                textures = torch.ones(
+                    points.shape[0], cfg.texture_height, cfg.texture_width, 4
+                )
             textures[:, :, :, :3] = 0.1  # init color to low value
             textures[:, :, :, 3] = 1.0  # init alpha to 1.0
             params.append(("textures", torch.nn.Parameter(textures), 2.5e-3))
-        case "implicit_textured_gaussians":
+        case "itgs":
             texture_model_name = canonical_model_name(cfg.texture_model)
             print(f"Loading model {texture_model_name}")
             texture_model = load_model(texture_model_name)
@@ -378,7 +427,7 @@ class Runner:
         self.writer = SummaryWriter(log_dir=f"{cfg.result_dir}/tb")
 
         # Load data: Training data should contain initial points and colors.
-        if cfg.dataset == "colmap":
+        if cfg.dataset_type == "colmap":
             self.parser = Parser(
                 data_dir=cfg.data_dir,
                 factor=cfg.data_factor,
@@ -393,7 +442,7 @@ class Runner:
             )
             self.valset = Dataset(self.parser, split="val")
             self.scene_scale = self.parser.scene_scale * 1.1 * cfg.global_scale
-        elif cfg.dataset == "blender":
+        elif cfg.dataset_type == "blender":
             self.parser = None
             if cfg.background_mode == "white":
                 bg_color = (255, 255, 255)
@@ -407,7 +456,7 @@ class Runner:
             )
             self.scene_scale = 1.0  # no scaling required
         else:
-            raise ValueError(f"Dataset mode {cfg.dataset} not supported!")
+            raise ValueError(f"Dataset mode {cfg.dataset_type} not supported!")
 
         # Model
         feature_dim = 32 if cfg.app_opt else None
@@ -433,9 +482,9 @@ class Runner:
 
         if self.model_type in [
             "2dgs",
-            "textured_gaussians",
-            "dct_textured_gaussians",
-            "implicit_textured_gaussians",
+            "tgs",
+            "dtgs",
+            "itgs",
         ]:
             key_for_gradient = "gradient_2dgs"
         else:
@@ -557,11 +606,11 @@ class Runner:
             if the model type has no textures.
         """
         match self.model_type:
-            case "textured_gaussians":
+            case "tgs":
                 if self.cfg.app_opt:
                     colors = self.splats["colors"]
                     colors = torch.sigmoid(colors)
-                    colors = colors.unsqueeze(-1).unsqueeze(-1)
+                    colors = colors.unsqueeze(-1).unsqueeze(-1)  # [N, 4, 1, 1]
                 else:
                     colors = self.splats["sh0"].squeeze(1)
                     colors = torch.cat(
@@ -571,13 +620,19 @@ class Runner:
                         ],
                         dim=1,
                     )
-                    colors = colors.unsqueeze(-1).unsqueeze(-1)
+                    colors = colors.unsqueeze(-1).unsqueeze(-1)  # [N, 4, 1, 1]
 
-                textures = self.get_textures()  # [N, L, L, 4]
+                textures = self.get_textures()  # [N, H, W, 4]
                 texture_height = textures.shape[1]
                 texture_width = textures.shape[2]
-                textures = textures.permute(0, 3, 1, 2)  # [N, 4, L, L]
-                textures += colors
+                textures = textures.permute(0, 3, 1, 2)  # [N, 4, H, W]
+                if self.cfg.textured_rgb and self.cfg.textured_alpha:
+                    textures += colors
+                elif self.cfg.textured_rgb:
+                    textures += colors[:, :3, :, :]
+                elif self.cfg.textured_alpha:
+                    textures += colors[:, 3:, :, :]
+
                 if texture_height >= height and texture_width >= width:
                     textures = F.interpolate(
                         textures, size=(height, width), mode="nearest"
@@ -589,12 +644,12 @@ class Runner:
                         mode="bilinear",
                         align_corners=False,
                     )
-                return textures.permute(0, 2, 3, 1)  # [N, height, width, 4]
-            case "dct_textured_gaussians":
+                return textures.permute(0, 2, 3, 1)  # [N, H, W, 4]
+            case "dtgs":
                 if self.cfg.app_opt:
                     colors = self.splats["colors"]
                     colors = torch.sigmoid(colors)
-                    colors = colors.unsqueeze(-1).unsqueeze(-1)
+                    colors = colors.unsqueeze(-1).unsqueeze(-1)  # [N, 4, 1, 1]
                 else:
                     colors = self.splats["sh0"].squeeze(1)
                     colors = torch.cat(
@@ -604,15 +659,20 @@ class Runner:
                         ],
                         dim=1,
                     )
-                    colors = colors.unsqueeze(-1).unsqueeze(-1)
+                    colors = colors.unsqueeze(-1).unsqueeze(-1)  # [N, 4, 1, 1]
 
-                textures = self.get_textures()  # [N, L, L, 4]
+                textures = self.get_textures()  # [N, H, W, 4]
                 rendered = rasterize_dct_textures(textures, height, width, 16)
-                
-                rendered = rendered.permute(0, 3, 1, 2)  # [N, 4, L, L]
-                rendered += colors
-                return rendered.permute(0, 2, 3, 1)  # [N, height, width, 4]
-            case "implicit_textured_gaussians":
+
+                rendered = rendered.permute(0, 3, 1, 2)  # [N, 4, H, W]
+                if self.cfg.textured_rgb and self.cfg.textured_alpha:
+                    rendered += colors
+                elif self.cfg.textured_rgb:
+                    rendered += colors[:, :3, :, :]
+                elif self.cfg.textured_alpha:
+                    rendered += colors[:, 3:, :, :]
+                return rendered.permute(0, 2, 3, 1)  # [N, H, W, 4]
+            case "itgs":
                 N = len(self.splats["means"])
                 device = self.device
                 v_coords = torch.linspace(0, 1, height, device=device)
@@ -650,9 +710,9 @@ class Runner:
             step: Training step, used for the output filename.
         """
         if self.model_type not in (
-            "textured_gaussians",
-            "dct_textured_gaussians",
-            "implicit_textured_gaussians",
+            "tgs",
+            "dtgs",
+            "itgs",
         ):
             print("No textures to render for model type:", self.model_type)
             return
@@ -661,11 +721,10 @@ class Runner:
         N = len(self.splats["means"])
         video_dir = f"{self.cfg.result_dir}/videos"
         os.makedirs(video_dir, exist_ok=True)
-        video_path = f"{video_dir}/textures_{step}.mp4"
+        video_path = f"{video_dir}/textures{width}x{height}_{step}.mp4"
         writer = imageio.get_writer(video_path, fps=30)
 
-
-        if self.model_type == "textured_gaussians":
+        if self.model_type == "tgs":
             all_textures = self.get_textures()  # [N, L, L, 4]
             batch_size = 4096
             for start in tqdm.trange(0, N, batch_size, desc="Rendering texture video"):
@@ -680,7 +739,21 @@ class Runner:
                         np.uint8
                     )
                     writer.append_data(frame)
-        elif self.model_type == "implicit_textured_gaussians":
+        elif self.model_type == "dtgs":
+            all_textures = self.get_textures()  # [N, L, L, 4]
+            batch_size = 4096
+            for start in tqdm.trange(0, N, batch_size, desc="Rendering texture video"):
+                end = min(start + batch_size, N)
+                batch = all_textures[start:end]  # [B, L, L, 4]
+                rendered = rasterize_dct_textures(
+                    batch, height, width, 16
+                )  # [B, H, W, 4]
+                for j in range(end - start):
+                    frame = (
+                        rendered[j, :, :, :3].clamp(0, 1).cpu().numpy() * 255
+                    ).astype(np.uint8)
+                    writer.append_data(frame)
+        elif self.model_type == "itgs":
             device = self.device
             v_coords = torch.linspace(0, 1, height, device=device)
             u_coords = torch.linspace(0, 1, width, device=device)
@@ -721,15 +794,15 @@ class Runner:
             step: Training step, used for the output directory name.
         """
         if self.model_type not in (
-            "textured_gaussians",
-            "dct_textured_gaussians",
-            "implicit_textured_gaussians",
+            "tgs",
+            "dtgs",
+            "itgs",
         ):
             return
 
         print("Saving texture images...")
 
-        texture_dir = f"{self.cfg.result_dir}/textures/step_{step}"
+        texture_dir = f"{self.cfg.result_dir}/textures{width}x{height}/step_{step}"
         os.makedirs(texture_dir, exist_ok=True)
 
         textures = self.render_textures(width, height)  # [N, H, W, 4]
@@ -776,7 +849,7 @@ class Runner:
 
         match self.model_type:
             case "2dgs":
-                kwargs.pop("num_texture_samples")
+                remove_from_kwargs(kwargs, {"num_texture_samples", "filtering"})
                 (
                     render_colors,
                     render_alphas,
@@ -802,7 +875,8 @@ class Runner:
                     sparse_grad=self.cfg.sparse_grad,
                     **kwargs,
                 )
-            case "textured_gaussians":
+            case "tgs":
+                remove_from_kwargs(kwargs, {"num_texture_samples"})
                 textures = self.get_textures()
                 (
                     render_colors,
@@ -830,7 +904,8 @@ class Runner:
                     sparse_grad=self.cfg.sparse_grad,
                     **kwargs,
                 )
-            case "dct_textured_gaussians":
+            case "dtgs":
+                remove_from_kwargs(kwargs, {"num_texture_samples", "filtering"})
                 textures = self.get_textures()
                 (
                     render_colors,
@@ -858,7 +933,8 @@ class Runner:
                     sparse_grad=self.cfg.sparse_grad,
                     **kwargs,
                 )
-            case "implicit_textured_gaussians":
+            case "itgs":
+                remove_from_kwargs(kwargs, {"filtering"})
                 (
                     render_colors,
                     render_alphas,
@@ -909,7 +985,7 @@ class Runner:
             yaml.dump(vars(cfg), f)
 
         max_steps = cfg.max_steps
-        init_step = 0
+        init_step = cfg.init_step
 
         schedulers = [
             # means has a learning rate schedule, that end at 0.01 of the initial value
@@ -938,6 +1014,34 @@ class Runner:
         # Training loop.
         global_tic = time.time()
         pbar = tqdm.tqdm(range(init_step, max_steps))
+        prev_ckpt_step = None
+        max_mem = 0
+
+        if cfg.checkpoint_path is not None:
+            _, train_state_path = cfg.checkpoint_path
+            train_state = torch.load(
+                train_state_path, map_location=device, weights_only=False
+            )
+            for name, state in train_state["optimizers"].items():
+                self.optimizers[name].load_state_dict(state)
+            for opt, state in zip(self.pose_optimizers, train_state["pose_optimizers"]):
+                opt.load_state_dict(state)
+            if cfg.pose_opt:
+                self.pose_adjust.load_state_dict(train_state["pose_adjust"])
+            for opt, state in zip(self.app_optimizers, train_state["app_optimizers"]):
+                opt.load_state_dict(state)
+            if cfg.app_opt:
+                self.app_module.load_state_dict(train_state["app_module"])
+            for opt, state in zip(
+                self.texture_optimizers, train_state["texture_optimizers"]
+            ):
+                opt.load_state_dict(state)
+            for s, state in zip(schedulers, train_state["schedulers"]):
+                s.load_state_dict(state)
+            self.strategy_state = train_state["strategy"]
+            global_tic -= train_state["elapsed_time"]
+            max_mem = train_state["max_mem"]
+
         for step in pbar:
 
             self.step = step
@@ -1003,8 +1107,8 @@ class Runner:
                 image_ids=image_ids,
                 render_mode="RGB+ED" if cfg.depth_loss else "RGB+D",
                 distloss=self.cfg.dist_loss,
-                mipmapped=self.cfg.mipmapped,
-                anisotropic=self.cfg.anisotropic,
+                filtering=self.cfg.filtering,
+                num_texture_samples=self.cfg.num_texture_samples,
             )
             if renders.shape[-1] == 4:
                 colors, depths = renders[..., 0:3], renders[..., 3:4]
@@ -1112,7 +1216,7 @@ class Runner:
             pbar.set_description(desc)
 
             if cfg.tb_every > 0 and step % cfg.tb_every == 0:
-                mem = torch.cuda.max_memory_allocated() / 1024**3
+                mem = max(max_mem, torch.cuda.max_memory_allocated() / 1024**3)
                 self.writer.add_scalar("train/loss", loss.item(), step)
                 self.writer.add_scalar("train/l1loss", l1loss.item(), step)
                 self.writer.add_scalar("train/ssimloss", ssimloss.item(), step)
@@ -1190,7 +1294,64 @@ class Runner:
 
             # save checkpoint
             if step in [i - 1 for i in cfg.save_steps] or step == max_steps - 1:
-                mem = torch.cuda.max_memory_allocated() / 1024**3
+                if (
+                    step not in [i - 1 for i in cfg.eval_steps]
+                    and step != max_steps - 1
+                ):
+                    mem = max(max_mem, torch.cuda.max_memory_allocated() / 1024**3)
+                    stats = {
+                        "mem": mem,
+                        "ellipse_time": time.time() - global_tic,
+                        "num_GS": len(self.splats["means"]),
+                    }
+                    # print("Step: ", step, stats)
+                    with open(f"{self.stats_dir}/train_step{step:04d}.json", "w") as f:
+                        json.dump(stats, f)
+                    ckpt_data = {
+                        "step": step,
+                        "splats": self.splats.state_dict(),
+                    }
+                    if self.texture_model is not None:
+                        ckpt_data["texture_model"] = self.texture_model.state_dict()
+                    torch.save(ckpt_data, f"{self.ckpt_dir}/ckpt_{step}.pt")
+                train_state_data = {
+                    "optimizers": {
+                        name: opt.state_dict() for name, opt in self.optimizers.items()
+                    },
+                    "pose_optimizers": [
+                        opt.state_dict() for opt in self.pose_optimizers
+                    ],
+                    "app_optimizers": [opt.state_dict() for opt in self.app_optimizers],
+                    "texture_optimizers": [
+                        opt.state_dict() for opt in self.texture_optimizers
+                    ],
+                    "schedulers": [s.state_dict() for s in schedulers],
+                    "strategy": self.strategy_state,
+                    "max_mem": mem,
+                    "elapsed_time": time.time() - global_tic,
+                }
+                if cfg.pose_opt:
+                    train_state_data["pose_adjust"] = self.pose_adjust.state_dict()
+                if cfg.app_opt:
+                    train_state_data["app_module"] = self.app_module.state_dict()
+                torch.save(train_state_data, f"{self.ckpt_dir}/train_state_{step}.pt")
+                if prev_ckpt_step is not None:
+                    for fname in (
+                        f"{self.ckpt_dir}/ckpt_{prev_ckpt_step}.pt",
+                        f"{self.ckpt_dir}/train_state_{prev_ckpt_step}.pt",
+                    ):
+                        if os.path.exists(fname):
+                            os.remove(fname)
+
+                if (
+                    step not in [i - 1 for i in cfg.eval_steps]
+                    and step != max_steps - 1
+                ):
+                    prev_ckpt_step = step
+
+            # eval the full set
+            if step in [i - 1 for i in cfg.eval_steps] or step == max_steps - 1:
+                mem = max(max_mem, torch.cuda.max_memory_allocated() / 1024**3)
                 stats = {
                     "mem": mem,
                     "ellipse_time": time.time() - global_tic,
@@ -1206,19 +1367,23 @@ class Runner:
                 if self.texture_model is not None:
                     ckpt_data["texture_model"] = self.texture_model.state_dict()
                 torch.save(ckpt_data, f"{self.ckpt_dir}/ckpt_{step}.pt")
-
-            # eval the full set
-            if step in [i - 1 for i in cfg.eval_steps] or step == max_steps - 1:
                 self.eval(step)
+
+            if step in [i - 1 for i in cfg.render_traj_steps] or step == max_steps - 1:
                 self.render_traj(step)
+
+            if (
+                step in [i - 1 for i in cfg.render_texture_steps]
+                or step == max_steps - 1
+            ):
                 self.render_textures_video(
-                    width=cfg.texture_resolution,
-                    height=cfg.texture_resolution,
+                    width=cfg.saved_texture_width,
+                    height=cfg.saved_texture_height,
                     step=step,
                 )
                 self.save_texture_images(
-                    width=cfg.texture_resolution,
-                    height=cfg.texture_resolution,
+                    width=cfg.saved_texture_width,
+                    height=cfg.saved_texture_height,
                     step=step,
                 )
 
@@ -1272,8 +1437,8 @@ class Runner:
                 near_plane=cfg.near_plane,
                 far_plane=cfg.far_plane,
                 render_mode="RGB+ED",
-                mipmapped=self.cfg.mipmapped,
-                anisotropic=self.cfg.anisotropic,
+                filtering=self.cfg.filtering,
+                num_texture_samples=self.cfg.num_texture_samples,
             )  # [1, H, W, 3]
             colors = colors[..., :3]  # Take RGB channels
 
@@ -1388,7 +1553,7 @@ class Runner:
         print("Running trajectory rendering...")
         cfg = self.cfg
         device = self.device
-        if cfg.dataset == "colmap":
+        if cfg.dataset_type == "colmap":
             camtoworlds = self.parser.camtoworlds[5:-5]
             camtoworlds = generate_interpolated_path(camtoworlds, 1)  # [N, 3, 4]
             camtoworlds = np.concatenate(
@@ -1408,7 +1573,7 @@ class Runner:
                 .to(device)
             )
             width, height = list(self.parser.imsize_dict.values())[0]
-        elif cfg.dataset == "blender":
+        elif cfg.dataset_type == "blender":
             camtoworlds = np.stack(self.trainset.camtoworlds)  # [N, 4, 4]
             camtoworlds = generate_interpolated_path(camtoworlds, 1)  # [N, 3, 4]
             camtoworlds = np.concatenate(
@@ -1435,8 +1600,8 @@ class Runner:
                 near_plane=cfg.near_plane,
                 far_plane=cfg.far_plane,
                 render_mode="RGB+ED",
-                mipmapped=self.cfg.mipmapped,
-                anisotropic=self.cfg.anisotropic,
+                filtering=self.cfg.filtering,
+                num_texture_samples=self.cfg.num_texture_samples,
             )  # [1, H, W, 4]
             colors = torch.clamp(renders[0, ..., 0:3], 0.0, 1.0)  # [H, W, 3]
             depths = renders[0, ..., 3:4]  # [H, W, 1]
@@ -1480,8 +1645,8 @@ class Runner:
             height=H,
             sh_degree=self.cfg.sh_degree,  # active all SH degrees
             radius_clip=3.0,  # skip GSs that have small image radius (in pixels)
-            mipmapped=self.cfg.mipmapped,
-            anisotropic=self.cfg.anisotropic,
+            filtering=self.cfg.filtering,
+            num_texture_samples=self.cfg.num_texture_samples,
         )  # [1, H, W, 3]
         return render_colors[0].cpu().numpy()
 
@@ -1499,21 +1664,23 @@ def main(cfg: Config):
         runner.eval(step=ckpt["step"])
         runner.render_traj(step=ckpt["step"])
         runner.render_textures_video(
-            width=cfg.texture_resolution,
-            height=cfg.texture_resolution,
+            width=cfg.saved_texture_width,
+            height=cfg.saved_texture_height,
             step=ckpt["step"],
         )
         runner.save_texture_images(
-            width=cfg.texture_resolution,
-            height=cfg.texture_resolution,
+            width=cfg.saved_texture_width,
+            height=cfg.saved_texture_height,
             step=ckpt["step"],
         )
     else:
-        # runner.save_texture_images(
-        #     width=cfg.texture_resolution,
-        #     height=cfg.texture_resolution,
-        #     step=0,
-        # )
+        if cfg.checkpoint_path is not None:
+            ckpt_path, _ = cfg.checkpoint_path
+            ckpt = torch.load(ckpt_path, map_location=runner.device)
+            for k in runner.splats.keys():
+                runner.splats[k].data = ckpt["splats"][k]
+            if runner.texture_model is not None and "texture_model" in ckpt:
+                runner.texture_model.load_state_dict(ckpt["texture_model"])
         runner.train()
 
     # if not cfg.disable_viewer:
@@ -1541,4 +1708,5 @@ if __name__ == "__main__":
     # cfg = tyro.cli(Config)
     cfg = tyro.extras.overridable_config_cli(configs)
     cfg.adjust_steps(cfg.steps_scaler)
+    process_config(cfg)
     main(cfg)

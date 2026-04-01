@@ -412,7 +412,7 @@ namespace gsplat
         torch::Tensor,
         torch::Tensor,
         torch::Tensor>
-    call_kernel_with_dim(
+    call_fwd_2dgs_kernel_with_dim(
         // Gaussian parameters
         const torch::Tensor &means2d,                   // [C, N, 2] or [nnz, 2]
         const torch::Tensor &ray_transforms,            // [C, N, 3, 3] or [nnz, 3, 3]
@@ -586,21 +586,21 @@ namespace gsplat
         GSPLAT_CHECK_INPUT(colors);
         uint32_t channels = colors.size(-1);
 
-#define __GS__CALL_(N)                  \
-    case N:                             \
-        return call_kernel_with_dim<N>( \
-            means2d,                    \
-            ray_transforms,             \
-            colors,                     \
-            opacities,                  \
-            normals,                    \
-            backgrounds,                \
-            masks,                      \
-            image_width,                \
-            image_height,               \
-            tile_size,                  \
-            tile_offsets,               \
-            flatten_ids,                \
+#define __GS__CALL_(N)                           \
+    case N:                                      \
+        return call_fwd_2dgs_kernel_with_dim<N>( \
+            means2d,                             \
+            ray_transforms,                      \
+            colors,                              \
+            opacities,                           \
+            normals,                             \
+            backgrounds,                         \
+            masks,                               \
+            image_width,                         \
+            image_height,                        \
+            tile_size,                           \
+            tile_offsets,                        \
+            flatten_ids,                         \
             gs_contrib_threshold);
         // TODO: an optimization can be done by passing the actual number of
         // channels into the kernel functions and avoid necessary global memory

@@ -324,7 +324,7 @@ namespace gsplat
                 int32_t valid_texture = -1;
 
                 // alpha scaling factor
-                S alpha_scaling_factor = 0.0f;
+                S alpha_scaling_factor = (S)0.0f;
 
                 /**
                  * ==================================================
@@ -375,11 +375,7 @@ namespace gsplat
                     // calculate alpha texture scaling factor
                     if (valid_texture > 0)
                     {
-                        alpha_scaling_factor = 0.0f;
-                        for (uint32_t i = 0; i < 8; ++i)
-                        {
-                            alpha_scaling_factor += trilerp_weights[i] * mip_sample(textures, g, 3, ucoords[i], vcoords[i], tcoords[i]);
-                        }
+                        alpha_scaling_factor = mip_efficient_sample(textures, g, 3, ucoords, vcoords, tcoords, trilerp_weights);
                     }
                     else
                     {
@@ -482,11 +478,8 @@ namespace gsplat
                         if (valid_texture > 0)
                         {
                             // update texture gradients
-                            for (uint32_t i = 0; i < 8; ++i)
-                            {
-                                mip_update(v_textures, g, k, ucoords[i], vcoords[i], tcoords[i], fac * trilerp_weights[i] * v_render_c[k]);
-                                tex_colors[k] += trilerp_weights[i] * mip_sample(textures, g, k, ucoords[i], vcoords[i], tcoords[i]);
-                            }
+                            mip_efficient_update(v_textures, g, k, ucoords, vcoords, tcoords, trilerp_weights, fac * v_render_c[k]);
+                            tex_colors[k] += mip_efficient_sample(textures, g, k, ucoords, vcoords, tcoords, trilerp_weights);
                         }
                     }
 
@@ -612,10 +605,7 @@ namespace gsplat
                         // update alpha scaling factor gradients
                         if (valid_texture > 0)
                         {
-                            for (uint32_t i = 0; i < 8; ++i)
-                            {
-                                mip_update(v_textures, g, 3, ucoords[i], vcoords[i], tcoords[i], trilerp_weights[i] * vis * opac * v_alpha);
-                            }
+                            mip_efficient_update(v_textures, g, 3, ucoords, vcoords, tcoords, trilerp_weights, vis * opac * v_alpha);
                         }
                     }
 
@@ -723,7 +713,7 @@ namespace gsplat
         torch::Tensor,
         torch::Tensor,
         torch::Tensor>
-    call_kernel_with_dim(
+    call_bwd_mip_kernel_with_dim(
         // Gaussian parameters
         const torch::Tensor &means2d,        // [C, N, 2] or [nnz, 2]
         const torch::Tensor &ray_transforms, // [C, N, 3, 3] or [nnz, 3, 3]
@@ -931,32 +921,32 @@ namespace gsplat
         GSPLAT_CHECK_INPUT(colors);
         uint32_t COLOR_DIM = colors.size(-1);
 
-#define __GS__CALL_(N)                  \
-    case N:                             \
-        return call_kernel_with_dim<N>( \
-            means2d,                    \
-            ray_transforms,             \
-            colors,                     \
-            opacities,                  \
-            textures,                   \
-            normals,                    \
-            densify,                    \
-            backgrounds,                \
-            masks,                      \
-            image_width,                \
-            image_height,               \
-            tile_size,                  \
-            tile_offsets,               \
-            flatten_ids,                \
-            render_colors,              \
-            render_alphas,              \
-            last_ids,                   \
-            median_ids,                 \
-            v_render_colors,            \
-            v_render_alphas,            \
-            v_render_normals,           \
-            v_render_distort,           \
-            v_render_median,            \
+#define __GS__CALL_(N)                          \
+    case N:                                     \
+        return call_bwd_mip_kernel_with_dim<N>( \
+            means2d,                            \
+            ray_transforms,                     \
+            colors,                             \
+            opacities,                          \
+            textures,                           \
+            normals,                            \
+            densify,                            \
+            backgrounds,                        \
+            masks,                              \
+            image_width,                        \
+            image_height,                       \
+            tile_size,                          \
+            tile_offsets,                       \
+            flatten_ids,                        \
+            render_colors,                      \
+            render_alphas,                      \
+            last_ids,                           \
+            median_ids,                         \
+            v_render_colors,                    \
+            v_render_alphas,                    \
+            v_render_normals,                   \
+            v_render_distort,                   \
+            v_render_median,                    \
             absgrad);
 
         switch (COLOR_DIM)

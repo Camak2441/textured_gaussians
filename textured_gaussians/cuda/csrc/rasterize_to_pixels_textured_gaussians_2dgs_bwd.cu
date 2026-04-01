@@ -360,7 +360,7 @@ namespace gsplat
                         alpha_scaling_factor = 0.0f;
                         for (uint32_t i = 0; i < 4; ++i)
                         {
-                            alpha_scaling_factor += bilerp_weights[i] * textures[g][ucoords[i]][vcoords[i]][3];
+                            alpha_scaling_factor += bilerp_weights[i] * textures[g][vcoords[i]][ucoords[i]][3];
                         }
                     }
                     else
@@ -466,8 +466,8 @@ namespace gsplat
                             // update texture gradients
                             for (uint32_t i = 0; i < 4; ++i)
                             {
-                                gpuAtomicAdd(&v_textures[g][ucoords[i]][vcoords[i]][k], fac * bilerp_weights[i] * v_render_c[k]);
-                                tex_colors[k] += bilerp_weights[i] * textures[g][ucoords[i]][vcoords[i]][k];
+                                gpuAtomicAdd(&v_textures[g][vcoords[i]][ucoords[i]][k], fac * bilerp_weights[i] * v_render_c[k]);
+                                tex_colors[k] += bilerp_weights[i] * textures[g][vcoords[i]][ucoords[i]][k];
                             }
                         }
                     }
@@ -596,7 +596,7 @@ namespace gsplat
                         {
                             for (uint32_t i = 0; i < 4; ++i)
                             {
-                                gpuAtomicAdd(&v_textures[g][ucoords[i]][vcoords[i]][3], bilerp_weights[i] * vis * opac * v_alpha);
+                                gpuAtomicAdd(&v_textures[g][vcoords[i]][ucoords[i]][3], bilerp_weights[i] * vis * opac * v_alpha);
                             }
                         }
                     }
@@ -705,7 +705,7 @@ namespace gsplat
         torch::Tensor,
         torch::Tensor,
         torch::Tensor>
-    call_kernel_with_dim(
+    call_bwd_t_kernel_with_dim(
         // Gaussian parameters
         const torch::Tensor &means2d,        // [C, N, 2] or [nnz, 2]
         const torch::Tensor &ray_transforms, // [C, N, 3, 3] or [nnz, 3, 3]
@@ -913,32 +913,32 @@ namespace gsplat
         GSPLAT_CHECK_INPUT(colors);
         uint32_t COLOR_DIM = colors.size(-1);
 
-#define __GS__CALL_(N)                  \
-    case N:                             \
-        return call_kernel_with_dim<N>( \
-            means2d,                    \
-            ray_transforms,             \
-            colors,                     \
-            opacities,                  \
-            textures,                   \
-            normals,                    \
-            densify,                    \
-            backgrounds,                \
-            masks,                      \
-            image_width,                \
-            image_height,               \
-            tile_size,                  \
-            tile_offsets,               \
-            flatten_ids,                \
-            render_colors,              \
-            render_alphas,              \
-            last_ids,                   \
-            median_ids,                 \
-            v_render_colors,            \
-            v_render_alphas,            \
-            v_render_normals,           \
-            v_render_distort,           \
-            v_render_median,            \
+#define __GS__CALL_(N)                        \
+    case N:                                   \
+        return call_bwd_t_kernel_with_dim<N>( \
+            means2d,                          \
+            ray_transforms,                   \
+            colors,                           \
+            opacities,                        \
+            textures,                         \
+            normals,                          \
+            densify,                          \
+            backgrounds,                      \
+            masks,                            \
+            image_width,                      \
+            image_height,                     \
+            tile_size,                        \
+            tile_offsets,                     \
+            flatten_ids,                      \
+            render_colors,                    \
+            render_alphas,                    \
+            last_ids,                         \
+            median_ids,                       \
+            v_render_colors,                  \
+            v_render_alphas,                  \
+            v_render_normals,                 \
+            v_render_distort,                 \
+            v_render_median,                  \
             absgrad);
 
         switch (COLOR_DIM)

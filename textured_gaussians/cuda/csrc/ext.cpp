@@ -92,6 +92,14 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
         "rasterize_to_pixels_bwd_mip_textured_gaussians",
         &gsplat::rasterize_to_pixels_bwd_mip_textured_gaussians_tensor);
 
+    // Mipmapped Textured Gaussians2
+    m.def(
+        "rasterize_to_pixels_fwd_mip2_textured_gaussians",
+        &gsplat::rasterize_to_pixels_fwd_mip2_textured_gaussians_tensor);
+    m.def(
+        "rasterize_to_pixels_bwd_mip2_textured_gaussians",
+        &gsplat::rasterize_to_pixels_bwd_mip2_textured_gaussians_tensor);
+
     // Anistroptic Textured Gaussians
     m.def(
         "rasterize_to_pixels_fwd_aniso_textured_gaussians",
@@ -122,4 +130,12 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     m.def(
         "rasterize_dct_textures",
         &gsplat::rasterize_dct_textures_tensor);
+
+    m.def(
+        "generate_mipmap_fwd",
+        &gsplat::generate_mipmap_fwd_tensor);
+
+    m.def(
+        "generate_mipmap_bwd",
+        &gsplat::generate_mipmap_bwd_tensor);
 }
