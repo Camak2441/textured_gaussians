@@ -1,8 +1,27 @@
 import os
 from typing import Optional
 
+from examples.texture_models import canonical_model_name
 from utils import get_file_with_max_int
 
+MODEL_SHORTHANDS = {
+    "mix1": """FourierSelector(
+            num_freqs=15,hidden_dims=[24, 24],
+            sub_models=[
+                "SIREN(in_dim=3,hidden_dims=[48,48],out_dim=4,omega_0=20,hidden_omegas=1.00)",
+                "SIREN(in_dim=3,hidden_dims=[48,48],out_dim=4,omega_0=30,hidden_omegas=1.25)",
+                "SIREN(in_dim=3,hidden_dims=[48,48],out_dim=4,omega_0=40,hidden_omegas=1.50)",
+                "SIREN(in_dim=3,hidden_dims=[48,48],out_dim=4,omega_0=50,hidden_omegas=1.75)",
+                "SIREN(in_dim=3,hidden_dims=[48,48],out_dim=4,omega_0=60,hidden_omegas=2.00)",
+                "FourierMLP(in_dim=3,hidden_dims=[48,48],out_dim=4,num_frequencies=128,sigma=[1000,1,1])",
+                "FourierMLP(in_dim=3,hidden_dims=[48,48],out_dim=4,num_frequencies=128,sigma=[1000,2,2])",
+                "FourierMLP(in_dim=3,hidden_dims=[48,48],out_dim=4,num_frequencies=128,sigma=[1000,3,3])"
+            ]
+        )""",
+    "fourier1": """FourierMLP(
+        in_dim=3,hidden_dims=[128,128,128],out_dim=4,num_frequencies=128,sigma=[1000,3,3]
+    )""",
+}
 
 NERF_SYNTHETIC = {
     "data_dir": "nerf_synthetic/{path_name}",
@@ -78,6 +97,10 @@ def process_config(cfg):
         cfg.saved_texture_width = cfg.saved_texture_resolution
         cfg.saved_texture_height = cfg.saved_texture_resolution
 
+    if cfg.texture_model is not None:
+        if cfg.texture_model not in MODEL_SHORTHANDS:
+            cfg.texture_model = canonical_model_name(cfg.texture_model)
+
     # Configure information based on the selected scene
     if cfg.scene is not None:
         assert cfg.scene in SCENES
@@ -147,3 +170,9 @@ def process_config(cfg):
                     f"{ckpt_dir}/ckpt_{start}.pt",
                     f"{ckpt_dir}/train_state_{start}.pt",
                 )
+
+    if cfg.texture_model is not None:
+        if cfg.texture_model in MODEL_SHORTHANDS:
+            cfg.texture_model = canonical_model_name(
+                MODEL_SHORTHANDS[cfg.texture_model]
+            )
