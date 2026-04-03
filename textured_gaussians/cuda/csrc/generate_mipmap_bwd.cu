@@ -73,7 +73,7 @@ namespace gsplat
     {
         uint32_t texture_res = 1 << log_texture_res;
 
-        uint32_t removed_texels = t_base_index(log_texture_res, 0);
+        uint32_t removed_texels = t_base_index_host(log_texture_res, 0);
 
         // Each block covers a tile on the image. In total there are
         // C * tile_height * tile_width blocks.
@@ -123,7 +123,7 @@ namespace gsplat
             reduced_texture_res <<= log_reduce;
         }
 
-        return v_mip_textures.index({"...", Slice(removed_texels, removed_texels + texture_res * texture_res), "..."}).reshape({N, texture_res, texture_res, channels});
+        return v_mip_textures.index({torch::indexing::Slice(), torch::indexing::Slice(removed_texels, removed_texels + texture_res * texture_res), torch::indexing::Slice()}).reshape({N, texture_res, texture_res, channels});
     }
 
     torch::Tensor

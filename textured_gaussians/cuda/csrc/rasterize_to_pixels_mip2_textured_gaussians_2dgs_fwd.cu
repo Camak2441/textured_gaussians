@@ -315,7 +315,7 @@ namespace gsplat
                                              maxyray_cross.y / maxyray_cross.z - minyray_cross.y / minyray_cross.z);
 
                 // calculate texture coordinates and trilinear interpolation weights
-                uint32_t mipcoords[8];
+                int32_t mipcoords[8];
                 S trilerp_weights[8];
                 int32_t valid_texture = compute_trilinear_coords_weights2(s.x, s.y, dsdx, dsdy, texture_res, log_texture_res, mipcoords, trilerp_weights);
 

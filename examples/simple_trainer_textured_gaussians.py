@@ -249,7 +249,9 @@ class Config:
     saved_texture_width: Optional[int] = None
     saved_texture_height: Optional[int] = None
     textured_rgb: bool = False
+    textured_rgb_clamp: Literal["normalize", "clamp", "sigmoid"] = "clamp"
     textured_alpha: bool = False
+    textured_alpha_clamp: Literal["normalize", "clamp", "sigmoid"] = "normalize"
 
     filtering: Literal["bilinear", "mipmapped", "mipmapped2", "anisotropic"] = (
         "bilinear"
@@ -582,15 +584,30 @@ class Runner:
             rgb_textures = torch.zeros_like(textures[..., :3])  # [N, L, L, 3]
         else:
             rgb_textures = textures[..., :3]  # [N, L, L, 3]
+            match self.cfg.textured_rgb_clamp:
+                case "normalize":
+                    rgb_textures /= rgb_textures.amax(dim=[1, 2], keepdim=True) + 1e-6
+                    rgb_textures = rgb_textures.clamp(0.0, 1.0)
+                case "clamp":
+                    rgb_textures = rgb_textures.clamp(0.0, 1.0)
+                case "sigmoid":
+                    rgb_textures = rgb_textures.sigmoid()
         if not self.cfg.textured_alpha:
             alpha_textures = torch.ones_like(textures[..., 3:4])  # [N, L, L, 1]
         else:
             alpha_textures = textures[..., 3:4]  # [N, L, L, 1]
-            alpha_textures = alpha_textures / (
-                alpha_textures.amax(dim=[1, 2], keepdim=True) + 1e-6
-            )  # normalize so that the max is 1
+            match self.cfg.textured_alpha_clamp:
+                case "normalize":
+                    alpha_textures /= (
+                        alpha_textures.amax(dim=[1, 2], keepdim=True) + 1e-6
+                    )  # normalize so that the max is 1
+                    alpha_textures = alpha_textures.clamp(0.0, 1.0)
+                case "clamp":
+                    alpha_textures = alpha_textures.clamp(0.0, 1.0)
+                case "sigmoid":
+                    alpha_textures = alpha_textures.sigmoid()
+
         textures = torch.cat([rgb_textures, alpha_textures], dim=-1)  # [N, L, L, 4]
-        textures = textures.clamp(0.0, 1.0)
         return textures
 
     @torch.no_grad()
@@ -1116,17 +1133,18 @@ class Runner:
                 colors, depths = renders, None
 
             if cfg.background_mode is not None:
-                if cfg.background_mode == "random":
-                    bkgd = torch.rand(1, 3, device=device)
-                    colors = colors + bkgd * (1.0 - alphas)
-                elif cfg.background_mode == "white":
-                    colors = colors + 1.0 * (1.0 - alphas)
-                elif cfg.background_mode == "black":
-                    colors = colors + 0.0 * (1.0 - alphas)
-                else:
-                    raise ValueError(
-                        f"Background mode {cfg.background_mode} not supported!"
-                    )
+                match cfg.background_mode:
+                    case "random":
+                        bkgd = torch.rand(1, 3, device=device)
+                        colors = colors + bkgd * (1.0 - alphas)
+                    case "white":
+                        colors = colors + 1.0 * (1.0 - alphas)
+                    case "black":
+                        colors = colors + 0.0 * (1.0 - alphas)
+                    case _:
+                        raise ValueError(
+                            f"Background mode {cfg.background_mode} not supported!"
+                        )
 
             self.strategy.step_pre_backward(
                 params=self.splats,

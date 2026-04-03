@@ -71,7 +71,7 @@ namespace gsplat
         uint32_t texture_res = 1 << log_texture_res;
         uint32_t channels = textures.size(3);
 
-        uint32_t added_texels = t_base_index(log_texture_res, 0);
+        uint32_t added_texels = t_base_index_host(log_texture_res, 0);
 
         torch::Tensor mip_textures = torch::cat({torch::empty(
                                                      {N, added_texels, channels},

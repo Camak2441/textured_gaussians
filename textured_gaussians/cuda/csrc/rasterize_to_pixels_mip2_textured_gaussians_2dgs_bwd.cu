@@ -317,7 +317,7 @@ namespace gsplat
                 vec3<S> w_M;       // depth component of the ray transform matrix, per pixel
 
                 // texture coordinates and bilinear interpolation weights
-                uint32_t mipcoords[8];
+                int32_t mipcoords[8];
                 S trilerp_weights[8];
                 int32_t valid_texture = -1;
 
