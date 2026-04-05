@@ -4,7 +4,7 @@ results_dir="../results/2dgs"
 python simple_trainer_textured_gaussians.py mcmc \
     --scene "$1" \
     --init_extent 1 \
-    --init_type "random" \
+    --init_type=random \
     --background_mode "white" \
     --model_type=2dgs \
     --init_num_pts=10000 \

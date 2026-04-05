@@ -4,7 +4,7 @@ results_dir="../results/implicit_textured_gaussians_rgba"
 python simple_trainer_textured_gaussians.py mcmc \
     --scene "$1" \
     --init_extent 1 \
-    --init_type "pretrained" \
+    --init_type=pretrained \
     --background_mode "white" \
     --model_type=itgs \
     --texture_model "$2" \

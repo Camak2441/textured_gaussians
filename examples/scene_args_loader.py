@@ -159,7 +159,7 @@ def process_config(cfg):
             print("Dataset does not have alpha channels. Disabling alpha loss.")
             cfg.alpha_loss = False
 
-        if cfg.pretrained_path is None:
+        if cfg.pretrained_path is None and cfg.init_type == "pretrained":
             pretrained_dir = f"../results/{scene_args["pretrained_dir"]}"
             _, ckpt_path = get_file_with_max_int(pretrained_dir, "ckpt_", ".pt")
             if ckpt_path is None:

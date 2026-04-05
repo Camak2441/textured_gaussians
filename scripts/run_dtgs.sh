@@ -7,7 +7,7 @@ python simple_trainer_textured_gaussians.py mcmc \
     --result_dir "${results_dir}/chair" \
     --dataset "blender" \
     --init_extent 1 \
-    --init_type "pretrained" \
+    --init_type=pretrained \
     --background_mode "white" \
     --model_type=dct_textured_gaussians \
     --init_num_pts=10000 \

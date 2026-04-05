@@ -119,7 +119,7 @@ class Config:
     init_step: int = 0
 
     # Initialization strategy
-    init_type: str = "sfm"
+    init_type: Literal["sfm", "pretrained", "random"] = "sfm"
     # Initial number of GSs. Ignored if using sfm
     init_num_pts: int = 100_000
     # Initial extent of GSs as a multiple of the camera extent. Ignored if using sfm
@@ -323,7 +323,9 @@ def create_splats_with_optimizers(
             points = init_extent * scene_scale * (torch.rand((init_num_pts, 3)) * 2 - 1)
             rgbs = torch.rand((init_num_pts, 3))
         case _:
-            raise ValueError("Please specify a correct init_type: sfm or random")
+            raise ValueError(
+                "Please specify a correct init_type: sfm, pretrained, or random"
+            )
 
     if init_type == "pretrained":
         scales = ckpt["scales"][sampled_pts_idx]
