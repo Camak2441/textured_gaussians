@@ -303,16 +303,29 @@ namespace gsplat
                 // calculate texture coordinates and bilinear interpolation weights
                 int32_t valid_texture = 0;
 
-                const S dist = s.x * s.x + s.y * s.y;
+                const S gauss_weight_3d = s.x * s.x + s.y * s.y;
 
-                if (dist <= 9.0)
+                if (gauss_weight_3d <= 9.0)
                     valid_texture = 1;
+
+                // IMPORTANT: This is where the gaussian kernel is evaluated!!!!!
+
+                // projected gaussian kernel
+                const vec2<S> d = {xy_opac.x - px, xy_opac.y - py};
+                // #define FILTER_INV_SQUARE 2.0f
+                const S gauss_weight_2d = FILTER_INV_SQUARE * (d.x * d.x + d.y * d.y);
+
+                // merge ray-intersection kernel and 2d gaussian kernel
+                const S gauss_weight = min(gauss_weight_3d, gauss_weight_2d);
+
+                const S sigma = 0.5f * gauss_weight;
+                const S alpha_approx = min(0.999f, opac * __expf(-sigma));
 
                 int sample_num = -1;
                 if (valid_texture > 0)
                 {
                     sample_num = sample_counts[pix_id];
-                    if (sample_num < num_texture_samples && opac > opac_threshold)
+                    if (sample_num < num_texture_samples && alpha_approx > opac_threshold)
                     {
                         atomicAdd(sample_counts + pix_id, 1);
                     }
@@ -332,23 +345,8 @@ namespace gsplat
                 {
                     alpha_scaling_factor = 1.0f;
                 }
-
-                // IMPORTANT: This is where the gaussian kernel is evaluated!!!!!
-
-                // point of interseciton in uv space
-                const S gauss_weight_3d = s.x * s.x + s.y * s.y;
-
-                // projected gaussian kernel
-                const vec2<S> d = {xy_opac.x - px, xy_opac.y - py};
-                // #define FILTER_INV_SQUARE 2.0f
-                const S gauss_weight_2d = FILTER_INV_SQUARE * (d.x * d.x + d.y * d.y);
-
-                // merge ray-intersection kernel and 2d gaussian kernel
-                const S gauss_weight = min(gauss_weight_3d, gauss_weight_2d);
-
-                const S sigma = 0.5f * gauss_weight;
                 // evaluation of the gaussian exponential term
-                S alpha = min(0.999f, opac * __expf(-sigma) * alpha_scaling_factor);
+                const S alpha = min(0.999f, opac * __expf(-sigma) * alpha_scaling_factor);
 
                 // ignore transparent gaussians
                 if (sigma < 0.f || alpha < 1.f / 255.f)

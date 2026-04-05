@@ -322,7 +322,6 @@ namespace gsplat
                 vec3<S> h_v;       // homogeneous plane parameter for vs, per pixel
                 vec3<S> ray_cross; // ray cross product, the ray of plane intersection, per pixel
                 vec3<S> w_M;       // depth component of the ray transform matrix, per pixel
-                S dist;
                 int32_t sample_num = -1;
 
                 // texture coordinates and bilinear interpolation weights
@@ -357,15 +356,26 @@ namespace gsplat
                         valid = false;
                     s = {ray_cross.x / ray_cross.z, ray_cross.y / ray_cross.z};
 
-                    dist = s.x * s.x + s.y * s.y;
-
                     // compute texture coordinates and bilinear interpolation weights
                     valid_texture = 0;
 
-                    if (dist <= 9.0)
+                    // GAUSSIAN KERNEL EVALUATION
+                    gauss_weight_3d = s.x * s.x + s.y * s.y;
+                    d = {xy_opac.x - px, xy_opac.y - py};
+
+                    // 2D gaussian weight using the projected 2D mean
+                    gauss_weight_2d = FILTER_INV_SQUARE * (d.x * d.x + d.y * d.y);
+                    gauss_weight = min(gauss_weight_3d, gauss_weight_2d);
+
+                    // visibility and alpha
+                    const S sigma = 0.5f * gauss_weight;
+                    vis = __expf(-sigma);
+                    const S alpha_approx = min(0.999f, opac * vis);
+
+                    if (gauss_weight_3d <= 9.0)
                     {
                         valid_texture = 1;
-                        if (opac > opac_threshold)
+                        if (alpha_approx > opac_threshold)
                         {
                             sample_num = sample_counts[pix_id];
                             if (sample_num > 0 && sample_num % 2 == 0)
@@ -396,17 +406,6 @@ namespace gsplat
                     }
                     // printf("alpha_scaling_factor: %f\n", alpha_scaling_factor);
 
-                    // GAUSSIAN KERNEL EVALUATION
-                    gauss_weight_3d = s.x * s.x + s.y * s.y;
-                    d = {xy_opac.x - px, xy_opac.y - py};
-
-                    // 2D gaussian weight using the projected 2D mean
-                    gauss_weight_2d = FILTER_INV_SQUARE * (d.x * d.x + d.y * d.y);
-                    gauss_weight = min(gauss_weight_3d, gauss_weight_2d);
-
-                    // visibility and alpha
-                    const S sigma = 0.5f * gauss_weight;
-                    vis = __expf(-sigma);
                     alpha = min(0.999f, opac * vis * alpha_scaling_factor); // clipped alpha
 
                     // gaussian throw out
@@ -631,7 +630,11 @@ namespace gsplat
                     GSPLAT_PRAGMA_UNROLL
                     for (uint32_t k = 0; k < COLOR_DIM; ++k)
                     {
-                        buffer[k] += (tex_colors[k] + rgbs_batch[t * COLOR_DIM + k]) * fac;
+                        // Use only the color that was actually rendered (texture or base, not both)
+                        auto used_color = (valid_texture > 0 && sample_num >= 0)
+                            ? tex_colors[k]
+                            : rgbs_batch[t * COLOR_DIM + k];
+                        buffer[k] += used_color * fac;
                     }
 
                     /**

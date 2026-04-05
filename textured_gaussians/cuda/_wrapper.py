@@ -2058,7 +2058,7 @@ def rasterize_to_pixels_implicit_textured_gaussians(
     distloss: bool = False,
     gs_contrib_threshold: float = 0.0,  # added
     num_texture_samples: int = 10,  # added
-    opac_threshold: float = 0.001,
+    opac_threshold: float = 0.1,
 ) -> Tuple[Tensor, Tensor]:
     """Rasterize Textured Gaussians to pixels.
 

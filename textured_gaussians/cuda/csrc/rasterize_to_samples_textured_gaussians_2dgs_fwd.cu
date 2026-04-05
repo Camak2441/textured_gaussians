@@ -261,11 +261,25 @@ namespace gsplat
 
                 int32_t valid_texture = 0;
 
-                const S dist = s.x * s.x + s.y * s.y;
-                if (dist <= 9.0)
+                const S gauss_weight_3d = s.x * s.x + s.y * s.y;
+                if (gauss_weight_3d <= 9.0)
                     valid_texture = 1;
 
-                if (valid_texture > 0 && opac > opac_threshold)
+                // point of interseciton in uv space
+
+                // projected gaussian kernel
+                const vec2<S> d = {xy_opac.x - px, xy_opac.y - py};
+                // #define FILTER_INV_SQUARE 2.0f
+                const S gauss_weight_2d = FILTER_INV_SQUARE * (d.x * d.x + d.y * d.y);
+
+                // merge ray-intersection kernel and 2d gaussian kernel
+                const S gauss_weight = min(gauss_weight_3d, gauss_weight_2d);
+
+                const S sigma = 0.5f * gauss_weight;
+                // evaluation of the gaussian exponential term
+                const S alpha_approx = min(0.999f, opac * __expf(-sigma));
+
+                if (valid_texture > 0 && alpha_approx > opac_threshold)
                 {
                     const vec3<S> texture_input = vec3<S>(g / (N - 1.0), s.x / 6.0 + 0.5, s.y / 6.0 + 0.5);
 
