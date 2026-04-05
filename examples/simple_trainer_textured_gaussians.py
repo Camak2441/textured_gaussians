@@ -601,7 +601,7 @@ class Runner:
             alpha_textures = textures[..., 3:4]  # [N, L, L, 1]
             match self.cfg.textured_alpha_clamp:
                 case "normalize":
-                    alpha_textures /= (
+                    alpha_textures = alpha_textures / (
                         alpha_textures.amax(dim=[1, 2], keepdim=True) + 1e-6
                     )  # normalize so that the max is 1
                     alpha_textures = alpha_textures.clamp(0.0, 1.0)
