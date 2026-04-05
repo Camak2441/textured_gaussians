@@ -1,18 +1,22 @@
 import json
 from texture_models.utils import add_dict, check_keys_are_in_order, quote_json
-from texture_models.mlp import MLP, FourierMLP, FourierSelector
+from texture_models.mlp import MLP, FourierMLP, FourierSelector, FourierSelector2
 from texture_models.siren import SIREN
+from texture_models.debug import ConstColor
 
 MODEL_PREFIXES = {
     "FourierMLP": FourierMLP,
     "MLP": MLP,
     "SIREN": SIREN,
     "FourierSelector": FourierSelector,
+    "FourierSelector2": FourierSelector2,
+    "ConstColor": ConstColor,
 }
 
 
 GET_SUBMODEL_ARGS = {
     "FourierSelector": {},
+    "FourierSelector2": {},
 }
 
 

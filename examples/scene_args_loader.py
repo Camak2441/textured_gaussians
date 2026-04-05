@@ -18,9 +18,23 @@ MODEL_SHORTHANDS = {
                 "FourierMLP(in_dim=3,hidden_dims=[48,48],out_dim=4,num_frequencies=128,sigma=[1000,3,3])"
             ]
         )""",
+    "mix2": """FourierSelector2(
+            num_freqs=15,hidden_dims=[24, 24],
+            sub_models=[
+                "SIREN(in_dim=3,hidden_dims=[48,48],out_dim=4,omega_0=20,hidden_omegas=1.00)",
+                "SIREN(in_dim=3,hidden_dims=[48,48],out_dim=4,omega_0=30,hidden_omegas=1.25)",
+                "SIREN(in_dim=3,hidden_dims=[48,48],out_dim=4,omega_0=40,hidden_omegas=1.50)",
+                "SIREN(in_dim=3,hidden_dims=[48,48],out_dim=4,omega_0=50,hidden_omegas=1.75)",
+                "SIREN(in_dim=3,hidden_dims=[48,48],out_dim=4,omega_0=60,hidden_omegas=2.00)",
+                "FourierMLP(in_dim=3,hidden_dims=[48,48],out_dim=4,num_frequencies=128,sigma=[1000,1,1])",
+                "FourierMLP(in_dim=3,hidden_dims=[48,48],out_dim=4,num_frequencies=128,sigma=[1000,2,2])",
+                "FourierMLP(in_dim=3,hidden_dims=[48,48],out_dim=4,num_frequencies=128,sigma=[1000,3,3])"
+            ]
+        )""",
     "fourier1": """FourierMLP(
         in_dim=3,hidden_dims=[128,128,128],out_dim=4,num_frequencies=128,sigma=[1000,3,3]
     )""",
+    "red": "ConstColor(out_color=[1,0,0,1])",
 }
 
 NERF_SYNTHETIC = {

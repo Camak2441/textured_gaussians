@@ -2010,10 +2010,7 @@ def rasterize_to_pixels_textured_gaussians(
 def rasterize_to_samples(
     means2d: Tensor,
     ray_transforms: Tensor,
-    colors: Tensor,
     opacities: Tensor,
-    normals: Tensor,
-    backgrounds: Tensor,
     masks: Tensor,
     width: int,
     height: int,
@@ -2021,16 +2018,14 @@ def rasterize_to_samples(
     isect_offsets: Tensor,
     flatten_ids: Tensor,
     num_texture_samples: int,
+    opac_threshold: float,
 ) -> Tuple[Tensor, Tensor, Tensor]:
     (sample_counts, sample_gaussian_ids, texture_inputs) = _make_lazy_cuda_func(
         "rasterize_to_samples_fwd_textured_gaussians"
     )(
         means2d,
         ray_transforms,
-        colors,
         opacities,
-        normals,
-        backgrounds,
         masks,
         width,
         height,
@@ -2038,6 +2033,7 @@ def rasterize_to_samples(
         isect_offsets,
         flatten_ids,
         num_texture_samples,
+        opac_threshold,
     )
     return sample_counts, sample_gaussian_ids, texture_inputs
 
@@ -2062,6 +2058,7 @@ def rasterize_to_pixels_implicit_textured_gaussians(
     distloss: bool = False,
     gs_contrib_threshold: float = 0.0,  # added
     num_texture_samples: int = 10,  # added
+    opac_threshold: float = 0.001,
 ) -> Tuple[Tensor, Tensor]:
     """Rasterize Textured Gaussians to pixels.
 
@@ -2147,10 +2144,7 @@ def rasterize_to_pixels_implicit_textured_gaussians(
     sample_counts, sample_gaussian_ids, texture_inputs = rasterize_to_samples(
         means2d.contiguous(),
         ray_transforms.contiguous(),
-        colors.contiguous(),
         opacities.contiguous(),
-        normals.contiguous(),
-        backgrounds,
         masks,
         image_width,
         image_height,
@@ -2158,6 +2152,7 @@ def rasterize_to_pixels_implicit_textured_gaussians(
         isect_offsets.contiguous(),
         flatten_ids.contiguous(),
         num_texture_samples,
+        opac_threshold,
     )  # Texture inputs: [C, image_height, image_width, sample_count, INPUT_DIM (3)]
 
     texture_inputs = torch.reshape(
@@ -2203,6 +2198,7 @@ def rasterize_to_pixels_implicit_textured_gaussians(
         distloss,
         gs_contrib_threshold,  # added
         num_texture_samples,
+        opac_threshold,
     )
 
     if padded_channels > 0:
@@ -3399,6 +3395,7 @@ class _RasterizeToPixelsImplicitTexturedGaussians(torch.autograd.Function):
         distloss: bool,
         gs_contrib_threshold: float,  # added
         num_texture_samples: int,
+        opac_threshold: float,
     ) -> Tuple[Tensor, Tensor]:
         (
             render_colors,
@@ -3423,11 +3420,10 @@ class _RasterizeToPixelsImplicitTexturedGaussians(torch.autograd.Function):
             tile_size,
             isect_offsets,
             flatten_ids,
-            sample_counts,
-            sample_gaussian_ids,
             texture_outputs,
             gs_contrib_threshold,  # added
             num_texture_samples,
+            opac_threshold,
         )
 
         ctx.save_for_backward(
@@ -3442,6 +3438,8 @@ class _RasterizeToPixelsImplicitTexturedGaussians(torch.autograd.Function):
             isect_offsets,
             flatten_ids,
             texture_outputs,
+            sample_counts,
+            sample_gaussian_ids,
             render_colors,
             render_alphas,
             last_ids,
@@ -3451,6 +3449,7 @@ class _RasterizeToPixelsImplicitTexturedGaussians(torch.autograd.Function):
         ctx.height = height
         ctx.tile_size = tile_size
         ctx.num_texture_samples = num_texture_samples
+        ctx.opac_threshold = opac_threshold
         ctx.absgrad = absgrad
         ctx.distloss = distloss
 
@@ -3490,6 +3489,8 @@ class _RasterizeToPixelsImplicitTexturedGaussians(torch.autograd.Function):
             isect_offsets,
             flatten_ids,
             texture_outputs,
+            sample_counts,
+            sample_gaussian_ids,
             render_colors,
             render_alphas,
             last_ids,
@@ -3499,6 +3500,7 @@ class _RasterizeToPixelsImplicitTexturedGaussians(torch.autograd.Function):
         height = ctx.height
         tile_size = ctx.tile_size
         num_texture_samples = ctx.num_texture_samples
+        opac_threshold = ctx.opac_threshold
         absgrad = ctx.absgrad
 
         (
@@ -3525,7 +3527,10 @@ class _RasterizeToPixelsImplicitTexturedGaussians(torch.autograd.Function):
             isect_offsets,
             flatten_ids,
             texture_outputs,
+            sample_counts.clone(),
+            sample_gaussian_ids,
             num_texture_samples,
+            opac_threshold,
             render_colors,
             render_alphas,
             last_ids,
@@ -3556,19 +3561,19 @@ class _RasterizeToPixelsImplicitTexturedGaussians(torch.autograd.Function):
             v_normals,
             v_densify,
             v_backgrounds,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            None,  # normals
+            None,  # densify
+            None,  # backgrounds
+            None,  # masks
+            None,  # tile size
+            None,  # width
+            None,  # height
+            None,  # isect_offsets
+            None,  # flatten_ids
             v_texture_outputs,
-            None,
-            None,
-            None,  # added for gs_contrib_threshold
-            None,  # added for num_texture_samples
+            None,  # gs_contrib_threshold
+            None,  # num_texture_samples
+            None,  # opac_threshold
         )
 
 

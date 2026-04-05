@@ -1,7 +1,5 @@
 cd ../examples
 export CUDA_VISIBLE_DEVICES=${2:-0}
-# Ensure the JIT compiler uses the correct CUDA version
-export TORCH_CUDA_ARCH_LIST="12.0"
 results_dir="../results/2dgs"
 python simple_trainer_textured_gaussians.py mcmc \
     --scene "$1" \

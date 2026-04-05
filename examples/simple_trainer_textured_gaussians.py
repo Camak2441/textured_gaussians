@@ -512,7 +512,10 @@ class Runner:
         self.strategy_state = self.cfg.strategy.initialize_state()
 
         self.texture_optimizers = []
-        if self.texture_model is not None:
+        if (
+            self.texture_model is not None
+            and len(list(self.texture_model.parameters())) > 0
+        ):
             self.texture_optimizers = [
                 torch.optim.Adam(
                     self.texture_model.parameters(),

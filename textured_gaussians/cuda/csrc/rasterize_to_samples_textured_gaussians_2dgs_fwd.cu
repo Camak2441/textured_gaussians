@@ -21,7 +21,7 @@ namespace gsplat
     /**
      * This function generates the tensor of inputs to the texture model.
      */
-    template <uint32_t COLOR_DIM, typename S>
+    template <typename S>
     __global__ void rasterize_to_samples_fwd_implicit_textured_gaussians_kernel(
         const uint32_t C,                     // number of cameras
         const uint32_t N,                     // number of gaussians
@@ -30,10 +30,7 @@ namespace gsplat
         const vec2<S> *__restrict__ means2d,  // Projected Gaussian means. [C, N, 2] if packed is False, [nnz, 2] if packed is True.
         const S *__restrict__ ray_transforms, // transformation matrices that transforms xy-planes in pixel spaces into splat coordinates. [C, N, 3, 3] if packed is False, [nnz, channels] if packed is True.
                                               // This is (KWH)^{-1} in the paper (takes screen [x,y] and map to [u,v])
-        const S *__restrict__ colors,         // [C, N, COLOR_DIM] or [nnz, COLOR_DIM]  // Gaussian colors or ND features.
         const S *__restrict__ opacities,      // [C, N] or [nnz]                        // Gaussian opacities that support per-view values.
-        const S *__restrict__ normals,        // [C, N, 3] or [nnz, 3]                  // The normals in camera space.
-        const S *__restrict__ backgrounds,    // [C, COLOR_DIM]                         // Background colors on camera basis
         const bool *__restrict__ masks,       // [C, tile_height, tile_width]            // Optional tile mask to skip rendering GS to masked tiles.
         const uint32_t image_width,
         const uint32_t image_height,
@@ -44,6 +41,7 @@ namespace gsplat
                                                   // gives the interval that our gaussians are gonna use.
         const int32_t *__restrict__ flatten_ids,  // [n_isects]                      // The global flatten indices in [C * N] or [nnz] from  `isect_tiles()`.
         const uint32_t num_texture_samples,
+        const S opac_threshold,
 
         // outputs
         int32_t *__restrict__ sample_counts,       // [C, image_height, image_width]
@@ -79,10 +77,6 @@ namespace gsplat
         texture_inputs += camera_id * image_height * image_width * num_texture_samples * 3;
 
         // get the global offset of the background and mask
-        if (backgrounds != nullptr)
-        {
-            backgrounds += camera_id * COLOR_DIM;
-        }
         if (masks != nullptr)
         {
             masks += camera_id * tile_height * tile_width;
@@ -154,15 +148,6 @@ namespace gsplat
         // designated pixel
         uint32_t tr = block.thread_rank();
 
-        // Per-pixel distortion error proposed in Mip-NeRF 360.
-        // Implemented reference:
-        // https://github.com/nerfstudio-project/nerfacc/blob/master/nerfacc/losses.py#L7
-        S distort = 0.f;
-        S accum_vis_depth = 0.f; // accumulate vis * depth
-
-        // keep track of median depth contribution
-        S median_depth = 0.f;
-
         /**
          * ==============================
          * Per-pixel rendering: (2DGS Differentiable Rasterizer Forward Pass)
@@ -171,10 +156,6 @@ namespace gsplat
          * ==============================
          */
 
-        // TODO (WZ): merge pix_out and normal_out to
-        //  S pix_out[COLOR_DIM + 3] = {0.f}
-        S pix_out[COLOR_DIM] = {0.f};
-        S normal_out[3] = {0.f};
         for (uint32_t b = 0; b < num_batches; ++b)
         {
             // resync all threads before beginning next batch
@@ -184,20 +165,16 @@ namespace gsplat
                 break;
             }
 
-            const int32_t batch_end = range_end - 1 - block_size * b;
-            const int32_t batch_size = min(block_size, batch_end + 1 - range_start);
-
-            // VERY IMPORTANT HERE!
-            // we are looping from back to front
-            // so we are processing the gaussians in the order of closest to furthest
-            // if you use symbolic solver on splatting rendering equations you will see
-            const int32_t idx = batch_end - tr;
+            // each thread fetch 1 gaussian from front to back
+            // index of gaussian to load
+            uint32_t batch_start = range_start + block_size * b;
+            uint32_t idx = batch_start + tr;
 
             // only threads within the range of the tile will fetch gaussians
             /**
              * Launch this block with each thread responsible for one gaussian.
              */
-            if (idx >= range_start)
+            if (idx < range_end)
             {
                 int32_t g = flatten_ids[idx]; // flatten index in [C * N] or [nnz]
                 id_batch[tr] = g;
@@ -260,7 +237,7 @@ namespace gsplat
              * Note: in some cases, we use the minimum of ray-intersection kernels and 2D projected gaussian kernels
              */
             // process gaussians in the current batch for this pixel
-
+            uint32_t batch_size = min(block_size, range_end - batch_start);
             for (uint32_t t = 0; (t < batch_size) && !done; ++t)
             {
                 int32_t g = id_batch[t]; // id of the gaussian currently being rendered
@@ -288,7 +265,7 @@ namespace gsplat
                 if (dist <= 9.0)
                     valid_texture = 1;
 
-                if (valid_texture > 0)
+                if (valid_texture > 0 && opac > opac_threshold)
                 {
                     const vec3<S> texture_input = vec3<S>(g / (N - 1.0), s.x / 6.0 + 0.5, s.y / 6.0 + 0.5);
 
@@ -302,25 +279,26 @@ namespace gsplat
                         texture_inputs[(pix_id * num_texture_samples + sample) * 3 + 1] = texture_input[1];
                         texture_inputs[(pix_id * num_texture_samples + sample) * 3 + 2] = texture_input[2];
                     }
+                    else
+                    {
+                        done = true;
+                        break;
+                    }
                 }
             }
         }
     }
 
-    template <uint32_t CDIM>
     std::tuple<
         torch::Tensor,
         torch::Tensor,
         torch::Tensor>
-    call_samples_kernel_with_dim(
+    rasterize_to_samples_fwd_textured_gaussians_tensor(
         // Gaussian parameters
-        const torch::Tensor &means2d,                   // [C, N, 2] or [nnz, 2]
-        const torch::Tensor &ray_transforms,            // [C, N, 3, 3] or [nnz, 3, 3]
-        const torch::Tensor &colors,                    // [C, N, channels] or [nnz, channels]
-        const torch::Tensor &opacities,                 // [C, N]  or [nnz]
-        const torch::Tensor &normals,                   // [C, N, 3]
-        const at::optional<torch::Tensor> &backgrounds, // [C, channels]
-        const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
+        const torch::Tensor &means2d,             // [C, N, 2] or [nnz, 2]
+        const torch::Tensor &ray_transforms,      // [C, N, 3, 3] or [nnz, 3, 3]
+        const torch::Tensor &opacities,           // [C, N]  or [nnz]
+        const at::optional<torch::Tensor> &masks, // [C, tile_height, tile_width]
         // image size
         const uint32_t image_width,
         const uint32_t image_height,
@@ -329,20 +307,15 @@ namespace gsplat
         const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
         const torch::Tensor &flatten_ids,  // [n_isects]
 
-        const uint32_t num_texture_samples)
+        const uint32_t num_texture_samples,
+        const float opac_threshold)
     {
         GSPLAT_DEVICE_GUARD(means2d);
         GSPLAT_CHECK_INPUT(means2d);
         GSPLAT_CHECK_INPUT(ray_transforms);
-        GSPLAT_CHECK_INPUT(colors);
         GSPLAT_CHECK_INPUT(opacities);
-        GSPLAT_CHECK_INPUT(normals);
         GSPLAT_CHECK_INPUT(tile_offsets);
         GSPLAT_CHECK_INPUT(flatten_ids);
-        if (backgrounds.has_value())
-        {
-            GSPLAT_CHECK_INPUT(backgrounds.value());
-        }
         if (masks.has_value())
         {
             GSPLAT_CHECK_INPUT(masks.value());
@@ -351,7 +324,6 @@ namespace gsplat
 
         uint32_t C = tile_offsets.size(0);         // number of cameras
         uint32_t N = packed ? 0 : means2d.size(1); // number of gaussians
-        uint32_t channels = colors.size(-1);
         uint32_t tile_height = tile_offsets.size(1);
         uint32_t tile_width = tile_offsets.size(2);
         uint32_t n_isects = flatten_ids.size(0);
@@ -382,7 +354,7 @@ namespace gsplat
         // channels into the kernel functions and avoid necessary global memory
         // writes. This requires moving the channel padding from python to C side.
         if (cudaFuncSetAttribute(
-                rasterize_to_samples_fwd_implicit_textured_gaussians_kernel<CDIM, float>,
+                rasterize_to_samples_fwd_implicit_textured_gaussians_kernel<float>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
                 shared_mem) != cudaSuccess)
         {
@@ -391,7 +363,7 @@ namespace gsplat
                 shared_mem,
                 " bytes), try lowering tile_size.");
         }
-        rasterize_to_samples_fwd_implicit_textured_gaussians_kernel<CDIM, float>
+        rasterize_to_samples_fwd_implicit_textured_gaussians_kernel<float>
             <<<blocks, threads, shared_mem, stream>>>(
                 C,
                 N,
@@ -399,11 +371,7 @@ namespace gsplat
                 packed,
                 reinterpret_cast<vec2<float> *>(means2d.data_ptr<float>()),
                 ray_transforms.data_ptr<float>(),
-                colors.data_ptr<float>(),
                 opacities.data_ptr<float>(),
-                normals.data_ptr<float>(),
-                backgrounds.has_value() ? backgrounds.value().data_ptr<float>()
-                                        : nullptr,
                 masks.has_value() ? masks.value().data_ptr<bool>() : nullptr,
                 image_width,
                 image_height,
@@ -414,6 +382,7 @@ namespace gsplat
                 flatten_ids.data_ptr<int32_t>(),
 
                 num_texture_samples,
+                opac_threshold,
 
                 sample_counts.data_ptr<int32_t>(),
                 sample_gaussian_ids.data_ptr<int32_t>(),
@@ -424,75 +393,4 @@ namespace gsplat
             sample_gaussian_ids,
             texture_inputs);
     }
-
-    std::tuple<
-        torch::Tensor,
-        torch::Tensor,
-        torch::Tensor>
-    rasterize_to_samples_fwd_textured_gaussians_tensor(
-        // Gaussian parameters
-        const torch::Tensor &means2d,                   // [C, N, 2] or [nnz, 2]
-        const torch::Tensor &ray_transforms,            // [C, N, 3, 3] or [nnz, 3, 3]
-        const torch::Tensor &colors,                    // [C, N, channels] or [nnz, channels]
-        const torch::Tensor &opacities,                 // [C, N]  or [nnz]
-        const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
-        const at::optional<torch::Tensor> &backgrounds, // [C, channels]
-        const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
-        // image size
-        const uint32_t image_width,
-        const uint32_t image_height,
-        const uint32_t tile_size,
-        // intersections
-        const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
-        const torch::Tensor &flatten_ids,  // [n_isects]
-        const uint32_t num_texture_samples)
-    {
-        GSPLAT_CHECK_INPUT(colors);
-        uint32_t channels = colors.size(-1);
-
-#define __GS__CALL_(N)                          \
-    case N:                                     \
-        return call_samples_kernel_with_dim<N>( \
-            means2d,                            \
-            ray_transforms,                     \
-            colors,                             \
-            opacities,                          \
-            normals,                            \
-            backgrounds,                        \
-            masks,                              \
-            image_width,                        \
-            image_height,                       \
-            tile_size,                          \
-            tile_offsets,                       \
-            flatten_ids,                        \
-            num_texture_samples);
-        // TODO: an optimization can be done by passing the actual number of
-        // channels into the kernel functions and avoid necessary global memory
-        // writes. This requires moving the channel padding from python to C side.
-        switch (channels)
-        {
-            __GS__CALL_(1)
-            __GS__CALL_(2)
-            __GS__CALL_(3)
-            __GS__CALL_(4)
-            __GS__CALL_(5)
-            // __GS__CALL_(8)
-            // __GS__CALL_(9)
-            // __GS__CALL_(16)
-            // __GS__CALL_(17)
-            // __GS__CALL_(32)
-            // __GS__CALL_(33)
-            // __GS__CALL_(64)
-            // __GS__CALL_(65)
-            // __GS__CALL_(128)
-            // __GS__CALL_(129)
-            // __GS__CALL_(256)
-            // __GS__CALL_(257)
-            // __GS__CALL_(512)
-            // __GS__CALL_(513)
-        default:
-            AT_ERROR("Unsupported number of channels: ", channels);
-        }
-    }
-
 } // namespace gsplat

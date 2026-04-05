@@ -45,9 +45,9 @@ namespace gsplat
         const int32_t *__restrict__ flatten_ids,  // [n_isects]                      // The global flatten indices in [C * N] or [nnz] from  `isect_tiles()`.
         const S gs_contrib_threshold,             // The threshold for gaussian opacity contribution.
         const uint32_t num_texture_samples,
-        int32_t *__restrict__ sample_counts,       // [C, image_height, image_width]
-        int32_t *__restrict__ sample_gaussian_ids, // [C, image_height, image_width]
-        const S *__restrict__ texture_outputs,     // [C, image_height, image_width, samples, COLOR_DIM]
+        const S opac_threshold,
+        const S *__restrict__ texture_outputs, // [C, image_height, image_width, samples, COLOR_DIM]
+        int32_t *__restrict__ sample_counts,   // [C, image_height, image_width]
 
         // outputs
         S *__restrict__ render_colors,    // [C, image_height, image_width, COLOR_DIM]
@@ -89,9 +89,8 @@ namespace gsplat
         render_distort += camera_id * image_height * image_width;
         render_median += camera_id * image_height * image_width;
         median_ids += camera_id * image_height * image_width;
-        sample_counts += camera_id * image_height * image_width;
-        sample_gaussian_ids += camera_id * image_height * image_width;
         texture_outputs += camera_id * image_height * image_width * num_texture_samples * COLOR_DIM;
+        sample_counts += camera_id * image_height * image_width;
 
         // get the global offset of the background and mask
         if (backgrounds != nullptr)
@@ -184,7 +183,7 @@ namespace gsplat
 
         // keep track of median depth contribution
         S median_depth = 0.f;
-        uint32_t median_idx = 0.f;
+        uint32_t median_idx = 0f;
 
         /**
          * ==============================
@@ -313,15 +312,9 @@ namespace gsplat
                 if (valid_texture > 0)
                 {
                     sample_num = sample_counts[pix_id];
-                    if (sample_num > 0 && sample_num % 2 == 0)
+                    if (sample_num < num_texture_samples && opac > opac_threshold)
                     {
-                        atomicAdd(sample_counts + pix_id, -2);
-                        sample_num = (sample_num >> 1) - 1;
-                    }
-                    else if (sample_num > 0 && g == sample_gaussian_ids[pix_id])
-                    {
-                        atomicAdd(sample_counts + pix_id, -3);
-                        sample_num = (sample_num >> 1) - 1;
+                        atomicAdd(sample_counts + pix_id, 1);
                     }
                     else
                     {
@@ -491,12 +484,11 @@ namespace gsplat
         const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
         const torch::Tensor &flatten_ids,  // [n_isects]
 
-        torch::Tensor &sample_counts,
-        const torch::Tensor &sample_gaussian_ids,
         const torch::Tensor &texture_outputs,
         // additional parameters
         const float gs_contrib_threshold,
-        const uint32_t num_texture_samples)
+        const uint32_t num_texture_samples,
+        const float opac_threshold)
     {
         GSPLAT_DEVICE_GUARD(means2d);
         GSPLAT_CHECK_INPUT(means2d);
@@ -535,6 +527,10 @@ namespace gsplat
             tile_size * tile_size *
             (sizeof(int32_t) + sizeof(vec3<float>) + sizeof(vec3<float>) +
              sizeof(vec3<float>) + sizeof(vec3<float>));
+
+        torch::Tensor sample_counts = torch::zeros(
+            {C, image_height, image_width},
+            means2d.options().dtype(torch::kInt32));
 
         torch::Tensor renders = torch::empty(
             {C, image_height, image_width, channels},
@@ -601,9 +597,9 @@ namespace gsplat
                 flatten_ids.data_ptr<int32_t>(),
                 gs_contrib_threshold, // added
                 num_texture_samples,
-                sample_counts.data_ptr<int32_t>(),
-                sample_gaussian_ids.data_ptr<int32_t>(),
+                opac_threshold,
                 texture_outputs.data_ptr<float>(),
+                sample_counts.data_ptr<int32_t>(),
                 renders.data_ptr<float>(),
                 alphas.data_ptr<float>(),
                 render_normals.data_ptr<float>(),
@@ -653,13 +649,12 @@ namespace gsplat
         const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
         const torch::Tensor &flatten_ids,  // [n_isects]
 
-        torch::Tensor &sample_counts,             // [C, image_height, image_width]
-        const torch::Tensor &sample_gaussian_ids, // [C, image_height, image_width]
-        const torch::Tensor &texture_outputs,     // [C, image_height, image_width, num_texture_samples, 3]
+        const torch::Tensor &texture_outputs, // [C, image_height, image_width, num_texture_samples, 3]
 
         // additional parameters
         const float gs_contrib_threshold,
-        const uint32_t num_texture_samples)
+        const uint32_t num_texture_samples,
+        const float opac_threshold)
     {
         GSPLAT_CHECK_INPUT(colors);
         uint32_t channels = colors.size(-1);
@@ -679,11 +674,10 @@ namespace gsplat
             tile_size,                               \
             tile_offsets,                            \
             flatten_ids,                             \
-            sample_counts,                           \
-            sample_gaussian_ids,                     \
             texture_outputs,                         \
             gs_contrib_threshold,                    \
-            num_texture_samples);
+            num_texture_samples,                     \
+            opac_threshold);
         // TODO: an optimization can be done by passing the actual number of
         // channels into the kernel functions and avoid necessary global memory
         // writes. This requires moving the channel padding from python to C side.

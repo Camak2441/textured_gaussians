@@ -780,13 +780,10 @@ namespace gsplat
         torch::Tensor>
     rasterize_to_samples_fwd_textured_gaussians_tensor(
         // Gaussian parameters
-        const torch::Tensor &means2d,                   // [C, N, 2] or [nnz, 2]
-        const torch::Tensor &ray_transforms,            // [C, N, 3, 3] or [nnz, 3, 3]
-        const torch::Tensor &colors,                    // [C, N, channels] or [nnz, channels]
-        const torch::Tensor &opacities,                 // [C, N]  or [nnz]
-        const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
-        const at::optional<torch::Tensor> &backgrounds, // [C, channels]
-        const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
+        const torch::Tensor &means2d,             // [C, N, 2] or [nnz, 2]
+        const torch::Tensor &ray_transforms,      // [C, N, 3, 3] or [nnz, 3, 3]
+        const torch::Tensor &opacities,           // [C, N]  or [nnz]
+        const at::optional<torch::Tensor> &masks, // [C, tile_height, tile_width]
         // image size
         const uint32_t image_width,
         const uint32_t image_height,
@@ -794,7 +791,8 @@ namespace gsplat
         // intersections
         const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
         const torch::Tensor &flatten_ids,  // [n_isects]
-        const uint32_t num_texture_samples);
+        const uint32_t num_texture_samples,
+        const float opac_threshold);
 
     std::tuple<
         torch::Tensor,
@@ -823,12 +821,11 @@ namespace gsplat
         const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
         const torch::Tensor &flatten_ids,  // [n_isects]
 
-        torch::Tensor &sample_counts,             // [C, image_height, image_width]
-        const torch::Tensor &sample_gaussian_ids, // [C, image_height, image_width]
-        const torch::Tensor &texture_outputs,     // [C, image_height, image_width, num_texture_samples, 3]
+        const torch::Tensor &texture_outputs, // [C, image_height, image_width, num_texture_samples, COLOR_DIM]
         // additional parameters
         const float gs_contrib_threshold,
-        const uint32_t num_texture_samples);
+        const uint32_t num_texture_samples,
+        const float opac_threshold);
 
     std::tuple<
         torch::Tensor,
@@ -857,8 +854,11 @@ namespace gsplat
         const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
         const torch::Tensor &flatten_ids,  // [n_isects]
 
-        const torch::Tensor &texture_outputs, // [C, image_height, image_width, num_texture_samples]
+        const torch::Tensor &texture_outputs,     //
+        const torch::Tensor &sample_counts,       //
+        const torch::Tensor &sample_gaussian_ids, //
         const uint32_t num_texture_samples,
+        const float opac_threshold,
         // forward outputs
         const torch::Tensor
             &render_colors,                 // [C, image_height, image_width, COLOR_DIM]

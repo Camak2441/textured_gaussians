@@ -41,9 +41,11 @@ namespace gsplat
         const int32_t *__restrict__ tile_offsets, // [C, tile_height, tile_width]
         const int32_t *__restrict__ flatten_ids,  // [n_isects]
 
-        int32_t *__restrict__ sample_counts,   // [C, image_height, image_width]
-        const S *__restrict__ texture_outputs, // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM] // Gaussian textures or ND features.
+        const S *__restrict__ texture_outputs,           // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM] // Gaussian textures or ND features.
+        int32_t *__restrict__ sample_counts,             // [C, image_height, image_width]
+        const int32_t *__restrict__ sample_gaussian_ids, // [C, image_height, image_width]
         const uint32_t num_texture_samples,
+        const S opac_threshold,
 
         // fwd outputs
         const S *__restrict__ render_colors,    // [C, image_height, image_width,
@@ -88,8 +90,9 @@ namespace gsplat
 
         last_ids += camera_id * image_height * image_width;
         median_ids += camera_id * image_height * image_width;
-        sample_counts += camera_id * image_height * image_width;
         texture_outputs += camera_id * image_height * image_width * num_texture_samples * COLOR_DIM;
+        sample_counts += camera_id * image_height * image_width;
+        sample_gaussian_ids += camera_id * image_height * image_width;
 
         v_render_colors += camera_id * image_height * image_width * COLOR_DIM;
         v_render_alphas += camera_id * image_height * image_width;
@@ -362,18 +365,27 @@ namespace gsplat
                     if (dist <= 9.0)
                     {
                         valid_texture = 1;
-                        sample_num = sample_counts[pix_id];
-                        if (sample_num < num_texture_samples)
+                        if (opac > opac_threshold)
                         {
-                            atomicAdd(sample_counts + pix_id, 1);
-                        }
-                        else
-                        {
-                            sample_num = -1;
+                            sample_num = sample_counts[pix_id];
+                            if (sample_num > 0 && sample_num % 2 == 0)
+                            {
+                                atomicAdd(sample_counts + pix_id, -2);
+                                sample_num = (sample_num >> 1) - 1;
+                            }
+                            else if (sample_num > 0 && sample_gaussian_ids[pix_id] == g)
+                            {
+                                atomicAdd(sample_counts + pix_id, -3);
+                                sample_num = (sample_num >> 1) - 1;
+                            }
+                            else
+                            {
+                                sample_num = -1;
+                            }
                         }
                     }
 
-                    // computer alpha scaling factor
+                    // compute alpha scaling factor
                     if (valid_texture > 0 && sample_num >= 0)
                     {
                         alpha_scaling_factor = texture_outputs[(pix_id * num_texture_samples + sample_num) * COLOR_DIM + 3];
@@ -735,8 +747,12 @@ namespace gsplat
         const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
         const torch::Tensor &flatten_ids,  // [n_isects]
 
-        const torch::Tensor &texture_outputs, //
+        const torch::Tensor &texture_outputs,     //
+        const torch::Tensor &sample_counts,       //
+        const torch::Tensor &sample_gaussian_ids, //
         const uint32_t num_texture_samples,
+        const float opac_threshold,
+
         // forward outputs
         const torch::Tensor
             &render_colors,                 // [C, image_height, image_width, COLOR_DIM]
@@ -795,10 +811,6 @@ namespace gsplat
         dim3 threads = {tile_size, tile_size, 1};
         dim3 blocks = {C, tile_height, tile_width};
 
-        torch::Tensor sample_counts = torch::zeros(
-            {C, image_height, image_width},
-            means2d.options().dtype(torch::kInt32));
-
         torch::Tensor v_means2d = torch::zeros_like(means2d);
         torch::Tensor v_ray_transforms = torch::zeros_like(ray_transforms);
         torch::Tensor v_colors = torch::zeros_like(colors);
@@ -852,8 +864,9 @@ namespace gsplat
                     tile_height,
                     tile_offsets.data_ptr<int32_t>(),
                     flatten_ids.data_ptr<int32_t>(),
-                    sample_counts.data_ptr<int32_t>(),
                     texture_outputs.data_ptr<float>(),
+                    sample_counts.data_ptr<int32_t>(),
+                    sample_gaussian_ids.data_ptr<int32_t>(),
                     num_texture_samples,
                     render_colors.data_ptr<float>(),
                     render_alphas.data_ptr<float>(),
@@ -914,8 +927,11 @@ namespace gsplat
         const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
         const torch::Tensor &flatten_ids,  // [n_isects]
 
-        const torch::Tensor &texture_outputs, //
+        const torch::Tensor &texture_outputs,     //
+        const torch::Tensor &sample_counts,       //
+        const torch::Tensor &sample_gaussian_ids, //
         const uint32_t num_texture_samples,
+        const float opac_threshold,
         // forward outputs
         const torch::Tensor
             &render_colors,                 // [C, image_height, image_width, COLOR_DIM]
@@ -952,7 +968,10 @@ namespace gsplat
             tile_offsets,                            \
             flatten_ids,                             \
             texture_outputs,                         \
+            sample_counts,                           \
+            sample_gaussian_ids,                     \
             num_texture_samples,                     \
+            opac_threshold,                          \
             render_colors,                           \
             render_alphas,                           \
             last_ids,                                \
