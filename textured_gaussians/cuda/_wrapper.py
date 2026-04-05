@@ -3561,16 +3561,17 @@ class _RasterizeToPixelsImplicitTexturedGaussians(torch.autograd.Function):
             v_normals,
             v_densify,
             v_backgrounds,
-            None,  # normals
-            None,  # densify
-            None,  # backgrounds
             None,  # masks
-            None,  # tile size
             None,  # width
             None,  # height
+            None,  # tile size
             None,  # isect_offsets
             None,  # flatten_ids
+            None,  # sample_counts
+            None,  # sample_gaussian_ids
             v_texture_outputs,
+            None,  # absgrad
+            None,  # distloss
             None,  # gs_contrib_threshold
             None,  # num_texture_samples
             None,  # opac_threshold

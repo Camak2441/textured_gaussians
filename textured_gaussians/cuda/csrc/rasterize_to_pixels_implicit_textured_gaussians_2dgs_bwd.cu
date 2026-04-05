@@ -868,6 +868,7 @@ namespace gsplat
                     sample_counts.data_ptr<int32_t>(),
                     sample_gaussian_ids.data_ptr<int32_t>(),
                     num_texture_samples,
+                    opac_threshold,
                     render_colors.data_ptr<float>(),
                     render_alphas.data_ptr<float>(),
                     last_ids.data_ptr<int32_t>(),

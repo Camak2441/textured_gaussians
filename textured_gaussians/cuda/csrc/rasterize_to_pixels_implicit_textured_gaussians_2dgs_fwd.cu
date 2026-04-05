@@ -183,7 +183,7 @@ namespace gsplat
 
         // keep track of median depth contribution
         S median_depth = 0.f;
-        uint32_t median_idx = 0f;
+        uint32_t median_idx = 0;
 
         /**
          * ==============================

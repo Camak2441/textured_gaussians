@@ -1,7 +1,7 @@
 #ifndef GSPLAT_CUDA_DCT_FILTER_H
 #define GSPLAT_CUDA_DCT_FILTER_H
 
-#include "helpers.cuh"
+#include "../helpers.cuh"
 
 #include <cuda.h>
 #include <cuda_runtime.h>
