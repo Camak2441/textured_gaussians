@@ -589,7 +589,10 @@ class Runner:
             rgb_textures = textures[..., :3]  # [N, L, L, 3]
             match self.cfg.textured_rgb_clamp:
                 case "normalize":
-                    rgb_textures /= rgb_textures.amax(dim=[1, 2], keepdim=True) + 1e-6
+                    rgb_textures = (
+                        rgb_textures / rgb_textures.amax(dim=[1, 2], keepdim=True)
+                        + 1e-6
+                    )
                     rgb_textures = rgb_textures.clamp(0.0, 1.0)
                 case "clamp":
                     rgb_textures = rgb_textures.clamp(0.0, 1.0)
