@@ -170,6 +170,7 @@ def process_config(cfg):
 
     if cfg.resume:
         ckpt_dir = cfg.result_dir + "/ckpts"
+        os.makedirs(cfg.result_dir, exist_ok=True)
         if os.path.isdir(ckpt_dir):
             start, _ = get_file_with_max_int(
                 ckpt_dir, "ckpt_", ".pt", limit=cfg.max_steps
