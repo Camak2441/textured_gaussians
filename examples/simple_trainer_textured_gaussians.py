@@ -228,6 +228,7 @@ class Config:
     ] = "2dgs"
     texture_model: Optional[str] = None
     num_texture_samples: int = 10
+    sample_alpha_threshold: float = 0.1
 
     # Dump information to tensorboard every this steps
     tb_every: int = 100
@@ -874,7 +875,10 @@ class Runner:
 
         match self.model_type:
             case "2dgs":
-                remove_from_kwargs(kwargs, {"num_texture_samples", "filtering"})
+                remove_from_kwargs(
+                    kwargs,
+                    {"num_texture_samples", "filtering", "sample_alpha_threshold"},
+                )
                 (
                     render_colors,
                     render_alphas,
@@ -901,7 +905,9 @@ class Runner:
                     **kwargs,
                 )
             case "tgs":
-                remove_from_kwargs(kwargs, {"num_texture_samples"})
+                remove_from_kwargs(
+                    kwargs, {"num_texture_samples", "sample_alpha_threshold"}
+                )
                 textures = self.get_textures()
                 (
                     render_colors,
@@ -930,7 +936,10 @@ class Runner:
                     **kwargs,
                 )
             case "dtgs":
-                remove_from_kwargs(kwargs, {"num_texture_samples", "filtering"})
+                remove_from_kwargs(
+                    kwargs,
+                    {"num_texture_samples", "sample_alpha_threshold", "filtering"},
+                )
                 textures = self.get_textures()
                 (
                     render_colors,
@@ -1134,6 +1143,7 @@ class Runner:
                 distloss=self.cfg.dist_loss,
                 filtering=self.cfg.filtering,
                 num_texture_samples=self.cfg.num_texture_samples,
+                sample_alpha_threshold=self.cfg.sample_alpha_threshold,
             )
             if renders.shape[-1] == 4:
                 colors, depths = renders[..., 0:3], renders[..., 3:4]
@@ -1465,6 +1475,7 @@ class Runner:
                 render_mode="RGB+ED",
                 filtering=self.cfg.filtering,
                 num_texture_samples=self.cfg.num_texture_samples,
+                sample_alpha_threshold=self.cfg.sample_alpha_threshold,
             )  # [1, H, W, 3]
             colors = colors[..., :3]  # Take RGB channels
 
@@ -1628,6 +1639,7 @@ class Runner:
                 render_mode="RGB+ED",
                 filtering=self.cfg.filtering,
                 num_texture_samples=self.cfg.num_texture_samples,
+                sample_alpha_threshold=self.cfg.sample_alpha_threshold,
             )  # [1, H, W, 4]
             colors = torch.clamp(renders[0, ..., 0:3], 0.0, 1.0)  # [H, W, 3]
             depths = renders[0, ..., 3:4]  # [H, W, 1]
@@ -1673,6 +1685,7 @@ class Runner:
             radius_clip=3.0,  # skip GSs that have small image radius (in pixels)
             filtering=self.cfg.filtering,
             num_texture_samples=self.cfg.num_texture_samples,
+            sample_alpha_threshold=self.cfg.sample_alpha_threshold,
         )  # [1, H, W, 3]
         return render_colors[0].cpu().numpy()
 

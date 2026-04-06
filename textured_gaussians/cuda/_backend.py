@@ -60,7 +60,16 @@ def cuda_toolkit_available():
         call(["nvcc"], stdout=DEVNULL, stderr=DEVNULL)
         return True
     except FileNotFoundError:
-        return False
+        pass
+    cuda_home = os.environ.get("CUDA_HOME", "")
+    if cuda_home:
+        nvcc_path = os.path.join(cuda_home, "bin", "nvcc")
+        try:
+            call([nvcc_path], stdout=DEVNULL, stderr=DEVNULL)
+            return True
+        except FileNotFoundError:
+            pass
+    return False
 
 
 def cuda_toolkit_version():
