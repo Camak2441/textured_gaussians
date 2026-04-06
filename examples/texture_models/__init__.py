@@ -1,4 +1,5 @@
 import json
+from typing import Optional, Tuple
 from texture_models.utils import add_dict, check_keys_are_in_order, quote_json
 from texture_models.mlp import MLP, FourierMLP, FourierSelector, FourierSelector2
 from texture_models.siren import SIREN
@@ -14,13 +15,19 @@ MODEL_PREFIXES = {
 }
 
 
-GET_SUBMODEL_ARGS = {
-    "FourierSelector": {},
-    "FourierSelector2": {},
+GET_DEFAULT_ARGS = {
+    "FourierSelector": {"input_type": "gaussian"},
+    "FourierSelector2": {"input_type": "gaussian"},
 }
 
 
-def _dump_argstr(kwargs):
+GET_SUBMODEL_ARGS = {
+    "FourierSelector": {"sub_models": {"in_dim": 3}},
+    "FourierSelector2": {"sub_models": {"in_dim": 3}},
+}
+
+
+def _dump_argstr(kwargs: dict[str, any]) -> str:
     match kwargs:
         case bool():
             return str(kwargs).lower()
@@ -42,7 +49,7 @@ def _dump_argstr(kwargs):
             return "(" + ",".join(s) + ")"
 
 
-def _load_argstr(argstr: str):
+def _load_argstr(argstr: str) -> dict[str, any]:
     return json.loads(quote_json("{" + argstr[1:-1].replace("=", ":") + "}"))
 
 
@@ -54,6 +61,8 @@ def canonical_model_name(model_name: str):
                 print("Argstr does not contain args in brackets. Continuing.")
                 continue
             kwargs = _load_argstr(argstr)
+            if prefix in GET_DEFAULT_ARGS:
+                kwargs = add_dict(GET_DEFAULT_ARGS[prefix], kwargs)
             args = list(kwargs)
             args.sort()
             result_kwargs = {}
@@ -68,6 +77,37 @@ def canonical_model_name(model_name: str):
                     result_kwargs[arg] = kwargs[arg]
             return prefix + _dump_argstr(result_kwargs)
     raise Exception(f"Unknown model {model_name}")
+
+
+def pop_arg_from_model_name(model_name: str, arg: str) -> Tuple[str, Optional[any]]:
+    for prefix in MODEL_PREFIXES:
+        if model_name.startswith(prefix):
+            argstr = model_name[len(prefix) :]
+            if not (argstr.startswith("(") and argstr.endswith(")")):
+                print("Argstr does not contain args in brackets. Continuing.")
+                continue
+            kwargs = _load_argstr(argstr)
+            if prefix in GET_DEFAULT_ARGS:
+                kwargs = add_dict(GET_DEFAULT_ARGS[prefix], kwargs)
+            if arg in kwargs:
+                value = kwargs.pop(arg)
+                return prefix + _dump_argstr(kwargs), value
+            else:
+                return model_name, None
+
+
+def add_arg_to_model_name(model_name: str, arg: str, value: any) -> str:
+    for prefix in MODEL_PREFIXES:
+        if model_name.startswith(prefix):
+            argstr = model_name[len(prefix) :]
+            if not (argstr.startswith("(") and argstr.endswith(")")):
+                print("Argstr does not contain args in brackets. Continuing.")
+                continue
+            kwargs = _load_argstr(argstr)
+            if prefix in GET_DEFAULT_ARGS:
+                kwargs = add_dict(GET_DEFAULT_ARGS[prefix], kwargs)
+            kwargs[arg] = value
+            return prefix + _dump_argstr(kwargs)
 
 
 def load_model(model_name: str, over_kwargs={}):

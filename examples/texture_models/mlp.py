@@ -44,11 +44,13 @@ class FourierMLP(torch.nn.Module):
 class FourierSelector(torch.nn.Module):
     def __init__(
         self,
+        in_dim=3,
         num_freqs=15,
         hidden_dims=[32],
         sub_models=[],
     ):
         super().__init__()
+        assert in_dim == 3, "FourierSelector2 not compatible with in_dim != 3"
         self.num_freqs = num_freqs
         self.sub_models = sub_models
         for i in range(len(self.sub_models)):
@@ -84,11 +86,13 @@ class FourierSelector(torch.nn.Module):
 class FourierSelector2(torch.nn.Module):
     def __init__(
         self,
+        in_dim=3,
         num_freqs=15,
         hidden_dims=[32],
         sub_models=[],
     ):
         super().__init__()
+        assert in_dim == 3, "FourierSelector2 not compatible with in_dim != 3"
         self.num_freqs = num_freqs
         self.sub_models = sub_models
         for i in range(len(self.sub_models)):

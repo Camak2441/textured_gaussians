@@ -1,6 +1,6 @@
 PATHS_FILE="$(dirname "${BASH_SOURCE[0]}")/../paths.yml"
 if [ -f "$PATHS_FILE" ]; then
-    CUDA_PATH=$(grep '^cuda_path:' "$PATHS_FILE" | sed 's/^cuda_path:[[:space:]]*//' | tr -d '"'"'"')
+    CUDA_PATH=$(grep '^cuda_path:' "$PATHS_FILE" | sed 's/^cuda_path:[[:space:]]*//' | tr -d "\"'")
 fi
 export CUDA_HOME="${CUDA_PATH:-/usr/local/cuda-12.8}"
 echo "CUDA_HOME=$CUDA_HOME"

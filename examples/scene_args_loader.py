@@ -3,17 +3,24 @@ from typing import Optional
 
 import yaml
 
-from examples.texture_models import canonical_model_name
+from examples.texture_models import (
+    canonical_model_name,
+    add_arg_to_model_name,
+    pop_arg_from_model_name,
+)
+from textured_gaussians.utils import TEXTURE_INPUT_SIZES
 from utils import get_file_with_max_int
 
 _PATHS_FILE = os.path.join(os.path.dirname(__file__), "..", "paths.yml")
 _PATHS_FILE = os.path.normpath(_PATHS_FILE)
+
 
 def _load_paths():
     if os.path.exists(_PATHS_FILE):
         with open(_PATHS_FILE) as f:
             return yaml.safe_load(f)
     return {}
+
 
 _paths = _load_paths()
 _DATA_DIR = _paths.get("data_dir", "../data")
@@ -23,34 +30,37 @@ MODEL_SHORTHANDS = {
     "mix1": """FourierSelector(
             num_freqs=15,hidden_dims=[24, 24],
             sub_models=[
-                "SIREN(in_dim=3,hidden_dims=[48,48],out_dim=4,omega_0=20,hidden_omegas=1.00)",
-                "SIREN(in_dim=3,hidden_dims=[48,48],out_dim=4,omega_0=30,hidden_omegas=1.25)",
-                "SIREN(in_dim=3,hidden_dims=[48,48],out_dim=4,omega_0=40,hidden_omegas=1.50)",
-                "SIREN(in_dim=3,hidden_dims=[48,48],out_dim=4,omega_0=50,hidden_omegas=1.75)",
-                "SIREN(in_dim=3,hidden_dims=[48,48],out_dim=4,omega_0=60,hidden_omegas=2.00)",
-                "FourierMLP(in_dim=3,hidden_dims=[48,48],out_dim=4,num_frequencies=128,sigma=[1000,1,1])",
-                "FourierMLP(in_dim=3,hidden_dims=[48,48],out_dim=4,num_frequencies=128,sigma=[1000,2,2])",
-                "FourierMLP(in_dim=3,hidden_dims=[48,48],out_dim=4,num_frequencies=128,sigma=[1000,3,3])"
+                "SIREN(hidden_dims=[48,48],out_dim=4,omega_0=20,hidden_omegas=1.00)",
+                "SIREN(hidden_dims=[48,48],out_dim=4,omega_0=30,hidden_omegas=1.25)",
+                "SIREN(hidden_dims=[48,48],out_dim=4,omega_0=40,hidden_omegas=1.50)",
+                "SIREN(hidden_dims=[48,48],out_dim=4,omega_0=50,hidden_omegas=1.75)",
+                "SIREN(hidden_dims=[48,48],out_dim=4,omega_0=60,hidden_omegas=2.00)",
+                "FourierMLP(hidden_dims=[48,48],out_dim=4,num_frequencies=128,sigma=[1000,1,1])",
+                "FourierMLP(hidden_dims=[48,48],out_dim=4,num_frequencies=128,sigma=[1000,2,2])",
+                "FourierMLP(hidden_dims=[48,48],out_dim=4,num_frequencies=128,sigma=[1000,3,3])"
             ]
         )""",
     "mix2": """FourierSelector2(
             num_freqs=15,hidden_dims=[24, 24],
             sub_models=[
-                "SIREN(in_dim=3,hidden_dims=[48,48],out_dim=4,omega_0=20,hidden_omegas=1.00)",
-                "SIREN(in_dim=3,hidden_dims=[48,48],out_dim=4,omega_0=30,hidden_omegas=1.25)",
-                "SIREN(in_dim=3,hidden_dims=[48,48],out_dim=4,omega_0=40,hidden_omegas=1.50)",
-                "SIREN(in_dim=3,hidden_dims=[48,48],out_dim=4,omega_0=50,hidden_omegas=1.75)",
-                "SIREN(in_dim=3,hidden_dims=[48,48],out_dim=4,omega_0=60,hidden_omegas=2.00)",
-                "FourierMLP(in_dim=3,hidden_dims=[48,48],out_dim=4,num_frequencies=128,sigma=[1000,1,1])",
-                "FourierMLP(in_dim=3,hidden_dims=[48,48],out_dim=4,num_frequencies=128,sigma=[1000,2,2])",
-                "FourierMLP(in_dim=3,hidden_dims=[48,48],out_dim=4,num_frequencies=128,sigma=[1000,3,3])"
+                "SIREN(hidden_dims=[48,48],out_dim=4,omega_0=20,hidden_omegas=1.00)",
+                "SIREN(hidden_dims=[48,48],out_dim=4,omega_0=30,hidden_omegas=1.25)",
+                "SIREN(hidden_dims=[48,48],out_dim=4,omega_0=40,hidden_omegas=1.50)",
+                "SIREN(hidden_dims=[48,48],out_dim=4,omega_0=50,hidden_omegas=1.75)",
+                "SIREN(hidden_dims=[48,48],out_dim=4,omega_0=60,hidden_omegas=2.00)",
+                "FourierMLP(hidden_dims=[48,48],out_dim=4,num_frequencies=128,sigma=[1000,1,1])",
+                "FourierMLP(hidden_dims=[48,48],out_dim=4,num_frequencies=128,sigma=[1000,2,2])",
+                "FourierMLP(hidden_dims=[48,48],out_dim=4,num_frequencies=128,sigma=[1000,3,3])"
             ]
         )""",
     "fourier1": """FourierMLP(
-        in_dim=3,hidden_dims=[48,48,48],out_dim=4,num_frequencies=48,sigma=[1000,3,3]
+        input_type="gaussian",hidden_dims=[48,48,48],out_dim=4,num_frequencies=48,sigma=[1000,3,3]
     )""",
     "siren1": """SIREN(
-        in_dim=3,hidden_dims=[48,48,48],out_dim=4,omega_0=30,hidden_omegas=1
+        input_type="gaussian",hidden_dims=[48,48,48],out_dim=4,omega_0=30,hidden_omegas=1
+    )""",
+    "siren2": """SIREN(
+        input_type="world_and_view",sample_norm="bbox",hidden_dims=[48,48,48],out_dim=4,omega_0=30,hidden_omegas=1
     )""",
     "red": "ConstColor(out_color=[1,0,0,1])",
 }
@@ -155,9 +165,7 @@ def process_config(cfg):
                     args_suffix = "_" + args_suffix
                 match cfg.filtering:
                     case "bilinear":
-                        cfg.result_dir = (
-                            f"{_RESULTS_DIR}/tgs{args_suffix}/{scene_args["result_dir"]}"
-                        )
+                        cfg.result_dir = f"{_RESULTS_DIR}/tgs{args_suffix}/{scene_args["result_dir"]}"
                     case "mipmapped":
                         cfg.result_dir = f"{_RESULTS_DIR}/mip_tgs{args_suffix}/{scene_args["result_dir"]}"
                     case "mipmapped2":
@@ -165,9 +173,7 @@ def process_config(cfg):
                     case "anisotropic":
                         cfg.result_dir = f"{_RESULTS_DIR}/aniso_tgs{args_suffix}/{scene_args["result_dir"]}"
             case "itgs":
-                cfg.result_dir = (
-                    f"{_RESULTS_DIR}/itgs_{cfg.texture_model}/{scene_args["result_dir"]}"
-                )
+                cfg.result_dir = f"{_RESULTS_DIR}/itgs_{cfg.texture_model}/{scene_args["result_dir"]}"
             case _:
                 cfg.result_dir = (
                     f"{_RESULTS_DIR}/{cfg.model_type}/{scene_args["result_dir"]}"
@@ -219,3 +225,19 @@ def process_config(cfg):
             cfg.texture_model = canonical_model_name(
                 MODEL_SHORTHANDS[cfg.texture_model]
             )
+
+        cfg.texture_model, texture_input_type = pop_arg_from_model_name(
+            cfg.texture_model, "input_type"
+        )
+        if texture_input_type is not None:
+            cfg.texture_input_type = texture_input_type
+            add_arg_to_model_name(
+                cfg.texture_model, "in_dim", TEXTURE_INPUT_SIZES[texture_input_type]
+            )
+
+        if cfg.texture_input_type in ("world", "world_and_view"):
+            cfg.texture_model, sample_norm = pop_arg_from_model_name(
+                cfg.texture_model, "sample_norm"
+            )
+            if sample_norm is not None:
+                cfg.world_sample_normalisation = sample_norm
