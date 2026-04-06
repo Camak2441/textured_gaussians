@@ -8,8 +8,10 @@ python simple_trainer_textured_gaussians.py mcmc \
     --background_mode "white" \
     --model_type=itgs \
     --texture_model "$2" \
-    --num_texture_samples 20 \
+    --num_texture_samples 16 \
     --sample_alpha_threshold 0.05 \
+    --texture_batch_size 917504 \
+    --texture_grad_method="dev" \
     --init_num_pts=10000 \
     --strategy.cap-max=10000 \
     --strategy.refine-start-iter=1000000000000 \

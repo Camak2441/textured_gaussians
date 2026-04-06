@@ -23,6 +23,7 @@ from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMe
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 from examples.scene_args_loader import process_config
 from texture_models import canonical_model_name, load_model
+from textured_gaussians.utils import Filtering, TextureGrads
 from utils import (
     AppearanceOptModule,
     CameraOptModule,
@@ -229,6 +230,9 @@ class Config:
     texture_model: Optional[str] = None
     num_texture_samples: int = 10
     sample_alpha_threshold: float = 0.1
+    texture_batch_size: Optional[int] = None
+    texture_grad_method: Literal["dev", "cpu", "checkpoint"] = "checkpoint"
+    texture_input_type: Literal["gaussian", "world", "world_and_view"] = "gaussian"
 
     # Dump information to tensorboard every this steps
     tb_every: int = 100
@@ -484,6 +488,8 @@ class Runner:
         )
         print("Model initialized. Number of GS:", len(self.splats["means"]))
         self.model_type = cfg.model_type
+        self.coord_center: Optional[Tensor] = None
+        self.coord_scale: Optional[Tensor] = None
 
         if self.model_type in [
             "2dgs",
@@ -877,7 +883,16 @@ class Runner:
             case "2dgs":
                 remove_from_kwargs(
                     kwargs,
-                    {"num_texture_samples", "filtering", "sample_alpha_threshold"},
+                    {
+                        "num_texture_samples",
+                        "filtering",
+                        "sample_alpha_threshold",
+                        "texture_batch_size",
+                        "texture_grad_method",
+                        "texture_input_type",
+                        "coord_center",
+                        "coord_scale",
+                    },
                 )
                 (
                     render_colors,
@@ -906,7 +921,16 @@ class Runner:
                 )
             case "tgs":
                 remove_from_kwargs(
-                    kwargs, {"num_texture_samples", "sample_alpha_threshold"}
+                    kwargs,
+                    {
+                        "num_texture_samples",
+                        "sample_alpha_threshold",
+                        "texture_batch_size",
+                        "texture_grad_method",
+                        "texture_input_type",
+                        "coord_center",
+                        "coord_scale",
+                    },
                 )
                 textures = self.get_textures()
                 (
@@ -938,7 +962,16 @@ class Runner:
             case "dtgs":
                 remove_from_kwargs(
                     kwargs,
-                    {"num_texture_samples", "sample_alpha_threshold", "filtering"},
+                    {
+                        "num_texture_samples",
+                        "sample_alpha_threshold",
+                        "filtering",
+                        "texture_batch_size",
+                        "texture_grad_method",
+                        "texture_input_type",
+                        "coord_center",
+                        "coord_scale",
+                    },
                 )
                 textures = self.get_textures()
                 (
@@ -1144,6 +1177,11 @@ class Runner:
                 filtering=self.cfg.filtering,
                 num_texture_samples=self.cfg.num_texture_samples,
                 sample_alpha_threshold=self.cfg.sample_alpha_threshold,
+                texture_batch_size=self.cfg.texture_batch_size,
+                texture_grad_method=self.cfg.texture_grad_method,
+                texture_input_type=self.cfg.texture_input_type,
+                coord_center=self.coord_center,
+                coord_scale=self.coord_scale,
             )
             if renders.shape[-1] == 4:
                 colors, depths = renders[..., 0:3], renders[..., 3:4]
@@ -1476,6 +1514,11 @@ class Runner:
                 filtering=self.cfg.filtering,
                 num_texture_samples=self.cfg.num_texture_samples,
                 sample_alpha_threshold=self.cfg.sample_alpha_threshold,
+                texture_batch_size=self.cfg.texture_batch_size,
+                texture_grad_method=self.cfg.texture_grad_method,
+                texture_input_type=self.cfg.texture_input_type,
+                coord_center=self.coord_center,
+                coord_scale=self.coord_scale,
             )  # [1, H, W, 3]
             colors = colors[..., :3]  # Take RGB channels
 
@@ -1640,6 +1683,11 @@ class Runner:
                 filtering=self.cfg.filtering,
                 num_texture_samples=self.cfg.num_texture_samples,
                 sample_alpha_threshold=self.cfg.sample_alpha_threshold,
+                texture_batch_size=self.cfg.texture_batch_size,
+                texture_grad_method=self.cfg.texture_grad_method,
+                texture_input_type=self.cfg.texture_input_type,
+                coord_center=self.coord_center,
+                coord_scale=self.coord_scale,
             )  # [1, H, W, 4]
             colors = torch.clamp(renders[0, ..., 0:3], 0.0, 1.0)  # [H, W, 3]
             depths = renders[0, ..., 3:4]  # [H, W, 1]
@@ -1686,6 +1734,8 @@ class Runner:
             filtering=self.cfg.filtering,
             num_texture_samples=self.cfg.num_texture_samples,
             sample_alpha_threshold=self.cfg.sample_alpha_threshold,
+            texture_batch_size=self.cfg.texture_batch_size,
+            texture_grad_method=self.cfg.texture_grad_method,
         )  # [1, H, W, 3]
         return render_colors[0].cpu().numpy()
 

@@ -1699,6 +1699,11 @@ def rasterization_implicit_textured_gaussians(
     gs_contrib_threshold: float = 0.0,
     num_texture_samples: int = 10,
     sample_alpha_threshold: float = 0.1,
+    texture_batch_size: Optional[int] = None,
+    texture_grad_method: Literal["dev", "cpu", "checkpoint"] = "checkpoint",
+    texture_input_type: Literal["gaussian", "world", "world_and_view"] = "gaussian",
+    coord_center: Optional[Tensor] = None,
+    coord_scale: Optional[Tensor] = None,
 ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Dict]:
     """Rasterize a set of 2D Gaussians (N) to a batch of image planes (C).
 
@@ -1947,6 +1952,13 @@ def rasterization_implicit_textured_gaussians(
         gs_contrib_threshold=gs_contrib_threshold,
         num_texture_samples=num_texture_samples,
         sample_alpha_threshold=sample_alpha_threshold,
+        texture_batch_size=texture_batch_size,
+        texture_grad_method=texture_grad_method,
+        texture_input_type=texture_input_type,
+        viewmats=viewmats,
+        Ks=Ks,
+        coord_center=coord_center,
+        coord_scale=coord_scale,
     )
     render_normals_from_depth = None
     if render_mode in ["ED", "RGB+ED"]:

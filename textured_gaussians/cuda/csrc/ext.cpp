@@ -138,4 +138,12 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     m.def(
         "generate_mipmap_bwd",
         &gsplat::generate_mipmap_bwd_tensor);
+
+    // World-space sample rasterization
+    m.def(
+        "rasterize_to_world_samples_fwd_textured_gaussians",
+        &gsplat::rasterize_to_world_samples_fwd_textured_gaussians_tensor);
+    m.def(
+        "rasterize_to_world_and_view_samples_fwd_textured_gaussians",
+        &gsplat::rasterize_to_world_and_view_samples_fwd_textured_gaussians_tensor);
 }

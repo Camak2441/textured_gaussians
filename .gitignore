@@ -37,3 +37,6 @@ Thumbs.db
 results/
 temp/
 data/
+
+# Local path configuration
+paths.yml

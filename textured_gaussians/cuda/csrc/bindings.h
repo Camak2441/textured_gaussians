@@ -969,6 +969,40 @@ namespace gsplat
         const uint32_t log_reduce,
         const uint32_t tile_size,
         const torch::Tensor &v_mip_textures);
+    // World-space sample rasterization (world coords only)
+    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
+    rasterize_to_world_samples_fwd_textured_gaussians_tensor(
+        const torch::Tensor &means2d,
+        const torch::Tensor &ray_transforms,
+        const torch::Tensor &viewmats,
+        const torch::Tensor &Ks,
+        const torch::Tensor &opacities,
+        const at::optional<torch::Tensor> &masks,
+        const uint32_t image_width,
+        const uint32_t image_height,
+        const uint32_t tile_size,
+        const torch::Tensor &tile_offsets,
+        const torch::Tensor &flatten_ids,
+        const uint32_t num_texture_samples,
+        const float opac_threshold);
+
+    // World-space + view-direction sample rasterization
+    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
+    rasterize_to_world_and_view_samples_fwd_textured_gaussians_tensor(
+        const torch::Tensor &means2d,
+        const torch::Tensor &ray_transforms,
+        const torch::Tensor &viewmats,
+        const torch::Tensor &Ks,
+        const torch::Tensor &opacities,
+        const at::optional<torch::Tensor> &masks,
+        const uint32_t image_width,
+        const uint32_t image_height,
+        const uint32_t tile_size,
+        const torch::Tensor &tile_offsets,
+        const torch::Tensor &flatten_ids,
+        const uint32_t num_texture_samples,
+        const float opac_threshold);
+
 } // namespace gsplat
 
 #endif // GSPLAT_CUDA_BINDINGS_H

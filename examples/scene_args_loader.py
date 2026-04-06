@@ -1,8 +1,23 @@
 import os
 from typing import Optional
 
+import yaml
+
 from examples.texture_models import canonical_model_name
 from utils import get_file_with_max_int
+
+_PATHS_FILE = os.path.join(os.path.dirname(__file__), "..", "paths.yml")
+_PATHS_FILE = os.path.normpath(_PATHS_FILE)
+
+def _load_paths():
+    if os.path.exists(_PATHS_FILE):
+        with open(_PATHS_FILE) as f:
+            return yaml.safe_load(f)
+    return {}
+
+_paths = _load_paths()
+_DATA_DIR = _paths.get("data_dir", "../data")
+_RESULTS_DIR = _paths.get("results_dir", "../results")
 
 MODEL_SHORTHANDS = {
     "mix1": """FourierSelector(
@@ -32,10 +47,15 @@ MODEL_SHORTHANDS = {
             ]
         )""",
     "fourier1": """FourierMLP(
-        in_dim=3,hidden_dims=[128,128,128],out_dim=4,num_frequencies=128,sigma=[1000,3,3]
+        in_dim=3,hidden_dims=[48,48,48],out_dim=4,num_frequencies=48,sigma=[1000,3,3]
+    )""",
+    "siren1": """SIREN(
+        in_dim=3,hidden_dims=[48,48,48],out_dim=4,omega_0=30,hidden_omegas=1
     )""",
     "red": "ConstColor(out_color=[1,0,0,1])",
 }
+
+MODEL_BATCH_SIZE = {"mix2": 917504}
 
 NERF_SYNTHETIC = {
     "data_dir": "nerf_synthetic/{path_name}",
@@ -119,7 +139,7 @@ def process_config(cfg):
     if cfg.scene is not None:
         assert cfg.scene in SCENES
         scene_args = SCENES[cfg.scene]
-        cfg.data_dir = "../data/" + scene_args["data_dir"]
+        cfg.data_dir = _DATA_DIR + "/" + scene_args["data_dir"]
 
         match cfg.model_type:
             case "tgs":
@@ -136,21 +156,21 @@ def process_config(cfg):
                 match cfg.filtering:
                     case "bilinear":
                         cfg.result_dir = (
-                            f"../results/tgs{args_suffix}/{scene_args["result_dir"]}"
+                            f"{_RESULTS_DIR}/tgs{args_suffix}/{scene_args["result_dir"]}"
                         )
                     case "mipmapped":
-                        cfg.result_dir = f"../results/mip_tgs{args_suffix}/{scene_args["result_dir"]}"
+                        cfg.result_dir = f"{_RESULTS_DIR}/mip_tgs{args_suffix}/{scene_args["result_dir"]}"
                     case "mipmapped2":
-                        cfg.result_dir = f"../results/mip2_tgs{args_suffix}/{scene_args["result_dir"]}"
+                        cfg.result_dir = f"{_RESULTS_DIR}/mip2_tgs{args_suffix}/{scene_args["result_dir"]}"
                     case "anisotropic":
-                        cfg.result_dir = f"../results/aniso_tgs{args_suffix}/{scene_args["result_dir"]}"
+                        cfg.result_dir = f"{_RESULTS_DIR}/aniso_tgs{args_suffix}/{scene_args["result_dir"]}"
             case "itgs":
                 cfg.result_dir = (
-                    f"../results/itgs_{cfg.texture_model}/{scene_args["result_dir"]}"
+                    f"{_RESULTS_DIR}/itgs_{cfg.texture_model}/{scene_args["result_dir"]}"
                 )
             case _:
                 cfg.result_dir = (
-                    f"../results/{cfg.model_type}/{scene_args["result_dir"]}"
+                    f"{_RESULTS_DIR}/{cfg.model_type}/{scene_args["result_dir"]}"
                 )
 
         cfg.dataset_type = scene_args["dataset_type"]
@@ -160,7 +180,7 @@ def process_config(cfg):
             cfg.alpha_loss = False
 
         if cfg.pretrained_path is None and cfg.init_type == "pretrained":
-            pretrained_dir = f"../results/{scene_args["pretrained_dir"]}"
+            pretrained_dir = f"{_RESULTS_DIR}/{scene_args["pretrained_dir"]}"
             _, ckpt_path = get_file_with_max_int(pretrained_dir, "ckpt_", ".pt")
             if ckpt_path is None:
                 print(f"Unable to find pretrained data in {pretrained_dir}.")
@@ -188,6 +208,14 @@ def process_config(cfg):
 
     if cfg.texture_model is not None:
         if cfg.texture_model in MODEL_SHORTHANDS:
+            if cfg.texture_batch_size == 0:
+                if cfg.texture_model in MODEL_BATCH_SIZE:
+                    cfg.texture_batch_size = MODEL_BATCH_SIZE[cfg.texture_model]
+                else:
+                    print(
+                        f"No batch size available for {cfg.texture_model}, setting to None"
+                    )
+                    cfg.texture_batch_size = None
             cfg.texture_model = canonical_model_name(
                 MODEL_SHORTHANDS[cfg.texture_model]
             )

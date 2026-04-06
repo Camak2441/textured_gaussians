@@ -5,7 +5,7 @@ from typing_extensions import Literal
 import torch
 from torch import Tensor
 
-from textured_gaussians.utils import Filtering
+from textured_gaussians.utils import Filtering, TextureGrads, TextureInputType, TEXTURE_INPUT_SIZES
 
 
 def _make_lazy_cuda_func(name: str) -> Callable:
@@ -2038,6 +2038,76 @@ def rasterize_to_samples(
     return sample_counts, sample_gaussian_ids, texture_inputs
 
 
+def rasterize_to_world_samples(
+    means2d: Tensor,
+    ray_transforms: Tensor,
+    viewmats: Tensor,
+    Ks: Tensor,
+    opacities: Tensor,
+    masks: Tensor,
+    width: int,
+    height: int,
+    tile_size: int,
+    isect_offsets: Tensor,
+    flatten_ids: Tensor,
+    num_texture_samples: int,
+    opac_threshold: float,
+) -> Tuple[Tensor, Tensor, Tensor]:
+    (sample_counts, sample_gaussian_ids, texture_inputs) = _make_lazy_cuda_func(
+        "rasterize_to_world_samples_fwd_textured_gaussians"
+    )(
+        means2d,
+        ray_transforms,
+        viewmats,
+        Ks,
+        opacities,
+        masks,
+        width,
+        height,
+        tile_size,
+        isect_offsets,
+        flatten_ids,
+        num_texture_samples,
+        opac_threshold,
+    )
+    return sample_counts, sample_gaussian_ids, texture_inputs
+
+
+def rasterize_to_world_and_view_samples(
+    means2d: Tensor,
+    ray_transforms: Tensor,
+    viewmats: Tensor,
+    Ks: Tensor,
+    opacities: Tensor,
+    masks: Tensor,
+    width: int,
+    height: int,
+    tile_size: int,
+    isect_offsets: Tensor,
+    flatten_ids: Tensor,
+    num_texture_samples: int,
+    opac_threshold: float,
+) -> Tuple[Tensor, Tensor, Tensor]:
+    (sample_counts, sample_gaussian_ids, texture_inputs) = _make_lazy_cuda_func(
+        "rasterize_to_world_and_view_samples_fwd_textured_gaussians"
+    )(
+        means2d,
+        ray_transforms,
+        viewmats,
+        Ks,
+        opacities,
+        masks,
+        width,
+        height,
+        tile_size,
+        isect_offsets,
+        flatten_ids,
+        num_texture_samples,
+        opac_threshold,
+    )
+    return sample_counts, sample_gaussian_ids, texture_inputs
+
+
 def rasterize_to_pixels_implicit_textured_gaussians(
     means2d: Tensor,
     ray_transforms: Tensor,
@@ -2059,6 +2129,13 @@ def rasterize_to_pixels_implicit_textured_gaussians(
     gs_contrib_threshold: float = 0.0,  # added
     num_texture_samples: int = 10,  # added
     sample_alpha_threshold: float = 0.1,
+    texture_batch_size: Optional[int] = None,
+    texture_grad_method: TextureGrads = "checkpoint",
+    texture_input_type: TextureInputType = "gaussian",
+    viewmats: Optional[Tensor] = None,
+    Ks: Optional[Tensor] = None,
+    coord_center: Optional[Tensor] = None,
+    coord_scale: Optional[Tensor] = None,
 ) -> Tuple[Tensor, Tensor]:
     """Rasterize Textured Gaussians to pixels.
 
@@ -2141,27 +2218,101 @@ def rasterize_to_pixels_implicit_textured_gaussians(
         tile_width * tile_size >= image_width
     ), f"Assert Failed: {tile_width} * {tile_size} >= {image_width}"
 
-    sample_counts, sample_gaussian_ids, texture_inputs = rasterize_to_samples(
-        means2d.contiguous(),
-        ray_transforms.contiguous(),
-        opacities.contiguous(),
-        masks,
-        image_width,
-        image_height,
-        tile_size,
-        isect_offsets.contiguous(),
-        flatten_ids.contiguous(),
-        num_texture_samples,
-        sample_alpha_threshold,
-    )  # Texture inputs: [C, image_height, image_width, sample_count, INPUT_DIM (3)]
+    input_dim = TEXTURE_INPUT_SIZES[texture_input_type]
+    match texture_input_type:
+        case "gaussian":
+            sample_counts, sample_gaussian_ids, texture_inputs = rasterize_to_samples(
+                means2d.contiguous(),
+                ray_transforms.contiguous(),
+                opacities.contiguous(),
+                masks,
+                image_width,
+                image_height,
+                tile_size,
+                isect_offsets.contiguous(),
+                flatten_ids.contiguous(),
+                num_texture_samples,
+                sample_alpha_threshold,
+            )
+        case "world":
+            sample_counts, sample_gaussian_ids, texture_inputs = rasterize_to_world_samples(
+                means2d.contiguous(),
+                ray_transforms.contiguous(),
+                viewmats.contiguous(),
+                Ks.contiguous(),
+                opacities.contiguous(),
+                masks,
+                image_width,
+                image_height,
+                tile_size,
+                isect_offsets.contiguous(),
+                flatten_ids.contiguous(),
+                num_texture_samples,
+                sample_alpha_threshold,
+            )
+        case "world_and_view":
+            sample_counts, sample_gaussian_ids, texture_inputs = rasterize_to_world_and_view_samples(
+                means2d.contiguous(),
+                ray_transforms.contiguous(),
+                viewmats.contiguous(),
+                Ks.contiguous(),
+                opacities.contiguous(),
+                masks,
+                image_width,
+                image_height,
+                tile_size,
+                isect_offsets.contiguous(),
+                flatten_ids.contiguous(),
+                num_texture_samples,
+                sample_alpha_threshold,
+            )
+
+    # Apply coordinate normalization to world-space positions if requested.
+    # For "world_and_view", only the XYZ channels (first 3) are normalized;
+    # view directions (last 3) are unit vectors and are left unchanged.
+    if coord_center is not None and coord_scale is not None and texture_input_type in ("world", "world_and_view"):
+        texture_inputs = texture_inputs.clone()
+        texture_inputs[..., :3] = (texture_inputs[..., :3] - coord_center) / coord_scale
 
     texture_inputs = torch.reshape(
-        texture_inputs, (C * image_height * image_width * num_texture_samples, 3)
+        texture_inputs, (C * image_height * image_width * num_texture_samples, input_dim)
     )
 
-    texture_outputs: Tensor = torch.utils.checkpoint.checkpoint(
-        lambda x: textures(x), texture_inputs, use_reentrant=False
-    )
+    match texture_grad_method:
+        case "dev":
+            if texture_batch_size is None:
+                texture_outputs = textures(texture_inputs)
+            else:
+                outputs = []
+                for i in range(0, texture_inputs.size(0), texture_batch_size):
+                    outputs.append(textures(texture_inputs[i : i + texture_batch_size]))
+                texture_outputs = torch.cat(outputs, dim=0)
+        case "cpu":
+            with torch.autograd.graph.save_on_cpu():
+                if texture_batch_size is None:
+                    texture_outputs = textures(texture_inputs)
+                else:
+                    outputs = []
+                    for i in range(0, texture_inputs.size(0), texture_batch_size):
+                        outputs.append(
+                            textures(texture_inputs[i : i + texture_batch_size])
+                        )
+                    texture_outputs = torch.cat(outputs, dim=0)
+        case "checkpoint":
+            if texture_batch_size is None:
+                texture_outputs: Tensor = torch.utils.checkpoint.checkpoint(
+                    lambda x: textures(x), texture_inputs, use_reentrant=False
+                )
+            else:
+                outputs = []
+                for i in range(0, texture_inputs.size(0), texture_batch_size):
+                    input_chunk = texture_inputs[i : i + texture_batch_size]
+                    outputs.append(
+                        torch.utils.checkpoint.checkpoint(
+                            lambda x: textures(x), input_chunk, use_reentrant=False
+                        )
+                    )
+                texture_outputs = torch.cat(outputs, dim=0)
 
     C = isect_offsets.shape[0]
     COLOR_DIM = colors.shape[-1]

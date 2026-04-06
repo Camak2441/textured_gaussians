@@ -6,7 +6,15 @@ import torch.nn.functional as F
 from torch import Tensor
 
 
-type Filtering = Literal["bilinear", "mipmapped", "anisotropic"]
+type Filtering = Literal["bilinear", "mipmapped", "mipmapped2", "anisotropic"]
+type TextureGrads = Literal["dev", "cpu", "checkpoint"]
+type TextureInputType = Literal["gaussian", "world", "world_and_view"]
+
+TEXTURE_INPUT_SIZES: dict[TextureInputType, int] = {
+    "gaussian": 3,
+    "world": 3,
+    "world_and_view": 6,
+}
 
 
 def normalized_quat_to_rotmat(quat: Tensor) -> Tensor:
