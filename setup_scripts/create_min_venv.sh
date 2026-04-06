@@ -1,4 +1,4 @@
-python -m venv ~/envs/textured_gaussians
+python3.11 -m venv ~/envs/textured_gaussians
 source ~/envs/textured_gaussians/bin/activate
 
 pip install torch torchvision torchaudio
