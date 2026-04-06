@@ -24,6 +24,11 @@ from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 from examples.scene_args_loader import process_config
 from texture_models import canonical_model_name, load_model
 from textured_gaussians.utils import Filtering, TextureGrads
+from examples.coordinate_normalization import (
+    compute_camera_unit_sphere_normalization,
+    compute_scene_bbox_from_cameras,
+    compute_bbox_normalization,
+)
 from utils import (
     AppearanceOptModule,
     CameraOptModule,
@@ -233,6 +238,9 @@ class Config:
     texture_batch_size: Optional[int] = None
     texture_grad_method: Literal["dev", "cpu", "checkpoint"] = "checkpoint"
     texture_input_type: Literal["gaussian", "world", "world_and_view"] = "gaussian"
+    world_sample_normalisation: Literal[
+        "none", "unit_sphere", "unit_sphere_strict", "bbox"
+    ] = "none"
 
     # Dump information to tensorboard every this steps
     tb_every: int = 100
@@ -488,8 +496,7 @@ class Runner:
         )
         print("Model initialized. Number of GS:", len(self.splats["means"]))
         self.model_type = cfg.model_type
-        self.coord_center: Optional[Tensor] = None
-        self.coord_scale: Optional[Tensor] = None
+        self.coord_center, self.coord_scale = self._compute_coord_normalisation(cfg)
 
         if self.model_type in [
             "2dgs",
@@ -847,6 +854,41 @@ class Runner:
             imageio.imwrite(f"{texture_dir}/{i:06d}.png", rgba)
 
         print(f"Saved {N} texture images to {texture_dir}")
+
+    def _compute_coord_normalisation(
+        self, cfg: "Config"
+    ) -> Tuple[Optional[Tensor], Optional[Tensor]]:
+        """Compute (coord_center, coord_scale) from the training cameras.
+
+        Returns (None, None) when strategy is "none" or texture_input_type is
+        "gaussian" (world coords are not used so normalisation is irrelevant).
+        """
+        if (
+            cfg.world_sample_normalisation == "none"
+            or cfg.texture_input_type == "gaussian"
+        ):
+            return None, None
+
+        if cfg.dataset_type == "colmap":
+            camtoworlds = torch.from_numpy(self.parser.camtoworlds).float()
+        else:  # blender
+            camtoworlds = torch.from_numpy(self.trainset.camtoworlds).float()
+
+        match cfg.world_sample_normalisation:
+            case "unit_sphere":
+                center, scale = compute_camera_unit_sphere_normalization(
+                    camtoworlds, strict=False
+                )
+            case "unit_sphere_strict":
+                center, scale = compute_camera_unit_sphere_normalization(
+                    camtoworlds, strict=True
+                )
+            case "bbox":
+                bbox_min, bbox_max = compute_scene_bbox_from_cameras(camtoworlds)
+                center, scale = compute_bbox_normalization(bbox_min, bbox_max)
+
+        device = torch.device(self.device)
+        return center.to(device), scale.to(device)
 
     def rasterize_splats(
         self,

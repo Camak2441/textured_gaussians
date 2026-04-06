@@ -1,5 +1,5 @@
-conda create -n textured_gaussians python=3.12.7
-conda activate textured_gaussians
+python -m venv ~/envs/textured_gaussians
+source ~/envs/textured_gaussians/bin/activate
 
 pip install torch torchvision torchaudio
 

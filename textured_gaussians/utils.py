@@ -10,6 +10,18 @@ type Filtering = Literal["bilinear", "mipmapped", "mipmapped2", "anisotropic"]
 type TextureGrads = Literal["dev", "cpu", "checkpoint"]
 type TextureInputType = Literal["gaussian", "world", "world_and_view"]
 
+# Coordinate normalisation strategies for world-space texture inputs.
+#   "none"               — no normalisation; raw world-space coordinates used as-is.
+#   "unit_sphere"        — focus-point centre, median radius scale; cameras within unit sphere.
+#                          Matches nerf-factory / this codebase (similarity_from_cameras,
+#                          strict_scaling=False).
+#   "unit_sphere_strict" — focus-point centre, max radius scale; all cameras guaranteed inside
+#                          sphere. Matches this codebase Parser.scene_scale and multinerf
+#                          (transform_poses_pca with max-abs scale).
+#   "bbox"               — camera bounding box normalised to [-1, 1]^3 along longest axis.
+#                          Matches nerfstudio scene bounding box conventions.
+type CoordNormStrategy = Literal["none", "unit_sphere", "unit_sphere_strict", "bbox"]
+
 TEXTURE_INPUT_SIZES: dict[TextureInputType, int] = {
     "gaussian": 3,
     "world": 3,
