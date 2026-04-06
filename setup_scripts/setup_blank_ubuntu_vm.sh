@@ -1,16 +1,18 @@
+#!/bin/bash
+
 TMP_INSTALL_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_INSTALL_DIR"' EXIT
 
-if command -v gcc &>/dev/null; then
+if [ -x "/usr/bin/gcc-12" ]; then
     echo "GCC already installed"
 else
-    sudo apt install gcc
+    sudo apt-get install -y gcc-12
 fi
 
-if command -v make &>/dev/null; then
+if [ -x "/usr/bin/make" ]; then
     echo "Make already installed"
 else
-    sudo apt install make
+    sudo apt-get install -y make
 fi
 
 CONDA_BASE=""
@@ -53,6 +55,7 @@ else
 
     bash "$TMP_INSTALL_DIR/$MINICONDA" -b -p "$HOME/miniconda3" || { echo "Miniconda installation failed"; exit 1; }
     CONDA_BASE="$HOME/miniconda3"
+    
 fi
 
 source "$CONDA_BASE/etc/profile.d/conda.sh"
@@ -86,13 +89,15 @@ else
     fi
     echo "CUDA installer verified with hash: $ACTUAL_MD5"
 
-    sudo bash "$TMP_INSTALL_DIR/$CUDA" || { echo "CUDA installation failed"; exit 1; }
+    sudo bash "$TMP_INSTALL_DIR/$CUDA" --silent --driver --toolkit || { echo "CUDA installation failed"; exit 1; }
 fi
 
 if [ ! -d "textured_gaussians" ]; then
     git clone --recurse-submodules https://github.com/Camak2441/textured_gaussians || { echo "Failed to clone textured_gaussians"; exit 1; }
 fi
 cd textured_gaussians || { echo "Failed to cd into textured_gaussians"; exit 1; }
+
+mkdir -p data results
 
 ENV_NAME="${ENV_NAME:-textured_gaussians}"
 

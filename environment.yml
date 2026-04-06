@@ -436,10 +436,10 @@ dependencies:
       - tifffile==2025.12.12
       - timm==0.6.7
       - tinycss2==1.4.0
-      - torch==2.9.1+cu128
+      - torch==2.9.1
       - torch-fidelity==0.3.0
-      - torchaudio==2.9.1+cu128
-      - torchvision==0.24.1+cu128
+      - torchaudio==2.9.1
+      - torchvision==0.24.1
       - tqdm==4.67.1
       - trimesh==4.10.1
       - triton==3.5.1
@@ -464,4 +464,3 @@ dependencies:
       - yourdfpy==0.0.58
 variables:
   CUDA_HOME: ""
-prefix: /home/albert_kwok/miniconda3/envs/textured_gaussians

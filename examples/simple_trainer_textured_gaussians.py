@@ -712,31 +712,37 @@ class Runner:
                     rendered += colors[:, 3:, :, :]
                 return rendered.permute(0, 2, 3, 1)  # [N, H, W, 4]
             case "itgs":
-                N = len(self.splats["means"])
-                device = self.device
-                v_coords = torch.linspace(0, 1, height, device=device)
-                u_coords = torch.linspace(0, 1, width, device=device)
-                grid_v, grid_u = torch.meshgrid(v_coords, u_coords, indexing="ij")
-                uv_flat = torch.stack(
-                    [grid_u.reshape(-1), grid_v.reshape(-1)], dim=-1
-                )  # [H*W, 2]
+                match self.cfg.texture_input_type:
+                    case "gaussian":
+                        N = len(self.splats["means"])
+                        device = self.device
+                        v_coords = torch.linspace(0, 1, height, device=device)
+                        u_coords = torch.linspace(0, 1, width, device=device)
+                        grid_v, grid_u = torch.meshgrid(
+                            v_coords, u_coords, indexing="ij"
+                        )
+                        uv_flat = torch.stack(
+                            [grid_u.reshape(-1), grid_v.reshape(-1)], dim=-1
+                        )  # [H*W, 2]
 
-                textures = torch.empty(N, height, width, 4, device=device)
-                batch_size = max(1, 1024 * 1024 // (height * width))
-                for start in range(0, N, batch_size):
-                    end = min(start + batch_size, N)
-                    B = end - start
-                    g_indices = torch.arange(
-                        start, end, device=device, dtype=torch.float32
-                    ) / max(N - 1, 1)
-                    g_coords = g_indices[:, None, None].expand(B, height * width, 1)
-                    uv_expanded = uv_flat[None].expand(B, -1, -1)
-                    inputs = torch.cat([g_coords, uv_expanded], dim=-1).reshape(
-                        B * height * width, 3
-                    )
-                    outputs = self.texture_model(inputs)
-                    textures[start:end] = outputs.reshape(B, height, width, 4)
-                return textures
+                        textures = torch.empty(N, height, width, 4, device=device)
+                        batch_size = max(1, 1024 * 1024 // (height * width))
+                        for start in range(0, N, batch_size):
+                            end = min(start + batch_size, N)
+                            B = end - start
+                            g_indices = torch.arange(
+                                start, end, device=device, dtype=torch.float32
+                            ) / max(N - 1, 1)
+                            g_coords = g_indices[:, None, None].expand(
+                                B, height * width, 1
+                            )
+                            uv_expanded = uv_flat[None].expand(B, -1, -1)
+                            inputs = torch.cat([g_coords, uv_expanded], dim=-1).reshape(
+                                B * height * width, 3
+                            )
+                            outputs = self.texture_model(inputs)
+                            textures[start:end] = outputs.reshape(B, height, width, 4)
+                        return textures
         return None
 
     @torch.no_grad()
@@ -793,32 +799,38 @@ class Runner:
                     ).astype(np.uint8)
                     writer.append_data(frame)
         elif self.model_type == "itgs":
-            device = self.device
-            v_coords = torch.linspace(0, 1, height, device=device)
-            u_coords = torch.linspace(0, 1, width, device=device)
-            grid_v, grid_u = torch.meshgrid(v_coords, u_coords, indexing="ij")
-            uv_flat = torch.stack(
-                [grid_u.reshape(-1), grid_v.reshape(-1)], dim=-1
-            )  # [H*W, 2]
+            match self.cfg.texture_input_type:
+                case "gaussian":
+                    device = self.device
+                    v_coords = torch.linspace(0, 1, height, device=device)
+                    u_coords = torch.linspace(0, 1, width, device=device)
+                    grid_v, grid_u = torch.meshgrid(v_coords, u_coords, indexing="ij")
+                    uv_flat = torch.stack(
+                        [grid_u.reshape(-1), grid_v.reshape(-1)], dim=-1
+                    )  # [H*W, 2]
 
-            batch_size = max(1, 1024 * 1024 // (height * width))
-            for start in tqdm.trange(0, N, batch_size, desc="Rendering texture video"):
-                end = min(start + batch_size, N)
-                B = end - start
-                g_indices = torch.arange(
-                    start, end, device=device, dtype=torch.float32
-                ) / max(N - 1, 1)
-                g_coords = g_indices[:, None, None].expand(B, height * width, 1)
-                uv_expanded = uv_flat[None].expand(B, -1, -1)
-                inputs = torch.cat([g_coords, uv_expanded], dim=-1).reshape(
-                    B * height * width, 3
-                )
-                outputs = self.texture_model(inputs).reshape(B, height, width, 4)
-                for j in range(B):
-                    frame = (
-                        outputs[j, :, :, :3].clamp(0, 1).cpu().numpy() * 255
-                    ).astype(np.uint8)
-                    writer.append_data(frame)
+                    batch_size = max(1, 1024 * 1024 // (height * width))
+                    for start in tqdm.trange(
+                        0, N, batch_size, desc="Rendering texture video"
+                    ):
+                        end = min(start + batch_size, N)
+                        B = end - start
+                        g_indices = torch.arange(
+                            start, end, device=device, dtype=torch.float32
+                        ) / max(N - 1, 1)
+                        g_coords = g_indices[:, None, None].expand(B, height * width, 1)
+                        uv_expanded = uv_flat[None].expand(B, -1, -1)
+                        inputs = torch.cat([g_coords, uv_expanded], dim=-1).reshape(
+                            B * height * width, 3
+                        )
+                        outputs = self.texture_model(inputs).reshape(
+                            B, height, width, 4
+                        )
+                        for j in range(B):
+                            frame = (
+                                outputs[j, :, :, :3].clamp(0, 1).cpu().numpy() * 255
+                            ).astype(np.uint8)
+                            writer.append_data(frame)
 
         writer.close()
         print(f"Texture video saved to {video_path}")

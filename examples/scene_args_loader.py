@@ -60,7 +60,7 @@ MODEL_SHORTHANDS = {
         input_type="gaussian",hidden_dims=[48,48,48],out_dim=4,omega_0=30,hidden_omegas=1
     )""",
     "siren2": """SIREN(
-        input_type="world_and_view",sample_norm="bbox",hidden_dims=[48,48,48],out_dim=4,omega_0=30,hidden_omegas=1
+        input_type="world_and_view",sample_norm="bbox",hidden_dims=[36,36,36],out_dim=4,omega_0=30,hidden_omegas=1
     )""",
     "red": "ConstColor(out_color=[1,0,0,1])",
 }
@@ -231,7 +231,7 @@ def process_config(cfg):
         )
         if texture_input_type is not None:
             cfg.texture_input_type = texture_input_type
-            add_arg_to_model_name(
+            cfg.texture_model = add_arg_to_model_name(
                 cfg.texture_model, "in_dim", TEXTURE_INPUT_SIZES[texture_input_type]
             )
 
