@@ -171,9 +171,9 @@ def process_config(cfg):
                         args.append(f"t{cfg.texture_width}")
                     else:
                         args.append(f"t{cfg.texture_width}x{cfg.texture_height}")
-                if cfg.rgb_clamp != "clamp":
+                if cfg.textured_rgb_clamp != "clamp":
                     args.append(f"rgb{cfg.rgb_clamp}")
-                if cfg.alpha_clamp != "normalize":
+                if cfg.textured_alpha_clamp != "normalize":
                     args.append(f"a{cfg.alpha_clamp}")
                 args_suffix = "_".join(args)
                 if len(args_suffix) != 0 and args_suffix[0] != "_":
