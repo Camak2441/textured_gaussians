@@ -627,9 +627,9 @@ class Runner:
                     )  # normalize so that the max is 1
                     alpha_textures = alpha_textures.clamp(0.0, 1.0)
                 case "clamp":
-                    alpha_textures = alpha_textures.clamp(0.0, 1.0)
+                    alpha_textures = alpha_textures.clamp(0.0, 0.9999)
                 case "sigmoid":
-                    alpha_textures = alpha_textures.sigmoid()
+                    alpha_textures = alpha_textures.sigmoid() * 0.9999
 
         textures = torch.cat([rgb_textures, alpha_textures], dim=-1)  # [N, L, L, 4]
         return textures
