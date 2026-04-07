@@ -14,3 +14,4 @@ python simple_trainer_textured_gaussians.py mcmc \
     --textured_alpha \
     --filtering=mipmapped2 \
     --port 6070
+    

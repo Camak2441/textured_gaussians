@@ -12,5 +12,7 @@ python simple_trainer_textured_gaussians.py mcmc \
     --alpha_loss \
     --textured_rgb \
     --textured_alpha \
+    --textured_rgb_clamp=sigmoid \
+    --textured_alpha_clamp=sigmoid \
     --filtering=mipmapped \
     --port 6070
