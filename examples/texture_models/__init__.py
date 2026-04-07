@@ -1,9 +1,9 @@
-from ast import Constant
 import json
 from typing import Optional, Tuple
 
 import torch
 from examples.texture_models.factor_model import (
+    Constant,
     Exponential,
     FactorModel,
     LinearInterpolate,

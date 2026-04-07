@@ -474,7 +474,8 @@ namespace gsplat
                     // since the output T = coprod (1 - alpha_i), we have T_(i-1) = T_i * 1/(1 - alpha_(i-1))
                     // potential numerical stability issue if alpha -> 1
                     S ra = 1.0f / (1.0f - alpha);
-                    if (alpha > 0.999f) ra = 1000;
+                    if (alpha > 0.999f)
+                        ra = 1000;
                     T *= ra;
 
                     // update v_rgb for this gaussian
@@ -503,10 +504,10 @@ namespace gsplat
                     for (uint32_t k = 0; k < COLOR_DIM; ++k)
                     {
                         auto base_color = rgbs_batch[t * COLOR_DIM + k];
-                        auto full_color = base_color;
+                        auto full_color = base_color * base_color_factor;
                         if (valid_texture > 0 && sample_num >= 0)
                         {
-                            full_color = tex_colors[k];
+                            full_color += tex_colors[k];
                         }
                         v_alpha += (full_color * T - buffer[k] * ra) * v_render_c[k];
                     }

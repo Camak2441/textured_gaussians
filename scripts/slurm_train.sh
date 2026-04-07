@@ -11,7 +11,7 @@
 #SBATCH --output=logs/slurm_%j.out
 #SBATCH --error=logs/slurm_%j.err
 
-module load apptainer
+module load singularity
 
 SIF=~/containers/tgs.sif
 REPO=~/textured-gaussians
@@ -19,7 +19,7 @@ RDS=/rds/user/$USER/hpc-work
 
 mkdir -p $REPO/logs
 
-apptainer exec --nv \
+singularity exec --nv \
     --bind $REPO:$REPO \
     --bind $RDS:$RDS \
     $SIF \

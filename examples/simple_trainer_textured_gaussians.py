@@ -1217,7 +1217,7 @@ class Runner:
             opt_kwargs = {}
             if base_color_factor is not None:
                 self.base_color_factor = base_color_factor.get_value(step)
-                opt_kwargs["base_color_factor"] = base_color_factor.get_value(step)
+                opt_kwargs["base_color_factor"] = self.base_color_factor
 
             # forward
             (
