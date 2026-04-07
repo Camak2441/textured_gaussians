@@ -474,6 +474,7 @@ namespace gsplat
                     // since the output T = coprod (1 - alpha_i), we have T_(i-1) = T_i * 1/(1 - alpha_(i-1))
                     // potential numerical stability issue if alpha -> 1
                     S ra = 1.0f / (1.0f - alpha);
+                    if (alpha > 0.999f) ra = 1000;
                     T *= ra;
 
                     // update v_rgb for this gaussian
@@ -752,7 +753,7 @@ namespace gsplat
         const torch::Tensor &sample_gaussian_ids, //
         const uint32_t num_texture_samples,
         const float sample_alpha_threshold,
-        const float base_color_threshold,
+        const float base_color_factor,
 
         // forward outputs
         const torch::Tensor
@@ -870,7 +871,7 @@ namespace gsplat
                     sample_gaussian_ids.data_ptr<int32_t>(),
                     num_texture_samples,
                     sample_alpha_threshold,
-                    base_color_threshold,
+                    base_color_factor,
                     render_colors.data_ptr<float>(),
                     render_alphas.data_ptr<float>(),
                     last_ids.data_ptr<int32_t>(),
@@ -935,7 +936,7 @@ namespace gsplat
         const torch::Tensor &sample_gaussian_ids, //
         const uint32_t num_texture_samples,
         const float sample_alpha_threshold,
-        const float base_color_threshold,
+        const float base_color_factor,
         // forward outputs
         const torch::Tensor
             &render_colors,                 // [C, image_height, image_width, COLOR_DIM]
