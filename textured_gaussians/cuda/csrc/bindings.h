@@ -792,7 +792,7 @@ namespace gsplat
         const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
         const torch::Tensor &flatten_ids,  // [n_isects]
         const uint32_t num_texture_samples,
-        const float opac_threshold);
+        const float sample_alpha_threshold);
 
     std::tuple<
         torch::Tensor,
@@ -822,10 +822,11 @@ namespace gsplat
         const torch::Tensor &flatten_ids,  // [n_isects]
 
         const torch::Tensor &texture_outputs, // [C, image_height, image_width, num_texture_samples, COLOR_DIM]
-        // additional parameters
-        const float gs_contrib_threshold,
         const uint32_t num_texture_samples,
-        const float opac_threshold);
+        const float sample_alpha_threshold,
+        const float base_color_factor,
+        // additional parameters
+        const float gs_contrib_threshold);
 
     std::tuple<
         torch::Tensor,
@@ -858,7 +859,8 @@ namespace gsplat
         const torch::Tensor &sample_counts,       //
         const torch::Tensor &sample_gaussian_ids, //
         const uint32_t num_texture_samples,
-        const float opac_threshold,
+        const float sample_alpha_threshold,
+        const float base_color_factor,
         // forward outputs
         const torch::Tensor
             &render_colors,                 // [C, image_height, image_width, COLOR_DIM]
@@ -971,7 +973,7 @@ namespace gsplat
         const torch::Tensor &v_mip_textures);
     // World-space sample rasterization (world coords only)
     std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
-    rasterize_to_world_samples_fwd_textured_gaussians_tensor(
+    rasterize_to_samples_world_fwd_textured_gaussians_tensor(
         const torch::Tensor &means2d,
         const torch::Tensor &ray_transforms,
         const torch::Tensor &viewmats,
@@ -984,11 +986,11 @@ namespace gsplat
         const torch::Tensor &tile_offsets,
         const torch::Tensor &flatten_ids,
         const uint32_t num_texture_samples,
-        const float opac_threshold);
+        const float sample_alpha_threshold);
 
     // World-space + view-direction sample rasterization
     std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
-    rasterize_to_world_and_view_samples_fwd_textured_gaussians_tensor(
+    rasterize_to_samples_world_and_view_fwd_textured_gaussians_tensor(
         const torch::Tensor &means2d,
         const torch::Tensor &ray_transforms,
         const torch::Tensor &viewmats,
@@ -1001,7 +1003,7 @@ namespace gsplat
         const torch::Tensor &tile_offsets,
         const torch::Tensor &flatten_ids,
         const uint32_t num_texture_samples,
-        const float opac_threshold);
+        const float sample_alpha_threshold);
 
 } // namespace gsplat
 

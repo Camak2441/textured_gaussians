@@ -44,10 +44,11 @@ namespace gsplat
                                                   // gives the interval that our gaussians are gonna use.
         const int32_t *__restrict__ flatten_ids,  // [n_isects]                      // The global flatten indices in [C * N] or [nnz] from  `isect_tiles()`.
         const S gs_contrib_threshold,             // The threshold for gaussian opacity contribution.
+        const S *__restrict__ texture_outputs,    // [C, image_height, image_width, samples, COLOR_DIM]
+        int32_t *__restrict__ sample_counts,      // [C, image_height, image_width]
         const uint32_t num_texture_samples,
-        const S opac_threshold,
-        const S *__restrict__ texture_outputs, // [C, image_height, image_width, samples, COLOR_DIM]
-        int32_t *__restrict__ sample_counts,   // [C, image_height, image_width]
+        const S sample_alpha_threshold,
+        const S base_color_factor,
 
         // outputs
         S *__restrict__ render_colors,    // [C, image_height, image_width, COLOR_DIM]
@@ -325,7 +326,7 @@ namespace gsplat
                 if (valid_texture > 0)
                 {
                     sample_num = sample_counts[pix_id];
-                    if (sample_num < num_texture_samples && alpha_approx > opac_threshold)
+                    if (sample_num < num_texture_samples && alpha_approx > sample_alpha_threshold)
                     {
                         atomicAdd(sample_counts + pix_id, 1);
                     }
@@ -372,12 +373,8 @@ namespace gsplat
                     if (valid_texture > 0 && sample_num >= 0)
                     {
                         tex_color = texture_outputs[(pix_id * num_texture_samples + sample_num) * COLOR_DIM + k];
-                        pix_out[k] += tex_color * vis;
                     }
-                    else
-                    {
-                        pix_out[k] += base_color * vis;
-                    }
+                    pix_out[k] += (base_color * base_color_factor + tex_color) * vis;
                 }
 
                 const S *n_ptr = normals + g * 3;
@@ -483,10 +480,11 @@ namespace gsplat
         const torch::Tensor &flatten_ids,  // [n_isects]
 
         const torch::Tensor &texture_outputs,
-        // additional parameters
-        const float gs_contrib_threshold,
         const uint32_t num_texture_samples,
-        const float opac_threshold)
+        const float sample_alpha_threshold,
+        const float base_color_factor,
+        // additional parameters
+        const float gs_contrib_threshold)
     {
         GSPLAT_DEVICE_GUARD(means2d);
         GSPLAT_CHECK_INPUT(means2d);
@@ -594,10 +592,11 @@ namespace gsplat
                 tile_offsets.data_ptr<int32_t>(),
                 flatten_ids.data_ptr<int32_t>(),
                 gs_contrib_threshold, // added
-                num_texture_samples,
-                opac_threshold,
                 texture_outputs.data_ptr<float>(),
                 sample_counts.data_ptr<int32_t>(),
+                num_texture_samples,
+                sample_alpha_threshold,
+                base_color_factor,
                 renders.data_ptr<float>(),
                 alphas.data_ptr<float>(),
                 render_normals.data_ptr<float>(),
@@ -648,11 +647,12 @@ namespace gsplat
         const torch::Tensor &flatten_ids,  // [n_isects]
 
         const torch::Tensor &texture_outputs, // [C, image_height, image_width, num_texture_samples, 3]
+        const uint32_t num_texture_samples,
+        const float sample_alpha_threshold,
+        const float base_color_factor,
 
         // additional parameters
-        const float gs_contrib_threshold,
-        const uint32_t num_texture_samples,
-        const float opac_threshold)
+        const float gs_contrib_threshold)
     {
         GSPLAT_CHECK_INPUT(colors);
         uint32_t channels = colors.size(-1);
@@ -673,9 +673,10 @@ namespace gsplat
             tile_offsets,                            \
             flatten_ids,                             \
             texture_outputs,                         \
-            gs_contrib_threshold,                    \
             num_texture_samples,                     \
-            opac_threshold);
+            sample_alpha_threshold,                  \
+            base_color_factor,                       \
+            gs_contrib_threshold);
         // TODO: an optimization can be done by passing the actual number of
         // channels into the kernel functions and avoid necessary global memory
         // writes. This requires moving the channel padding from python to C side.

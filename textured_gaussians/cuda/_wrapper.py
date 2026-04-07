@@ -5,7 +5,12 @@ from typing_extensions import Literal
 import torch
 from torch import Tensor
 
-from textured_gaussians.utils import Filtering, TextureGrads, TextureInputType, TEXTURE_INPUT_SIZES
+from textured_gaussians.utils import (
+    Filtering,
+    TextureGrads,
+    TextureInputType,
+    TEXTURE_INPUT_SIZES,
+)
 
 
 def _make_lazy_cuda_func(name: str) -> Callable:
@@ -2054,7 +2059,7 @@ def rasterize_to_world_samples(
     opac_threshold: float,
 ) -> Tuple[Tensor, Tensor, Tensor]:
     (sample_counts, sample_gaussian_ids, texture_inputs) = _make_lazy_cuda_func(
-        "rasterize_to_world_samples_fwd_textured_gaussians"
+        "rasterize_to_samples_world_fwd_textured_gaussians"
     )(
         means2d,
         ray_transforms,
@@ -2089,7 +2094,7 @@ def rasterize_to_world_and_view_samples(
     opac_threshold: float,
 ) -> Tuple[Tensor, Tensor, Tensor]:
     (sample_counts, sample_gaussian_ids, texture_inputs) = _make_lazy_cuda_func(
-        "rasterize_to_world_and_view_samples_fwd_textured_gaussians"
+        "rasterize_to_samples_world_and_view_fwd_textured_gaussians"
     )(
         means2d,
         ray_transforms,
@@ -2126,9 +2131,10 @@ def rasterize_to_pixels_implicit_textured_gaussians(
     packed: bool = False,
     absgrad: bool = False,
     distloss: bool = False,
-    gs_contrib_threshold: float = 0.0,  # added
-    num_texture_samples: int = 10,  # added
+    gs_contrib_threshold: float = 0.0,
+    num_texture_samples: int = 10,
     sample_alpha_threshold: float = 0.1,
+    base_color_factor: float = 0.0,
     texture_batch_size: Optional[int] = None,
     texture_grad_method: TextureGrads = "checkpoint",
     texture_input_type: TextureInputType = "gaussian",
@@ -2235,47 +2241,56 @@ def rasterize_to_pixels_implicit_textured_gaussians(
                 sample_alpha_threshold,
             )
         case "world":
-            sample_counts, sample_gaussian_ids, texture_inputs = rasterize_to_world_samples(
-                means2d.contiguous(),
-                ray_transforms.contiguous(),
-                viewmats.contiguous(),
-                Ks.contiguous(),
-                opacities.contiguous(),
-                masks,
-                image_width,
-                image_height,
-                tile_size,
-                isect_offsets.contiguous(),
-                flatten_ids.contiguous(),
-                num_texture_samples,
-                sample_alpha_threshold,
+            sample_counts, sample_gaussian_ids, texture_inputs = (
+                rasterize_to_world_samples(
+                    means2d.contiguous(),
+                    ray_transforms.contiguous(),
+                    viewmats.contiguous(),
+                    Ks.contiguous(),
+                    opacities.contiguous(),
+                    masks,
+                    image_width,
+                    image_height,
+                    tile_size,
+                    isect_offsets.contiguous(),
+                    flatten_ids.contiguous(),
+                    num_texture_samples,
+                    sample_alpha_threshold,
+                )
             )
         case "world_and_view":
-            sample_counts, sample_gaussian_ids, texture_inputs = rasterize_to_world_and_view_samples(
-                means2d.contiguous(),
-                ray_transforms.contiguous(),
-                viewmats.contiguous(),
-                Ks.contiguous(),
-                opacities.contiguous(),
-                masks,
-                image_width,
-                image_height,
-                tile_size,
-                isect_offsets.contiguous(),
-                flatten_ids.contiguous(),
-                num_texture_samples,
-                sample_alpha_threshold,
+            sample_counts, sample_gaussian_ids, texture_inputs = (
+                rasterize_to_world_and_view_samples(
+                    means2d.contiguous(),
+                    ray_transforms.contiguous(),
+                    viewmats.contiguous(),
+                    Ks.contiguous(),
+                    opacities.contiguous(),
+                    masks,
+                    image_width,
+                    image_height,
+                    tile_size,
+                    isect_offsets.contiguous(),
+                    flatten_ids.contiguous(),
+                    num_texture_samples,
+                    sample_alpha_threshold,
+                )
             )
 
     # Apply coordinate normalization to world-space positions if requested.
     # For "world_and_view", only the XYZ channels (first 3) are normalized;
     # view directions (last 3) are unit vectors and are left unchanged.
-    if coord_center is not None and coord_scale is not None and texture_input_type in ("world", "world_and_view"):
+    if (
+        coord_center is not None
+        and coord_scale is not None
+        and texture_input_type in ("world", "world_and_view")
+    ):
         texture_inputs = texture_inputs.clone()
         texture_inputs[..., :3] = (texture_inputs[..., :3] - coord_center) / coord_scale
 
     texture_inputs = torch.reshape(
-        texture_inputs, (C * image_height * image_width * num_texture_samples, input_dim)
+        texture_inputs,
+        (C * image_height * image_width * num_texture_samples, input_dim),
     )
 
     match texture_grad_method:
@@ -2347,9 +2362,10 @@ def rasterize_to_pixels_implicit_textured_gaussians(
         texture_outputs.contiguous(),
         absgrad,
         distloss,
-        gs_contrib_threshold,  # added
+        gs_contrib_threshold,
         num_texture_samples,
         sample_alpha_threshold,
+        base_color_factor,
     )
 
     if padded_channels > 0:
@@ -3544,9 +3560,10 @@ class _RasterizeToPixelsImplicitTexturedGaussians(torch.autograd.Function):
         texture_outputs: Tensor,
         absgrad: bool,
         distloss: bool,
-        gs_contrib_threshold: float,  # added
+        gs_contrib_threshold: float,
         num_texture_samples: int,
         alpha_threshold: float,
+        base_color_factor: float,
     ) -> Tuple[Tensor, Tensor]:
         (
             render_colors,
@@ -3556,8 +3573,8 @@ class _RasterizeToPixelsImplicitTexturedGaussians(torch.autograd.Function):
             render_median,
             last_ids,
             median_ids,
-            gs_contrib_sum,  # added
-            gs_contrib_count,  # added
+            gs_contrib_sum,
+            gs_contrib_count,
         ) = _make_lazy_cuda_func("rasterize_to_pixels_fwd_implicit_textured_gaussians")(
             means2d,
             ray_transforms,
@@ -3572,9 +3589,10 @@ class _RasterizeToPixelsImplicitTexturedGaussians(torch.autograd.Function):
             isect_offsets,
             flatten_ids,
             texture_outputs,
-            gs_contrib_threshold,  # added
             num_texture_samples,
             alpha_threshold,
+            base_color_factor,
+            gs_contrib_threshold,
         )
 
         ctx.save_for_backward(
@@ -3601,6 +3619,7 @@ class _RasterizeToPixelsImplicitTexturedGaussians(torch.autograd.Function):
         ctx.tile_size = tile_size
         ctx.num_texture_samples = num_texture_samples
         ctx.alpha_threshold = alpha_threshold
+        ctx.base_color_factor = base_color_factor
         ctx.absgrad = absgrad
         ctx.distloss = distloss
 
@@ -3652,6 +3671,7 @@ class _RasterizeToPixelsImplicitTexturedGaussians(torch.autograd.Function):
         tile_size = ctx.tile_size
         num_texture_samples = ctx.num_texture_samples
         alpha_threshold = ctx.alpha_threshold
+        base_color_factor = ctx.base_color_factor
         absgrad = ctx.absgrad
 
         (
@@ -3682,6 +3702,7 @@ class _RasterizeToPixelsImplicitTexturedGaussians(torch.autograd.Function):
             sample_gaussian_ids,
             num_texture_samples,
             alpha_threshold,
+            base_color_factor,
             render_colors,
             render_alphas,
             last_ids,
@@ -3726,6 +3747,7 @@ class _RasterizeToPixelsImplicitTexturedGaussians(torch.autograd.Function):
             None,  # gs_contrib_threshold
             None,  # num_texture_samples
             None,  # opac_threshold
+            None,  # base_color_factor
         )
 
 

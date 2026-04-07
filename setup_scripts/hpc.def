@@ -1,0 +1,56 @@
+Bootstrap: docker
+From: nvidia/cuda:12.8.1-devel-ubuntu24.04
+
+# NOTE: verify the exact image tag before building:
+# apptainer run docker://nvidia/cuda:12.8.1-devel-ubuntu24.04 nvcc --version
+
+%labels
+    Target CSD3 Ampere (A100, sm_80)
+    CUDA 12.8
+    Python 3.12
+    PyTorch 2.9.1
+
+%post
+    # Ubuntu 24.04 ships Python 3.12 as the default python3
+    apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-pip python3-dev \
+        git cmake ninja-build \
+        libgl1 libglib2.0-0 libsm6 libxrender1 libxext6 \
+    && rm -rf /var/lib/apt/lists/*
+
+    # Ubuntu 24.04 enforces PEP 668 (externally managed environment).
+    # --break-system-packages is safe here since we own the container.
+    pip3 install --upgrade pip --break-system-packages
+
+    # Must be set before any pip install that compiles CUDA extensions
+    export CUDA_HOME=/usr/local/cuda
+    export TORCH_CUDA_ARCH_LIST="8.0"
+    export MAX_JOBS=4
+
+    # NOTE: if torch 2.9.1 is only available as a nightly, replace the
+    # index URL with https://download.pytorch.org/whl/nightly/cu128
+    pip3 install --no-cache-dir --break-system-packages \
+        torch==2.9.1+cu128 torchvision==0.24.1+cu128 torchaudio==2.9.1+cu128 \
+        --index-url https://download.pytorch.org/whl/cu128
+
+    pip3 install --no-cache-dir --break-system-packages \
+        git+https://github.com/rmbrualla/pycolmap@cc7ea4b7301720ac29287dbe450952511b32125e
+
+    # gsplat compiles CUDA kernels during install
+    pip3 install --no-cache-dir --break-system-packages gsplat==1.4.0
+
+    pip3 install --no-cache-dir --break-system-packages \
+        nerfview viser tyro \
+        imageio tqdm pyyaml tensorboard \
+        torchmetrics typing_extensions \
+        plyfile pillow scipy scikit-image trimesh \
+        ninja numpy jaxtyping rich wandb
+
+%environment
+    export CUDA_HOME=/usr/local/cuda
+    export TORCH_CUDA_ARCH_LIST="8.0"
+    export PATH=$CUDA_HOME/bin:$PATH
+    export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+
+%runscript
+    exec "$@"

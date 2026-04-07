@@ -22,7 +22,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 from examples.scene_args_loader import process_config
-from texture_models import canonical_model_name, load_model
+from texture_models import canonical_model_name, load_factor, load_model
 from textured_gaussians.utils import Filtering, TextureGrads
 from examples.coordinate_normalization import (
     compute_camera_unit_sphere_normalization,
@@ -241,6 +241,7 @@ class Config:
     world_sample_normalisation: Literal[
         "none", "unit_sphere", "unit_sphere_strict", "bbox"
     ] = "none"
+    base_color_factor: Optional[str] = None
 
     # Dump information to tensorboard every this steps
     tb_every: int = 100
@@ -494,6 +495,7 @@ class Runner:
                 device=self.device,
             )
         )
+        self.base_color_factor = None
         print("Model initialized. Number of GS:", len(self.splats["means"]))
         self.model_type = cfg.model_type
         self.coord_center, self.coord_scale = self._compute_coord_normalisation(cfg)
@@ -1108,6 +1110,10 @@ class Runner:
         max_steps = cfg.max_steps
         init_step = cfg.init_step
 
+        base_color_factor = None
+        if cfg.base_color_factor is not None and cfg.model_type == "itgs":
+            base_color_factor = load_factor(cfg.base_color_factor)
+
         schedulers = [
             # means has a learning rate schedule, that end at 0.01 of the initial value
             torch.optim.lr_scheduler.ExponentialLR(
@@ -1160,6 +1166,8 @@ class Runner:
             for s, state in zip(schedulers, train_state["schedulers"]):
                 s.load_state_dict(state)
             self.strategy_state = train_state["strategy"]
+            if base_color_factor is not None:
+                base_color_factor.load_state_dict(train_state["base_color_factor"])
             global_tic -= train_state["elapsed_time"]
             max_mem = train_state["max_mem"]
 
@@ -1206,6 +1214,11 @@ class Runner:
             else:
                 sh_degree_to_use = min(step // cfg.sh_degree_interval, cfg.sh_degree)
 
+            opt_kwargs = {}
+            if base_color_factor is not None:
+                self.base_color_factor = base_color_factor.get_value(step)
+                opt_kwargs["base_color_factor"] = base_color_factor.get_value(step)
+
             # forward
             (
                 renders,
@@ -1236,6 +1249,7 @@ class Runner:
                 texture_input_type=self.cfg.texture_input_type,
                 coord_center=self.coord_center,
                 coord_scale=self.coord_scale,
+                **opt_kwargs,
             )
             if renders.shape[-1] == 4:
                 colors, depths = renders[..., 0:3], renders[..., 3:4]
@@ -1441,6 +1455,8 @@ class Runner:
                     }
                     if self.texture_model is not None:
                         ckpt_data["texture_model"] = self.texture_model.state_dict()
+                    if base_color_factor is not None:
+                        ckpt_data["base_color_factor"] = opt_kwargs["base_color_factor"]
                     torch.save(ckpt_data, f"{self.ckpt_dir}/ckpt_{step}.pt")
                 train_state_data = {
                     "optimizers": {
@@ -1462,6 +1478,10 @@ class Runner:
                     train_state_data["pose_adjust"] = self.pose_adjust.state_dict()
                 if cfg.app_opt:
                     train_state_data["app_module"] = self.app_module.state_dict()
+                if base_color_factor:
+                    train_state_data["base_color_factor"] = (
+                        base_color_factor.state_dict()
+                    )
                 torch.save(train_state_data, f"{self.ckpt_dir}/train_state_{step}.pt")
                 if prev_ckpt_step is not None:
                     for fname in (
@@ -1494,6 +1514,8 @@ class Runner:
                 }
                 if self.texture_model is not None:
                     ckpt_data["texture_model"] = self.texture_model.state_dict()
+                if base_color_factor is not None:
+                    ckpt_data["base_color_factor"] = opt_kwargs["base_color_factor"]
                 torch.save(ckpt_data, f"{self.ckpt_dir}/ckpt_{step}.pt")
                 self.eval(step)
 
@@ -1544,6 +1566,10 @@ class Runner:
             pixels = data["image"].to(device) / 255.0
             height, width = pixels.shape[1:3]
 
+            opt_kwargs = {}
+            if self.base_color_factor is not None:
+                opt_kwargs["base_color_factor"] = self.base_color_factor
+
             torch.cuda.synchronize()
             tic = time.time()
             (
@@ -1573,6 +1599,7 @@ class Runner:
                 texture_input_type=self.cfg.texture_input_type,
                 coord_center=self.coord_center,
                 coord_scale=self.coord_scale,
+                **opt_kwargs,
             )  # [1, H, W, 3]
             colors = colors[..., :3]  # Take RGB channels
 
@@ -1725,6 +1752,10 @@ class Runner:
 
         canvas_all = []
         for i in tqdm.trange(len(camtoworlds), desc="Rendering trajectory"):
+            opt_kwargs = {}
+            if self.base_color_factor is not None:
+                opt_kwargs["base_color_factor"] = self.base_color_factor
+
             renders, _, _, surf_normals, _, _, _, _, _ = self.rasterize_splats(
                 camtoworlds=camtoworlds[i : i + 1],
                 Ks=K[None],
@@ -1742,6 +1773,7 @@ class Runner:
                 texture_input_type=self.cfg.texture_input_type,
                 coord_center=self.coord_center,
                 coord_scale=self.coord_scale,
+                **opt_kwargs,
             )  # [1, H, W, 4]
             colors = torch.clamp(renders[0, ..., 0:3], 0.0, 1.0)  # [H, W, 3]
             depths = renders[0, ..., 3:4]  # [H, W, 1]
@@ -1778,6 +1810,10 @@ class Runner:
         c2w = torch.from_numpy(c2w).float().to(self.device)
         K = torch.from_numpy(K).float().to(self.device)
 
+        opt_kwargs = {}
+        if self.base_color_factor is not None:
+            opt_kwargs["base_color_factor"] = self.base_color_factor
+
         render_colors, _, _, _, _, _, _, _, _ = self.rasterize_splats(
             camtoworlds=c2w[None],
             Ks=K[None],
@@ -1790,6 +1826,7 @@ class Runner:
             sample_alpha_threshold=self.cfg.sample_alpha_threshold,
             texture_batch_size=self.cfg.texture_batch_size,
             texture_grad_method=self.cfg.texture_grad_method,
+            **opt_kwargs,
         )  # [1, H, W, 3]
         return render_colors[0].cpu().numpy()
 
@@ -1804,6 +1841,8 @@ def main(cfg: Config):
             runner.splats[k].data = ckpt["splats"][k]
         if runner.texture_model is not None and "texture_model" in ckpt:
             runner.texture_model.load_state_dict(ckpt["texture_model"])
+        if "base_color_factor" in ckpt:
+            runner.base_color_factor = ckpt["base_color_factor"]
         runner.eval(step=ckpt["step"])
         runner.render_traj(step=ckpt["step"])
         runner.render_textures_video(
@@ -1824,6 +1863,8 @@ def main(cfg: Config):
                 runner.splats[k].data = ckpt["splats"][k]
             if runner.texture_model is not None and "texture_model" in ckpt:
                 runner.texture_model.load_state_dict(ckpt["texture_model"])
+            if "base_color_factor" in ckpt:
+                runner.base_color_factor = ckpt["base_color_factor"]
         runner.train()
 
     # if not cfg.disable_viewer:

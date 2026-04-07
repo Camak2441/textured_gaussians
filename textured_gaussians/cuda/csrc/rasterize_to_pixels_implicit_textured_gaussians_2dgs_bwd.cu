@@ -45,7 +45,8 @@ namespace gsplat
         int32_t *__restrict__ sample_counts,             // [C, image_height, image_width]
         const int32_t *__restrict__ sample_gaussian_ids, // [C, image_height, image_width]
         const uint32_t num_texture_samples,
-        const S opac_threshold,
+        const S sample_alpha_threshold,
+        const S base_color_factor,
 
         // fwd outputs
         const S *__restrict__ render_colors,    // [C, image_height, image_width,
@@ -375,7 +376,7 @@ namespace gsplat
                     if (gauss_weight_3d <= 9.0)
                     {
                         valid_texture = 1;
-                        if (alpha_approx > opac_threshold)
+                        if (alpha_approx > sample_alpha_threshold)
                         {
                             sample_num = sample_counts[pix_id];
                             if (sample_num > 0 && sample_num % 2 == 0)
@@ -630,11 +631,7 @@ namespace gsplat
                     GSPLAT_PRAGMA_UNROLL
                     for (uint32_t k = 0; k < COLOR_DIM; ++k)
                     {
-                        // Use only the color that was actually rendered (texture or base, not both)
-                        auto used_color = (valid_texture > 0 && sample_num >= 0)
-                            ? tex_colors[k]
-                            : rgbs_batch[t * COLOR_DIM + k];
-                        buffer[k] += used_color * fac;
+                        buffer[k] += (rgbs_batch[t * COLOR_DIM + k] * base_color_factor + tex_colors[k]) * fac;
                     }
 
                     /**
@@ -754,7 +751,8 @@ namespace gsplat
         const torch::Tensor &sample_counts,       //
         const torch::Tensor &sample_gaussian_ids, //
         const uint32_t num_texture_samples,
-        const float opac_threshold,
+        const float sample_alpha_threshold,
+        const float base_color_threshold,
 
         // forward outputs
         const torch::Tensor
@@ -871,7 +869,8 @@ namespace gsplat
                     sample_counts.data_ptr<int32_t>(),
                     sample_gaussian_ids.data_ptr<int32_t>(),
                     num_texture_samples,
-                    opac_threshold,
+                    sample_alpha_threshold,
+                    base_color_threshold,
                     render_colors.data_ptr<float>(),
                     render_alphas.data_ptr<float>(),
                     last_ids.data_ptr<int32_t>(),
@@ -935,7 +934,8 @@ namespace gsplat
         const torch::Tensor &sample_counts,       //
         const torch::Tensor &sample_gaussian_ids, //
         const uint32_t num_texture_samples,
-        const float opac_threshold,
+        const float sample_alpha_threshold,
+        const float base_color_threshold,
         // forward outputs
         const torch::Tensor
             &render_colors,                 // [C, image_height, image_width, COLOR_DIM]
@@ -975,7 +975,8 @@ namespace gsplat
             sample_counts,                           \
             sample_gaussian_ids,                     \
             num_texture_samples,                     \
-            opac_threshold,                          \
+            sample_alpha_threshold,                  \
+            base_color_factor,                       \
             render_colors,                           \
             render_alphas,                           \
             last_ids,                                \

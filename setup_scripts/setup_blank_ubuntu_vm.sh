@@ -3,16 +3,22 @@
 TMP_INSTALL_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_INSTALL_DIR"' EXIT
 
+if [ -x "/usr/bin/gcc" ]; then
+    echo "GCC already installed"
+else
+    sudo apt install -y gcc
+fi
+
 if [ -x "/usr/bin/gcc-12" ]; then
     echo "GCC already installed"
 else
-    sudo apt-get install -y gcc-12
+    sudo apt install -y gcc-12
 fi
 
 if [ -x "/usr/bin/make" ]; then
     echo "Make already installed"
 else
-    sudo apt-get install -y make
+    sudo apt install -y make
 fi
 
 CONDA_BASE=""

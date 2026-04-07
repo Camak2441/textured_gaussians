@@ -4,6 +4,7 @@ from typing import Optional
 import yaml
 
 from examples.texture_models import (
+    canonical_factor_name,
     canonical_model_name,
     add_arg_to_model_name,
     pop_arg_from_model_name,
@@ -60,12 +61,18 @@ MODEL_SHORTHANDS = {
         input_type="gaussian",hidden_dims=[48,48,48],out_dim=4,omega_0=30,hidden_omegas=1
     )""",
     "siren2": """SIREN(
-        input_type="world_and_view",sample_norm="bbox",hidden_dims=[36,36,36],out_dim=4,omega_0=30,hidden_omegas=1
+        input_type="world_and_view",sample_norm="bbox",hidden_dims=[36,36,36],out_dim=4,omega_0=60,hidden_omegas=1.5
     )""",
     "red": "ConstColor(out_color=[1,0,0,1])",
 }
 
 MODEL_BATCH_SIZE = {"mix2": 917504}
+
+FACTOR_SHORTHANDS = {
+    "zero": """Constant(value=0.0)""",
+    "one": """Constant(value=1.0)""",
+    "exp": """Exponential(start_value=1.0,limit_value=0.0,half_life=1000)""",
+}
 
 NERF_SYNTHETIC = {
     "data_dir": "nerf_synthetic/{path_name}",
@@ -145,6 +152,10 @@ def process_config(cfg):
         if cfg.texture_model not in MODEL_SHORTHANDS:
             cfg.texture_model = canonical_model_name(cfg.texture_model)
 
+    if cfg.base_color_factor is not None:
+        if cfg.base_color_factor not in FACTOR_SHORTHANDS:
+            cfg.base_color_factor = canonical_factor_name(cfg.base_color_factor)
+
     # Configure information based on the selected scene
     if cfg.scene is not None:
         assert cfg.scene in SCENES
@@ -173,7 +184,11 @@ def process_config(cfg):
                     case "anisotropic":
                         cfg.result_dir = f"{_RESULTS_DIR}/aniso_tgs{args_suffix}/{scene_args["result_dir"]}"
             case "itgs":
-                cfg.result_dir = f"{_RESULTS_DIR}/itgs_{cfg.texture_model}/{scene_args["result_dir"]}"
+                if cfg.base_color_factor is None:
+                    cfg.result_dir = f"{_RESULTS_DIR}/itgs_{cfg.texture_model}/{scene_args["result_dir"]}"
+                    cfg.base_color_factor = "Constant(0)"
+                else:
+                    cfg.result_dir = f"{_RESULTS_DIR}/itgs_{cfg.texture_model}_{cfg.base_color_factor}/{scene_args["result_dir"]}"
             case _:
                 cfg.result_dir = (
                     f"{_RESULTS_DIR}/{cfg.model_type}/{scene_args["result_dir"]}"
@@ -241,3 +256,9 @@ def process_config(cfg):
             )
             if sample_norm is not None:
                 cfg.world_sample_normalisation = sample_norm
+
+    if cfg.base_color_factor is not None:
+        if cfg.base_color_factor in FACTOR_SHORTHANDS:
+            cfg.base_color_factor = canonical_factor_name(
+                FACTOR_SHORTHANDS[cfg.base_color_factor]
+            )

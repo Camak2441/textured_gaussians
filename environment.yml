@@ -462,5 +462,3 @@ dependencies:
       - xatlas==0.0.11
       - xxhash==3.6.0
       - yourdfpy==0.0.58
-variables:
-  CUDA_HOME: ""

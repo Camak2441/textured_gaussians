@@ -15,24 +15,20 @@ namespace gsplat
     namespace cg = cooperative_groups;
 
     /****************************************************************************
-     * Rasterization to World-and-View Samples Forward Pass
+     * Rasterization to World-Space Samples Forward Pass Textured Gaussians
      ****************************************************************************/
 
     /**
-     * This function generates per-pixel world-space 3D intersection coordinates
-     * AND the unit viewing direction from each intersection point toward the camera.
+     * This function generates per-pixel world-space 3D intersection coordinates.
      *
-     * For each pixel, it finds the ray-Gaussian intersections and records:
-     *   q_cam    = K^{-1} * (KWH * [s_u, s_v, 1]^T)
-     *   q_world  = R_c2w * q_cam + t_c2w
-     *   view_dir = normalize(cam_pos - q_world)   (unit vector toward camera)
-     *
-     * Output layout per sample: [x, y, z, vx, vy, vz]
-     *   [0..2] world-space XYZ of the intersection point
-     *   [3..5] unit viewing direction (from surface toward camera)
+     * For each pixel, it finds the ray-Gaussian intersections and records their
+     * 3D position in world space as:
+     *   q_cam  = K^{-1} * (KWH * [s_u, s_v, 1]^T)
+     *   q_world = R_c2w * q_cam + t_c2w
+     * where (s_u, s_v) is the UV intersection in the Gaussian's local frame.
      */
     template <typename S>
-    __global__ void rasterize_to_world_and_view_samples_fwd_implicit_textured_gaussians_kernel(
+    __global__ void rasterize_to_samples_world_fwd_implicit_textured_gaussians_kernel(
         const uint32_t C,                     // number of cameras
         const uint32_t N,                     // number of gaussians
         const uint32_t n_isects,              // number of ray-primitive intersections.
@@ -42,8 +38,8 @@ namespace gsplat
                                               // This is (KWH)^{-1} in the paper (takes screen [x,y] and map to [u,v])
         const S *__restrict__ viewmats,       // world-to-camera transforms. [C, 4, 4] row-major [R t; 0 1]
         const S *__restrict__ Ks,             // camera intrinsics. [C, 3, 3] row-major [fx 0 cx; 0 fy cy; 0 0 1]
-        const S *__restrict__ opacities,      // [C, N] or [nnz]
-        const bool *__restrict__ masks,       // [C, tile_height, tile_width]
+        const S *__restrict__ opacities,      // [C, N] or [nnz]                        // Gaussian opacities that support per-view values.
+        const bool *__restrict__ masks,       // [C, tile_height, tile_width]            // Optional tile mask to skip rendering GS to masked tiles.
         const uint32_t image_width,
         const uint32_t image_height,
         const uint32_t tile_size,
@@ -52,13 +48,12 @@ namespace gsplat
         const int32_t *__restrict__ tile_offsets, // [C, tile_height, tile_width]
         const int32_t *__restrict__ flatten_ids,  // [n_isects]
         const uint32_t num_texture_samples,
-        const S opac_threshold,
+        const S sample_alpha_threshold,
 
         // outputs
         int32_t *__restrict__ sample_counts,       // [C, image_height, image_width]
         int32_t *__restrict__ sample_gaussian_ids, // [C, image_height, image_width]
-        S *__restrict__ texture_inputs             // [C, image_height, image_width, num_texture_samples, 6]
-                                                   // layout per sample: [x, y, z, vx, vy, vz]
+        S *__restrict__ texture_inputs             // [C, image_height, image_width, num_texture_samples, 3] — world-space XYZ
     )
     {
         /**
@@ -75,7 +70,7 @@ namespace gsplat
         tile_offsets += camera_id * tile_height * tile_width;
         sample_counts += camera_id * image_height * image_width;
         sample_gaussian_ids += camera_id * image_height * image_width;
-        texture_inputs += camera_id * image_height * image_width * num_texture_samples * 6;
+        texture_inputs += camera_id * image_height * image_width * num_texture_samples * 3;
 
         if (masks != nullptr)
         {
@@ -85,20 +80,20 @@ namespace gsplat
         /**
          * ==============================
          * Load per-camera intrinsics and camera-to-world transform.
+         * These are constant for all gaussians processed by this block.
          *
          * viewmats is [C, 4, 4] row-major: [R t; 0 1] where R is world-to-camera rotation
          *   and t is world-to-camera translation, so:  p_cam = R * p_world + t
          * Camera-to-world: p_world = R^T * p_cam - R^T * t
-         * Camera position in world: cam_pos = t_c2w = -R^T * t
          *
          * Ks is [C, 3, 3] row-major: [fx 0 cx; 0 fy cy; 0 0 1]
          * K^{-1} * v = [(v.x - cx*v.z)/fx, (v.y - cy*v.z)/fy, v.z]
          * ==============================
          */
         const S *cam_viewmat = viewmats + camera_id * 16;
-        const S *cam_K       = Ks       + camera_id * 9;
+        const S *cam_K = Ks + camera_id * 9;
 
-        // World-to-camera rotation R (row-major input)
+        // World-to-camera rotation R (row-major input, glm column-major load → explicit transpose)
         // R[row][col] = cam_viewmat[row * 4 + col]
         const S r00 = cam_viewmat[0], r01 = cam_viewmat[1], r02 = cam_viewmat[2];
         const S r10 = cam_viewmat[4], r11 = cam_viewmat[5], r12 = cam_viewmat[6];
@@ -106,8 +101,9 @@ namespace gsplat
         // World-to-camera translation
         const S tx = cam_viewmat[3], ty = cam_viewmat[7], tz = cam_viewmat[11];
 
-        // Camera position in world space: t_c2w = -R^T * t
-        // Also serves as the origin for computing viewing directions.
+        // Camera-to-world rotation R^T (transpose of R)
+        // c2w_R[row][col] = R[col][row]
+        // Camera-to-world translation: t_c2w = -R^T * t
         const S c2w_t_x = -(r00 * tx + r10 * ty + r20 * tz);
         const S c2w_t_y = -(r01 * tx + r11 * ty + r21 * tz);
         const S c2w_t_z = -(r02 * tx + r12 * ty + r22 * tz);
@@ -154,6 +150,12 @@ namespace gsplat
 
         uint32_t tr = block.thread_rank();
 
+        /**
+         * ==============================
+         * Per-pixel rendering: (2DGS Differentiable Rasterizer Forward Pass)
+         * ==============================
+         */
+
         for (uint32_t b = 0; b < num_batches; ++b)
         {
             if (__syncthreads_count(done) >= block_size)
@@ -186,22 +188,26 @@ namespace gsplat
              * Forward rasterization pass:
              * ==================================================
              *
+             * GSplat computes rasterization point of intersection as:
+             * 1. Generate 2 homogeneous plane parameter vectors as sets of points in UV space
+             * 2. Find the set of points that satisfy both conditions with the cross product
+             * 3. Find where this solution set intersects with UV plane using projective flattening
+             *
+             * For each gaussian G_i and pixel q_xy:
+             *
              * 1. Compute homogeneous plane parameters:
              *    h_u = p_x * M_w - M_u
              *    h_v = p_y * M_w - M_v
+             *    where M_u, M_v, M_w are rows of the KWH transform
              *
              * 2. Compute intersection:
              *    zeta = h_u × h_v
              *    s_uv = [zeta_1/zeta_3, zeta_2/zeta_3]
              *
              * 3. Convert s_uv to world space:
-             *    kwh_s    = KWH * [s_u, s_v, 1]^T
-             *    q_cam    = K^{-1} * kwh_s
-             *    q_world  = R_c2w * q_cam + t_c2w
-             *
-             * 4. Compute unit viewing direction:
-             *    delta    = cam_pos - q_world   (vector from surface to camera)
-             *    view_dir = delta / ||delta||
+             *    kwh_s = KWH * [s_u, s_v, 1]^T     (dot rows with [s.x, s.y, 1])
+             *    q_cam = K^{-1} * kwh_s             (unproject to camera space)
+             *    q_world = R_c2w * q_cam + t_c2w    (rotate to world space)
              */
             uint32_t batch_size = min(block_size, range_end - batch_start);
             for (uint32_t t = 0; (t < batch_size) && !done; ++t)
@@ -238,7 +244,7 @@ namespace gsplat
                 const S sigma = 0.5f * gauss_weight;
                 const S alpha_approx = min(0.999f, opac * __expf(-sigma));
 
-                if (valid_texture > 0 && alpha_approx > opac_threshold)
+                if (valid_texture > 0 && alpha_approx > sample_alpha_threshold)
                 {
                     // KWH * [s.x, s.y, 1]^T: dot each row of KWH with [s.x, s.y, 1]
                     const S sv1_x = u_M.x * s.x + u_M.y * s.y + u_M.z;
@@ -258,27 +264,15 @@ namespace gsplat
                         r02 * qcam_x + r12 * qcam_y + r22 * qcam_z + c2w_t_z,
                     };
 
-                    // Unit viewing direction: normalize(cam_pos - world_pos)
-                    // cam_pos = (c2w_t_x, c2w_t_y, c2w_t_z)
-                    const S vx = c2w_t_x - world_pos.x;
-                    const S vy = c2w_t_y - world_pos.y;
-                    const S vz = c2w_t_z - world_pos.z;
-                    const S inv_len = rsqrtf(vx * vx + vy * vy + vz * vz + 1e-8f);
-                    const vec3<S> view_dir = {vx * inv_len, vy * inv_len, vz * inv_len};
-
                     const int sample = sample_counts[pix_id] >> 1;
 
                     if (sample < num_texture_samples)
                     {
                         atomicAdd(sample_counts + pix_id, 2);
                         sample_gaussian_ids[pix_id] = g;
-                        const int base = (pix_id * num_texture_samples + sample) * 6;
-                        texture_inputs[base]     = world_pos.x;
-                        texture_inputs[base + 1] = world_pos.y;
-                        texture_inputs[base + 2] = world_pos.z;
-                        texture_inputs[base + 3] = view_dir.x;
-                        texture_inputs[base + 4] = view_dir.y;
-                        texture_inputs[base + 5] = view_dir.z;
+                        texture_inputs[(pix_id * num_texture_samples + sample) * 3] = world_pos.x;
+                        texture_inputs[(pix_id * num_texture_samples + sample) * 3 + 1] = world_pos.y;
+                        texture_inputs[(pix_id * num_texture_samples + sample) * 3 + 2] = world_pos.z;
                     }
                     else
                     {
@@ -294,13 +288,13 @@ namespace gsplat
         torch::Tensor,
         torch::Tensor,
         torch::Tensor>
-    rasterize_to_world_and_view_samples_fwd_textured_gaussians_tensor(
+    rasterize_to_samples_world_fwd_textured_gaussians_tensor(
         // Gaussian parameters
         const torch::Tensor &means2d,             // [C, N, 2] or [nnz, 2]
         const torch::Tensor &ray_transforms,      // [C, N, 3, 3] or [nnz, 3, 3]
         const torch::Tensor &viewmats,            // [C, 4, 4]
         const torch::Tensor &Ks,                  // [C, 3, 3]
-        const torch::Tensor &opacities,           // [C, N] or [nnz]
+        const torch::Tensor &opacities,           // [C, N]  or [nnz]
         const at::optional<torch::Tensor> &masks, // [C, tile_height, tile_width]
         // image size
         const uint32_t image_width,
@@ -311,7 +305,7 @@ namespace gsplat
         const torch::Tensor &flatten_ids,  // [n_isects]
 
         const uint32_t num_texture_samples,
-        const float opac_threshold)
+        const float sample_alpha_threshold)
     {
         GSPLAT_DEVICE_GUARD(means2d);
         GSPLAT_CHECK_INPUT(means2d);
@@ -327,8 +321,8 @@ namespace gsplat
         }
         bool packed = means2d.dim() == 2;
 
-        uint32_t C = tile_offsets.size(0);
-        uint32_t N = packed ? 0 : means2d.size(1);
+        uint32_t C = tile_offsets.size(0);         // number of cameras
+        uint32_t N = packed ? 0 : means2d.size(1); // number of gaussians
         uint32_t tile_height = tile_offsets.size(1);
         uint32_t tile_width = tile_offsets.size(2);
         uint32_t n_isects = flatten_ids.size(0);
@@ -342,21 +336,19 @@ namespace gsplat
         torch::Tensor sample_gaussian_ids = torch::full(
             {C, image_height, image_width}, -1,
             means2d.options().dtype(torch::kInt32));
-        // 6 channels per sample: [x, y, z, vx, vy, vz]
         torch::Tensor texture_inputs = torch::zeros(
-            {C, image_height, image_width, num_texture_samples, 6},
+            {C, image_height, image_width, num_texture_samples, 3},
             means2d.options().dtype(torch::kFloat32));
 
         at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
-        // shared memory unchanged: id_batch + xy_opacity_batch + u_Ms + v_Ms + w_Ms
-        // (camera position and view_dir are computed in registers from per-camera data)
+        // shared memory: id_batch + xy_opacity_batch + u_Ms + v_Ms + w_Ms
         const uint32_t shared_mem =
             tile_size * tile_size *
             (sizeof(int32_t) + sizeof(vec3<float>) + sizeof(vec3<float>) +
              sizeof(vec3<float>) + sizeof(vec3<float>));
 
         if (cudaFuncSetAttribute(
-                rasterize_to_world_and_view_samples_fwd_implicit_textured_gaussians_kernel<float>,
+                rasterize_to_samples_world_fwd_implicit_textured_gaussians_kernel<float>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
                 shared_mem) != cudaSuccess)
         {
@@ -365,7 +357,7 @@ namespace gsplat
                 shared_mem,
                 " bytes), try lowering tile_size.");
         }
-        rasterize_to_world_and_view_samples_fwd_implicit_textured_gaussians_kernel<float>
+        rasterize_to_samples_world_fwd_implicit_textured_gaussians_kernel<float>
             <<<blocks, threads, shared_mem, stream>>>(
                 C,
                 N,
@@ -386,7 +378,7 @@ namespace gsplat
                 flatten_ids.data_ptr<int32_t>(),
 
                 num_texture_samples,
-                opac_threshold,
+                sample_alpha_threshold,
 
                 sample_counts.data_ptr<int32_t>(),
                 sample_gaussian_ids.data_ptr<int32_t>(),

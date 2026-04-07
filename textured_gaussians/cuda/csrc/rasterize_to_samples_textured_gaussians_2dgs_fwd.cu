@@ -41,7 +41,7 @@ namespace gsplat
                                                   // gives the interval that our gaussians are gonna use.
         const int32_t *__restrict__ flatten_ids,  // [n_isects]                      // The global flatten indices in [C * N] or [nnz] from  `isect_tiles()`.
         const uint32_t num_texture_samples,
-        const S opac_threshold,
+        const S sample_alpha_threshold,
 
         // outputs
         int32_t *__restrict__ sample_counts,       // [C, image_height, image_width]
@@ -140,9 +140,6 @@ namespace gsplat
         // transmittance is gonna be used in the backward pass which requires a high
         // numerical precision so we use double for it. However double make bwd 1.5x
         // slower so we stick with float for now.
-        // The coefficient for volumetric rendering for our responsible pixel.
-        S T = 1.0f;
-
         // collect and process batches of gaussians
         // each thread loads one gaussian at a time before rasterizing its
         // designated pixel
@@ -279,7 +276,7 @@ namespace gsplat
                 // evaluation of the gaussian exponential term
                 const S alpha_approx = min(0.999f, opac * __expf(-sigma));
 
-                if (valid_texture > 0 && alpha_approx > opac_threshold)
+                if (valid_texture > 0 && alpha_approx > sample_alpha_threshold)
                 {
                     const vec3<S> texture_input = vec3<S>(g / (N - 1.0), s.x / 6.0 + 0.5, s.y / 6.0 + 0.5);
 
@@ -322,7 +319,7 @@ namespace gsplat
         const torch::Tensor &flatten_ids,  // [n_isects]
 
         const uint32_t num_texture_samples,
-        const float opac_threshold)
+        const float sample_alpha_threshold)
     {
         GSPLAT_DEVICE_GUARD(means2d);
         GSPLAT_CHECK_INPUT(means2d);
@@ -396,7 +393,7 @@ namespace gsplat
                 flatten_ids.data_ptr<int32_t>(),
 
                 num_texture_samples,
-                opac_threshold,
+                sample_alpha_threshold,
 
                 sample_counts.data_ptr<int32_t>(),
                 sample_gaussian_ids.data_ptr<int32_t>(),
