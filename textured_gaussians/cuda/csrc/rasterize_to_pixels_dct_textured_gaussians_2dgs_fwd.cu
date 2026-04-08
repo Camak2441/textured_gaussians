@@ -145,7 +145,7 @@ namespace gsplat
          */
         // Shared memory layout:
         // This memory is laid out as follows:
-        // | gaussian indices | x : y : alpha | u | v | w |
+        // | gaussian indices | x : y : alpha | u | v | w | ucos | vcos |
         extern __shared__ int s[];
         int32_t *id_batch = (int32_t *)s; // [block_size]
 
@@ -157,6 +157,9 @@ namespace gsplat
         vec3<S> *u_Ms_batch = reinterpret_cast<vec3<float> *>(&xy_opacity_batch[block_size]); // [block_size]
         vec3<S> *v_Ms_batch = reinterpret_cast<vec3<float> *>(&u_Ms_batch[block_size]);       // [block_size]
         vec3<S> *w_Ms_batch = reinterpret_cast<vec3<float> *>(&v_Ms_batch[block_size]);       // [block_size]
+
+        S *ucos = (S *)(&w_Ms_batch[block_size]);
+        S *vcos = (S *)(&ucos[block_size * texture_res_x]);
 
         // current visibility left to render
         // transmittance is gonna be used in the backward pass which requires a high
@@ -171,6 +174,9 @@ namespace gsplat
         // each thread loads one gaussian at a time before rasterizing its
         // designated pixel
         uint32_t tr = block.thread_rank();
+
+        ucos += tr * texture_res_x;
+        vcos += tr * texture_res_y;
 
         // Per-pixel distortion error proposed in Mip-NeRF 360.
         // Implemented reference:
@@ -303,14 +309,15 @@ namespace gsplat
                     valid_texture = -1;
                 }
 
-                const S u = (S)((s.x + 3.0f) / 6.0f);
-                const S v = (S)((s.y + 3.0f) / 6.0f);
+                const S u = (S)((s.x + 3.0f) / 6.0f * (texture_res_x - 2) + 1.f) / texture_res_x;
+                const S v = (S)((s.y + 3.0f) / 6.0f * (texture_res_y - 2) + 1.f) / texture_res_y;
 
                 // calculate alpha texture scaling factor
                 S alpha_scaling_factor = 0.0f;
                 if (valid_texture > 0)
                 {
-                    alpha_scaling_factor += dct_sample(textures, texture_res_x, texture_res_y, g, u, v, 3);
+                    precompute_dct_factors(texture_res_x, texture_res_y, u, v, ucos, vcos);
+                    alpha_scaling_factor += dct_sample(textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, 3);
                 }
                 else
                 {
@@ -350,16 +357,15 @@ namespace gsplat
                 // run volumetric rendering...
                 const S vis = alpha * T;
                 const S *c_ptr = colors + g * COLOR_DIM;
+                S tex_color[COLOR_DIM] = {0.0f};
+                if (valid_texture > 0)
+                {
+                    dct_color_sample<COLOR_DIM, S>(textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, tex_color);
+                }
                 GSPLAT_PRAGMA_UNROLL
                 for (uint32_t k = 0; k < COLOR_DIM; ++k)
                 {
-                    auto base_color = c_ptr[k];
-                    auto tex_color = 0.0;
-                    if (valid_texture > 0)
-                    {
-                        tex_color += dct_sample(textures, texture_res_x, texture_res_y, g, u, v, k);
-                    }
-                    pix_out[k] += (base_color + tex_color) * vis;
+                    pix_out[k] += (c_ptr[k] + tex_color[k]) * vis;
                 }
 
                 const S *n_ptr = normals + g * 3;
@@ -493,6 +499,9 @@ namespace gsplat
         uint32_t tile_width = tile_offsets.size(2);
         uint32_t n_isects = flatten_ids.size(0);
 
+        uint32_t texture_res_y = textures.size(1);
+        uint32_t texture_res_x = textures.size(2);
+
         // Each block covers a tile on the image. In total there are
         // C * tile_height * tile_width blocks.
         // we assign one pixel to one thread.
@@ -532,7 +541,7 @@ namespace gsplat
         const uint32_t shared_mem =
             tile_size * tile_size *
             (sizeof(int32_t) + sizeof(vec3<float>) + sizeof(vec3<float>) +
-             sizeof(vec3<float>) + sizeof(vec3<float>));
+             sizeof(vec3<float>) + sizeof(vec3<float>) + sizeof(float) * (texture_res_x + texture_res_y));
 
         // TODO: an optimization can be done by passing the actual number of
         // channels into the kernel functions and avoid necessary global memory

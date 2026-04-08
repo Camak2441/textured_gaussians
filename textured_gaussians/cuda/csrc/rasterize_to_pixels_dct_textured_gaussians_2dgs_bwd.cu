@@ -154,6 +154,9 @@ namespace gsplat
         S *rgbs_batch = (S *)&w_Ms_batch[block_size];           // [block_size * COLOR_DIM]
         S *normals_batch = &rgbs_batch[block_size * COLOR_DIM]; // [block_size * 3]
 
+        S *ucos = (S *)(&normals_batch[block_size * 3]);
+        S *vcos = (S *)(&ucos[block_size * texture_res_x]);
+
         // this is the T AFTER the last gaussian in this pixel
         S T_final = 1.0f - render_alphas[pix_id];
         S T = T_final;
@@ -216,6 +219,10 @@ namespace gsplat
         // collect and process batches of gaussians
         // each thread loads one gaussian at a time before rasterizing
         const uint32_t tr = block.thread_rank();
+
+        ucos += tr * texture_res_x;
+        vcos += tr * texture_res_y;
+
         cg::thread_block_tile<32> warp = cg::tiled_partition<32>(block);
 
         // find the maximum final gaussian ids in the thread warp.
@@ -359,14 +366,15 @@ namespace gsplat
                         valid_texture = 1;
                     }
 
-                    u = (S)((s.x + 3.0f) / 6.0f);
-                    v = (S)((s.y + 3.0f) / 6.0f);
+                    u = (S)((s.x + 3.0f) / 6.0f * (texture_res_x - 2) + 1.f) / texture_res_x;
+                    v = (S)((s.y + 3.0f) / 6.0f * (texture_res_y - 2) + 1.f) / texture_res_y;
 
                     // computer alpha scaling factor
                     if (valid_texture > 0)
                     {
+                        precompute_dct_factors(texture_res_x, texture_res_y, u, v, ucos, vcos);
                         alpha_scaling_factor = 0.0f;
-                        alpha_scaling_factor += dct_sample(textures, texture_res_x, texture_res_y, g, u, v, 3);
+                        alpha_scaling_factor += dct_sample(textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, 3);
                     }
                     else
                     {
@@ -460,17 +468,18 @@ namespace gsplat
                     // where alpha_i is a_i * G_i
                     const S fac = alpha * T;
                     S tex_colors[COLOR_DIM] = {0.f};
+                    S deltas[COLOR_DIM];
 
                     GSPLAT_PRAGMA_UNROLL
                     for (uint32_t k = 0; k < COLOR_DIM; ++k)
                     {
-                        v_rgb_local[k] += fac * v_render_c[k];
+                        deltas[k] = fac * v_render_c[k];
+                        v_rgb_local[k] += deltas[k];
+                    }
 
-                        if (valid_texture > 0)
-                        {
-                            dct_update(v_textures, texture_res_x, texture_res_y, g, u, v, k, fac * v_render_c[k]);
-                            tex_colors[k] += dct_sample(textures, texture_res_x, texture_res_y, g, u, v, k);
-                        }
+                    if (valid_texture > 0)
+                    {
+                        dct_color_sample_and_update<COLOR_DIM, S>(textures, v_textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, tex_colors, deltas);
                     }
 
                     // contribution from this pixel to alpha
@@ -595,7 +604,7 @@ namespace gsplat
                         // update alpha scaling factor gradients
                         if (valid_texture > 0)
                         {
-                            dct_update(v_textures, texture_res_x, texture_res_y, g, u, v, 3, vis * opac * v_alpha);
+                            dct_update(v_textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, 3, vis * opac * v_alpha);
                         }
                     }
 
@@ -774,6 +783,9 @@ namespace gsplat
         uint32_t tile_height = tile_offsets.size(1);
         uint32_t tile_width = tile_offsets.size(2);
 
+        uint32_t texture_res_y = textures.size(1);
+        uint32_t texture_res_x = textures.size(2);
+
         // Each block covers a tile on the image. In total there are
         // C * tile_height * tile_width blocks.
         dim3 threads = {tile_size, tile_size, 1};
@@ -798,7 +810,8 @@ namespace gsplat
                 tile_size * tile_size *
                 (sizeof(int32_t) + sizeof(vec3<float>) + sizeof(vec3<float>) +
                  sizeof(vec3<float>) + sizeof(vec3<float>) +
-                 sizeof(float) * COLOR_DIM + sizeof(float) * 3);
+                 sizeof(float) * COLOR_DIM + sizeof(float) * 3 +
+                 sizeof(float) * (texture_res_x + texture_res_y));
             at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
 
             if (cudaFuncSetAttribute(

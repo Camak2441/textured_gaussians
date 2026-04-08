@@ -186,6 +186,8 @@ def process_config(cfg):
                     args.append(f"rgb{cfg.textured_rgb_clamp}")
                 if cfg.textured_alpha_clamp != "normalize":
                     args.append(f"a{cfg.textured_alpha_clamp}")
+                if cfg.freeze_geometry != None:
+                    args.append(f"to{cfg.freeze_geometry}")
                 args_suffix = "_".join(args)
                 if len(args_suffix) != 0 and args_suffix[0] != "_":
                     args_suffix = "_" + args_suffix
@@ -204,6 +206,22 @@ def process_config(cfg):
                     cfg.base_color_factor = "Constant(0)"
                 else:
                     cfg.result_dir = f"{_RESULTS_DIR}/itgs_{cfg.texture_model}_{cfg.base_color_factor}/{scene_args["result_dir"]}"
+            case "dtgs":
+                args = []
+
+                if cfg.texture_width != 16 or cfg.texture_height != 16:
+                    if cfg.texture_width == cfg.texture_height:
+                        args.append(f"t{cfg.texture_width}")
+                    else:
+                        args.append(f"t{cfg.texture_width}x{cfg.texture_height}")
+                if cfg.freeze_geometry != None:
+                    args.append(f"to{cfg.freeze_geometry}")
+                args_suffix = "_".join(args)
+                if len(args_suffix) != 0 and args_suffix[0] != "_":
+                    args_suffix = "_" + args_suffix
+                cfg.result_dir = f"{_RESULTS_DIR}/{cfg.model_type}{args_suffix}/{scene_args["result_dir"]}"
+                cfg.textured_rgb_clamp = "none"
+                cfg.textured_alpha_clamp = "none"
             case _:
                 cfg.result_dir = (
                     f"{_RESULTS_DIR}/{cfg.model_type}/{scene_args["result_dir"]}"

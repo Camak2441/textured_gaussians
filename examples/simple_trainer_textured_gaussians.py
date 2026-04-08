@@ -96,6 +96,7 @@ class Config:
     save_steps: List[int] = field(
         default_factory=lambda: list(range(500, 100_000, 500))
     )
+    freeze_geometry: Optional[int] = None
     # Steps to save the model textures
     render_traj_steps: List[int] = field(
         default_factory=lambda: [
@@ -225,6 +226,10 @@ class Config:
     scale_loss: bool = False
     scale_lambda: float = 1e-1
 
+    # Frequency regularization for DCT textures — penalises high-frequency coefficients
+    freq_loss: bool = False
+    freq_lambda: float = 1e-3
+
     # Model for splatting.
     model_type: Literal[
         "2dgs",
@@ -263,9 +268,9 @@ class Config:
     saved_texture_width: Optional[int] = None
     saved_texture_height: Optional[int] = None
     textured_rgb: bool = False
-    textured_rgb_clamp: Literal["normalize", "clamp", "sigmoid"] = "clamp"
+    textured_rgb_clamp: Literal["none", "normalize", "clamp", "sigmoid"] = "clamp"
     textured_alpha: bool = False
-    textured_alpha_clamp: Literal["normalize", "clamp", "sigmoid"] = "normalize"
+    textured_alpha_clamp: Literal["none", "normalize", "clamp", "sigmoid"] = "normalize"
 
     filtering: Literal["bilinear", "mipmapped", "mipmapped2", "anisotropic"] = (
         "bilinear"
@@ -386,7 +391,7 @@ def create_splats_with_optimizers(
 
     texture_model = None
     match cfg.model_type:
-        case "tgs" | "dtgs":
+        case "tgs":
             if cfg.texture_height is None:
                 textures = torch.ones(
                     points.shape[0], cfg.texture_height, cfg.texture_width, 4
@@ -398,6 +403,18 @@ def create_splats_with_optimizers(
             textures[:, :, :, :3] = 0.1  # init color to low value
             textures[:, :, :, 3] = 1.0  # init alpha to 1.0
             params.append(("textures", torch.nn.Parameter(textures), 2.5e-3))
+        case "dtgs":
+            if cfg.texture_height is None:
+                textures = torch.ones(
+                    points.shape[0], cfg.texture_height, cfg.texture_width, 4
+                )
+            else:
+                textures = torch.ones(
+                    points.shape[0], cfg.texture_height, cfg.texture_width, 4
+                )
+            textures[:, :, :, :] = 0.1  # init to having no frequencies
+            textures[:, 0, 0, 3] = 1.0  # init alpha to flat opaque
+            params.append(("textures", torch.nn.Parameter(textures), 1.5e-3))
         case "itgs":
             texture_model_name = canonical_model_name(cfg.texture_model)
             print(f"Loading model {texture_model_name}")
@@ -606,6 +623,8 @@ class Runner:
         else:
             rgb_textures = textures[..., :3]  # [N, L, L, 3]
             match self.cfg.textured_rgb_clamp:
+                case "none":
+                    pass
                 case "normalize":
                     rgb_textures = (
                         rgb_textures / rgb_textures.amax(dim=[1, 2], keepdim=True)
@@ -616,11 +635,15 @@ class Runner:
                     rgb_textures = rgb_textures.clamp(0.0, 1.0)
                 case "sigmoid":
                     rgb_textures = rgb_textures.sigmoid()
+                case _:
+                    print(f"Unknown clamp type {self.cfg.textured_rgb_clamp}")
         if not self.cfg.textured_alpha:
             alpha_textures = torch.ones_like(textures[..., 3:4])  # [N, L, L, 1]
         else:
             alpha_textures = textures[..., 3:4]  # [N, L, L, 1]
             match self.cfg.textured_alpha_clamp:
+                case "none":
+                    pass
                 case "normalize":
                     alpha_textures = alpha_textures / (
                         alpha_textures.amax(dim=[1, 2], keepdim=True) + 1e-6
@@ -630,6 +653,8 @@ class Runner:
                     alpha_textures = alpha_textures.clamp(0.0, 0.9999)
                 case "sigmoid":
                     alpha_textures = alpha_textures.sigmoid() * 0.9999
+                case _:
+                    print(f"Unknown clamp type {self.cfg.textured_alpha_clamp}")
 
         textures = torch.cat([rgb_textures, alpha_textures], dim=-1)  # [N, L, L, 4]
         return textures
@@ -1338,6 +1363,18 @@ class Runner:
                 scale_loss = cfg.scale_lambda * max_scale.mean()
                 loss += scale_loss
 
+            if cfg.freq_loss and cfg.model_type == "dtgs":
+                textures = self.splats["textures"]  # [N, L_y, L_x, 4]
+                L_y, L_x = textures.shape[1], textures.shape[2]
+                freq_i = torch.arange(L_x, device=textures.device, dtype=textures.dtype)
+                freq_j = torch.arange(L_y, device=textures.device, dtype=textures.dtype)
+                # weight[j, i] = i + j — higher for high-frequency coefficients
+                freq_weight = (
+                    (freq_i[None, :] + freq_j[:, None]).unsqueeze(0).unsqueeze(-1)
+                )
+                freqloss = cfg.freq_lambda * (textures * freq_weight).pow(2).mean()
+                loss += freqloss
+
             loss.backward()
 
             desc = f"loss={loss.item():.3f}| " f"sh degree={sh_degree_to_use}| "
@@ -1355,6 +1392,8 @@ class Runner:
                 desc += f"alpha loss={alpha_loss.item():.6f}| "
             if cfg.scale_loss:
                 desc += f"scale loss={scale_loss.item():.6f}| "
+            if cfg.freq_loss and cfg.model_type == "dtgs":
+                desc += f"freq loss={freqloss.item():.6f}| "
             pbar.set_description(desc)
 
             if cfg.tb_every > 0 and step % cfg.tb_every == 0:
@@ -1370,6 +1409,8 @@ class Runner:
                     self.writer.add_scalar("train/normalloss", normalloss.item(), step)
                 if cfg.dist_loss:
                     self.writer.add_scalar("train/distloss", distloss.item(), step)
+                if cfg.freq_loss and cfg.model_type == "dtgs":
+                    self.writer.add_scalar("train/freqloss", freqloss.item(), step)
                 if cfg.tb_save_image:
                     canvas = (
                         torch.cat([pixels, colors[..., :3]], dim=2)
@@ -1419,9 +1460,15 @@ class Runner:
                     )
 
             # optimize
-            for optimizer in self.optimizers.values():
+            if self.cfg.freeze_geometry is None or step < self.cfg.freeze_geometry:
+                for optimizer in self.optimizers.values():
+                    optimizer.step()
+                    optimizer.zero_grad(set_to_none=True)
+            elif "textures" in self.optimizers:
+                optimizer = self.optimizers["textures"]
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
+
             for optimizer in self.pose_optimizers:
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)

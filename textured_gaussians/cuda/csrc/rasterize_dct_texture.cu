@@ -49,15 +49,20 @@ namespace gsplat
             return;
         }
 
-        S u = ((S)pixel_x + 0.5f) / (image_width - 1);
-        S v = ((S)pixel_y + 0.5f) / (image_height - 1);
+        const uint32_t block_size = block.size();
+        extern __shared__ int s[];
+        S *ucos = (S *)s;
+        S *vcos = (S *)(&ucos[block_size * texture_res_x]);
 
-        GSPLAT_PRAGMA_UNROLL
-        for (uint32_t k = 0; k < COLOR_DIM; ++k)
-        {
-            S tex_color = dct_sample(textures, texture_res_x, texture_res_y, g, u, v, k);
-            render_colors[k] = tex_color;
-        }
+        const uint32_t tr = block.thread_rank();
+        ucos += tr * texture_res_x;
+        vcos += tr * texture_res_y;
+
+        S u = (((S)pixel_x) / (image_width - 1) * (texture_res_x - 2) + 1.f) / texture_res_x;
+        S v = (((S)pixel_y) / (image_height - 1) * (texture_res_y - 2) + 1.f) / texture_res_y;
+        precompute_dct_factors(texture_res_x, texture_res_y, u, v, ucos, vcos);
+
+        dct_color_sample<COLOR_DIM, S>(textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, render_colors);
     }
 
     template <uint32_t CDIM>
@@ -75,19 +80,35 @@ namespace gsplat
         uint32_t N = textures.size(0); // number of gaussians
         uint32_t channels = textures.size(-1);
 
+        uint32_t texture_res_y = textures.size(1);
+        uint32_t texture_res_x = textures.size(2);
+
         // Each block covers a tile on the image. In total there are
         // C * tile_height * tile_width blocks.
         // we assign one pixel to one thread.
         dim3 threads = {1, tile_size, tile_size};
         dim3 blocks = {N, (image_height + tile_size - 1) / tile_size, (image_width + tile_size - 1) / tile_size};
 
-        torch::Tensor renders = torch::empty(
+        torch::Tensor renders = torch::zeros(
             {N, image_height, image_width, channels},
             textures.options().dtype(torch::kFloat32));
 
         at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
+        const uint32_t shared_mem =
+            tile_size * tile_size * sizeof(float) * (texture_res_x + texture_res_y);
+
+        if (cudaFuncSetAttribute(
+                rasterize_dct_textures_kernel<CDIM, float>,
+                cudaFuncAttributeMaxDynamicSharedMemorySize,
+                shared_mem) != cudaSuccess)
+        {
+            AT_ERROR(
+                "Failed to set maximum shared memory size (requested ",
+                shared_mem,
+                " bytes), try lowering tile_size.");
+        }
         rasterize_dct_textures_kernel<CDIM, float>
-            <<<blocks, threads, 0, stream>>>(
+            <<<blocks, threads, shared_mem, stream>>>(
                 textures.packed_accessor32<const float, 4, at::RestrictPtrTraits>(),
                 image_width,
                 image_height,
