@@ -359,8 +359,8 @@ namespace gsplat
                         valid_texture = 1;
                     }
 
-                    u = (S)((s.x + 3.0f) / 6.0f * (texture_res_x - 1));
-                    v = (S)((s.y + 3.0f) / 6.0f * (texture_res_y - 1));
+                    u = (S)((s.x + 3.0f) / 6.0f);
+                    v = (S)((s.y + 3.0f) / 6.0f);
 
                     // computer alpha scaling factor
                     if (valid_texture > 0)

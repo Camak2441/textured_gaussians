@@ -12,6 +12,19 @@
 
 namespace gsplat
 {
+    template <typename T>
+    inline __device__ T dct_cos(int ij, T uv)
+    {
+        if (ij == 0)
+        {
+            return (T)0.5f;
+        }
+        else
+        {
+            return cos(M_PI * ij * uv);
+        }
+    }
+
     // Helper function for trilinear interpolation coordinate and weight calculation
     template <typename T>
     inline __device__ T dct_sample(
@@ -28,7 +41,7 @@ namespace gsplat
         {
             for (int j = 0; j < texture_res_y; ++j)
             {
-                col += textures[g][j][i][k] * cos(M_PI * i * u) * cos(M_PI * j * v);
+                col += textures[g][j][i][k] * dct_cos(i, u) * dct_cos(j, v);
             }
         }
         return col;
@@ -49,7 +62,7 @@ namespace gsplat
         {
             for (int j = 0; j < texture_res_y; ++j)
             {
-                gpuAtomicAdd(&v_textures[g][j][i][k], delta * cos(M_PI * i * u) * cos(M_PI * j * v));
+                gpuAtomicAdd(&v_textures[g][j][i][k], delta * dct_cos(i, u) * dct_cos(j, v));
             }
         }
         return;

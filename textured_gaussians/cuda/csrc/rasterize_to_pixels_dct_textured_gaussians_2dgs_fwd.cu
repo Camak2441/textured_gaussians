@@ -303,8 +303,8 @@ namespace gsplat
                     valid_texture = -1;
                 }
 
-                const S u = (S)((s.x + 3.0f) / 6.0f * (texture_res_x - 1));
-                const S v = (S)((s.y + 3.0f) / 6.0f * (texture_res_y - 1));
+                const S u = (S)((s.x + 3.0f) / 6.0f);
+                const S v = (S)((s.y + 3.0f) / 6.0f);
 
                 // calculate alpha texture scaling factor
                 S alpha_scaling_factor = 0.0f;
