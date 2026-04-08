@@ -57,6 +57,12 @@ MODEL_SHORTHANDS = {
     "fourier1": """FourierMLP(
         input_type="gaussian",hidden_dims=[48,48,48],out_dim=4,num_frequencies=48,sigma=[1000,3,3]
     )""",
+    "fourier2": """FourierMLP(
+        input_type="world_and_view",sample_norm="bbox",hidden_dims=[48,48,48],out_dim=4,num_frequencies=48,sigma=[5,5,5,3,3,3]
+    )""",
+    "fourier3": """FourierMLP(
+        input_type="world_and_view",sample_norm="bbox",hidden_dims=[48,48,48],out_dim=4,num_frequencies=48,sigma=[20,20,20,3,3,3]
+    )""",
     "siren1": """SIREN(
         input_type="gaussian",hidden_dims=[48,48,48],out_dim=4,omega_0=30,hidden_omegas=1
     )""",
@@ -64,14 +70,19 @@ MODEL_SHORTHANDS = {
         input_type="world_and_view",sample_norm="bbox",hidden_dims=[36,36,36],out_dim=4,omega_0=60,hidden_omegas=1.5
     )""",
     "red": "ConstColor(out_color=[1,0,0,1])",
+    "blue": "ConstColor(out_color=[0,0,1,1])",
 }
 
 MODEL_BATCH_SIZE = {"mix2": 917504}
 
 FACTOR_SHORTHANDS = {
     "zero": """Constant(value=0.0)""",
+    "half": """Constant(value=0.5)""",
     "one": """Constant(value=1.0)""",
     "exp": """Exponential(start_value=1.0,limit_value=0.0,half_life=1000)""",
+    "exphalf": """Exponential(start_value=1.0,limit_value=0.5,half_life=1000)""",
+    "lin": """LinearInterpolate(key_steps=[0, 15000],key_values=[1.0,0.0])""",
+    "linhalf": """LinearInterpolate(key_steps=[0, 15000],key_values=[1.0,0.5])""",
 }
 
 NERF_SYNTHETIC = {

@@ -33,7 +33,7 @@ class Constant(FactorModel):
 
 class LinearInterpolate(FactorModel):
     def __init__(self, key_steps: List[int], key_values: List[int]):
-        self.key_points: list[tuple[int, float]] = zip(key_steps, key_values)
+        self.key_points: list[tuple[int, float]] = list(zip(key_steps, key_values))
         self.key_points.sort(key=lambda pair: pair[0])
 
     def get_value(self, step: int):
@@ -47,9 +47,10 @@ class LinearInterpolate(FactorModel):
         if i == len(self.key_points):
             return self.key_points[-1][1]
 
-        weight = (step - self.key_points[i - 1][1]) / (
-            self.key_points[i][1] + self.key_points[i - 1][1]
+        weight = (step - self.key_points[i - 1][0]) / (
+            self.key_points[i][0] - self.key_points[i - 1][0]
         )
+
         return (
             self.key_points[i - 1][1] * (1.0 - weight) + self.key_points[i][1] * weight
         )
