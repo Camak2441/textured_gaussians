@@ -13,4 +13,6 @@ python simple_trainer_textured_gaussians.py mcmc \
     --textured_rgb \
     --textured_alpha \
     --filtering=mipmapped \
+    --freeze_geometry=0 \
+    --steps_scaler=0.1 \
     --port 6070

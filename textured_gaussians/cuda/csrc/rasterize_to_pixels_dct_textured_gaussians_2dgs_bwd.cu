@@ -374,7 +374,7 @@ namespace gsplat
                     {
                         precompute_dct_factors(texture_res_x, texture_res_y, u, v, ucos, vcos);
                         alpha_scaling_factor = 0.0f;
-                        alpha_scaling_factor += dct_sample(textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, 3);
+                        alpha_scaling_factor = min(max(0.f, dct_sample(textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, 3)), 1.f);
                     }
                     else
                     {

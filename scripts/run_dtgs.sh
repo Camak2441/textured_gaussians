@@ -16,5 +16,4 @@ python simple_trainer_textured_gaussians.py mcmc \
     --textured_rgb \
     --textured_alpha \
     --freeze_geometry=20000 \
-    --resume \
     --port 6070

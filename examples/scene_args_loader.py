@@ -1,8 +1,8 @@
 import os
-from typing import Optional
 
 import yaml
 
+from examples.config import Config
 from examples.texture_models import (
     canonical_factor_name,
     canonical_model_name,
@@ -101,7 +101,7 @@ MIP_NERF_360 = {
 }
 
 
-def make_args(base: dict[str, any], name: str, path_name: Optional[str] = None):
+def make_args(base: dict[str, any], name: str, path_name: str | None = None):
     if path_name is None:
         path_name = name
     args = base.copy()
@@ -142,7 +142,7 @@ SCENES = {
 }
 
 
-def process_config(cfg):
+def process_config(cfg: Config):
 
     # Load texture dimensions
     cfg.texture_width = cfg.texture_resolution
@@ -173,10 +173,23 @@ def process_config(cfg):
         scene_args = SCENES[cfg.scene]
         cfg.data_dir = _DATA_DIR + "/" + scene_args["data_dir"]
 
+        args = []
+
+        def create_args_suffix():
+            nonlocal args, cfg
+            local_args = args
+            if cfg.result_dir_suffix:
+                local_args += [cfg.result_dir_suffix]
+            args_suffix = "_".join(local_args)
+            if len(args_suffix) != 0 and args_suffix[0] != "_":
+                args_suffix = "_" + args_suffix
+            return args_suffix
+
+        if cfg.data_factor != 4:
+            args.append(f"df{cfg.data_factor}")
+
         match cfg.model_type:
             case "tgs":
-                args = []
-
                 if cfg.texture_width != 64 or cfg.texture_height != 64:
                     if cfg.texture_width == cfg.texture_height:
                         args.append(f"t{cfg.texture_width}")
@@ -188,27 +201,32 @@ def process_config(cfg):
                     args.append(f"a{cfg.textured_alpha_clamp}")
                 if cfg.freeze_geometry != None:
                     args.append(f"to{cfg.freeze_geometry}")
-                args_suffix = "_".join(args)
-                if len(args_suffix) != 0 and args_suffix[0] != "_":
-                    args_suffix = "_" + args_suffix
+                args_suffix = create_args_suffix()
                 match cfg.filtering:
                     case "bilinear":
-                        cfg.result_dir = f"{_RESULTS_DIR}/tgs{args_suffix}/{scene_args["result_dir"]}"
+                        if cfg.result_dir is None:
+                            cfg.result_dir = f"{_RESULTS_DIR}/tgs{args_suffix}/{scene_args["result_dir"]}"
                     case "mipmapped":
-                        cfg.result_dir = f"{_RESULTS_DIR}/mip_tgs{args_suffix}/{scene_args["result_dir"]}"
+                        if cfg.result_dir is None:
+                            cfg.result_dir = f"{_RESULTS_DIR}/mip_tgs{args_suffix}/{scene_args["result_dir"]}"
                     case "mipmapped2":
-                        cfg.result_dir = f"{_RESULTS_DIR}/mip2_tgs{args_suffix}/{scene_args["result_dir"]}"
+                        if cfg.result_dir is None:
+                            cfg.result_dir = f"{_RESULTS_DIR}/mip2_tgs{args_suffix}/{scene_args["result_dir"]}"
                     case "anisotropic":
-                        cfg.result_dir = f"{_RESULTS_DIR}/aniso_tgs{args_suffix}/{scene_args["result_dir"]}"
+                        if cfg.result_dir is None:
+                            cfg.result_dir = f"{_RESULTS_DIR}/aniso_tgs{args_suffix}/{scene_args["result_dir"]}"
+
             case "itgs":
+                args_suffix = create_args_suffix()
                 if cfg.base_color_factor is None:
-                    cfg.result_dir = f"{_RESULTS_DIR}/itgs_{cfg.texture_model}/{scene_args["result_dir"]}"
+                    if cfg.result_dir is None:
+                        cfg.result_dir = f"{_RESULTS_DIR}/itgs_{cfg.texture_model}{args_suffix}/{scene_args["result_dir"]}"
                     cfg.base_color_factor = "Constant(0)"
                 else:
-                    cfg.result_dir = f"{_RESULTS_DIR}/itgs_{cfg.texture_model}_{cfg.base_color_factor}/{scene_args["result_dir"]}"
-            case "dtgs":
-                args = []
+                    if cfg.result_dir is None:
+                        cfg.result_dir = f"{_RESULTS_DIR}/itgs_{cfg.texture_model}_{cfg.base_color_factor}{args_suffix}/{scene_args["result_dir"]}"
 
+            case "dtgs":
                 if cfg.texture_width != 16 or cfg.texture_height != 16:
                     if cfg.texture_width == cfg.texture_height:
                         args.append(f"t{cfg.texture_width}")
@@ -216,16 +234,17 @@ def process_config(cfg):
                         args.append(f"t{cfg.texture_width}x{cfg.texture_height}")
                 if cfg.freeze_geometry != None:
                     args.append(f"to{cfg.freeze_geometry}")
-                args_suffix = "_".join(args)
-                if len(args_suffix) != 0 and args_suffix[0] != "_":
-                    args_suffix = "_" + args_suffix
-                cfg.result_dir = f"{_RESULTS_DIR}/{cfg.model_type}{args_suffix}/{scene_args["result_dir"]}"
+
+                args_suffix = create_args_suffix()
+                if cfg.result_dir is None:
+                    cfg.result_dir = f"{_RESULTS_DIR}/{cfg.model_type}{args_suffix}/{scene_args["result_dir"]}"
                 cfg.textured_rgb_clamp = "none"
                 cfg.textured_alpha_clamp = "none"
+
             case _:
-                cfg.result_dir = (
-                    f"{_RESULTS_DIR}/{cfg.model_type}/{scene_args["result_dir"]}"
-                )
+                args_suffix = create_args_suffix()
+                if cfg.result_dir is None:
+                    cfg.result_dir = f"{_RESULTS_DIR}/{cfg.model_type}{args_suffix}/{scene_args["result_dir"]}"
 
         cfg.dataset_type = scene_args["dataset_type"]
 
@@ -295,3 +314,21 @@ def process_config(cfg):
             cfg.base_color_factor = canonical_factor_name(
                 FACTOR_SHORTHANDS[cfg.base_color_factor]
             )
+
+    cfg.texture_resize_points = {}
+    if cfg.texture_resize_steps is not None and cfg.texture_resize_values is not None:
+        points = list(zip(cfg.texture_resize_values, cfg.texture_resize_values))
+        if cfg.texture_resize_heights is not None:
+            points = list(zip(cfg.texture_resize_values, cfg.texture_resize_heights))
+        assert len(cfg.texture_resize_steps) == len(
+            points
+        ), "Texture steps and values are not the same length."
+        resize_points = zip(cfg.texture_resize_steps, points)
+        for key, (width, height) in resize_points:
+            if height is None:
+                height = width
+            cfg.texture_resize_points[key] = width, height
+    else:
+        assert (
+            cfg.texture_resize_steps is None and cfg.texture_resize_values is None
+        ), "Incomplete texture resize steps. The textures will not be resized."

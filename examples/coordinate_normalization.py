@@ -41,7 +41,7 @@ References:
     https://github.com/google-research/multinerf
 """
 
-from typing import Literal, Optional, Tuple
+from typing import Literal
 
 import torch
 import torch.nn.functional as F
@@ -51,6 +51,7 @@ from torch import Tensor
 # ---------------------------------------------------------------------------
 # Core workers
 # ---------------------------------------------------------------------------
+
 
 def normalize_points(points: Tensor, center: Tensor, scale: Tensor) -> Tensor:
     """Apply (center, scale) normalization:  out = (points - center) / scale.
@@ -83,6 +84,7 @@ def unnormalize_points(points: Tensor, center: Tensor, scale: Tensor) -> Tensor:
 # ---------------------------------------------------------------------------
 # Camera helpers  (camtoworlds convention)
 # ---------------------------------------------------------------------------
+
 
 def get_camera_positions(camtoworlds: Tensor) -> Tensor:
     """Extract camera positions in world space.
@@ -117,6 +119,7 @@ def get_camera_directions(camtoworlds: Tensor) -> Tensor:
 # Focus-point computation  —  two strategies
 # ---------------------------------------------------------------------------
 
+
 def compute_focus_point(camtoworlds: Tensor) -> Tensor:
     """Compute the scene focus point using the nerf-factory strategy.
 
@@ -142,12 +145,12 @@ def compute_focus_point(camtoworlds: Tensor) -> Tensor:
     Returns:
         Focus point in world space.  [3]
     """
-    origins    = get_camera_positions(camtoworlds)   # [C, 3]
+    origins = get_camera_positions(camtoworlds)  # [C, 3]
     directions = get_camera_directions(camtoworlds)  # [C, 3]
 
     # t_scalar = dot(-c_i, d_i) so that  nearest = c_i + t_scalar * d_i
     t_scalar = -(origins * directions).sum(dim=-1, keepdim=True)  # [C, 1]
-    nearest  = origins + t_scalar * directions                     # [C, 3]
+    nearest = origins + t_scalar * directions  # [C, 3]
 
     return nearest.median(dim=0).values  # [3]
 
@@ -173,18 +176,18 @@ def compute_focus_point_lstsq(camtoworlds: Tensor) -> Tensor:
     Returns:
         Focus point in world space.  [3]
     """
-    origins    = get_camera_positions(camtoworlds)              # [C, 3]
-    directions = get_camera_directions(camtoworlds)             # [C, 3]
+    origins = get_camera_positions(camtoworlds)  # [C, 3]
+    directions = get_camera_directions(camtoworlds)  # [C, 3]
 
-    I   = torch.eye(3, device=camtoworlds.device, dtype=camtoworlds.dtype)
+    I = torch.eye(3, device=camtoworlds.device, dtype=camtoworlds.dtype)
     ddt = torch.einsum("...i,...j->...ij", directions, directions)  # [C, 3, 3]
     # P_i = I - d_i d_i^T  is the projection matrix onto the plane perpendicular
     # to d_i.  It is symmetric and idempotent (P^T = P, P^2 = P when ||d||=1),
     # so the normal equations reduce to:
     #   A x = b   where  A = mean_i P_i,  b = mean_i P_i c_i
-    P = I.unsqueeze(0) - ddt                                        # [C, 3, 3]
-    A = P.mean(dim=0)                                               # [3, 3]
-    b = (P @ origins.unsqueeze(-1)).mean(dim=0)[:, 0]              # [3]
+    P = I.unsqueeze(0) - ddt  # [C, 3, 3]
+    A = P.mean(dim=0)  # [3, 3]
+    b = (P @ origins.unsqueeze(-1)).mean(dim=0)[:, 0]  # [3]
 
     return torch.linalg.solve(A, b)  # [3]
 
@@ -193,11 +196,12 @@ def compute_focus_point_lstsq(camtoworlds: Tensor) -> Tensor:
 # Base unit-sphere normalization constant computer
 # ---------------------------------------------------------------------------
 
+
 def compute_unit_sphere_normalization(
     points: Tensor,
     strict: bool = True,
-    center: Optional[Tensor] = None,
-) -> Tuple[Tensor, Tensor]:
+    center: Tensor | None = None,
+) -> tuple[Tensor, Tensor]:
     """Compute (center, scale) so that points fit within the unit sphere.
 
     This is the single authoritative function for unit-sphere normalization.
@@ -229,11 +233,12 @@ def compute_unit_sphere_normalization(
 # Camera-based unit-sphere normalization constants
 # ---------------------------------------------------------------------------
 
+
 def compute_camera_unit_sphere_normalization(
     camtoworlds: Tensor,
     strict: bool = True,
     center_method: Literal["focus", "mean"] = "focus",
-) -> Tuple[Tensor, Tensor]:
+) -> tuple[Tensor, Tensor]:
     """Compute (center, scale) so that all camera positions lie within the unit sphere.
 
     Delegates to compute_unit_sphere_normalization for scale computation.
@@ -263,11 +268,15 @@ def compute_camera_unit_sphere_normalization(
         focus = compute_focus_point(camtoworlds)
         # Pass focus explicitly so radii are measured from it, not from a second
         # median of the recentred cloud (which would introduce a double shift).
-        _, scale = compute_unit_sphere_normalization(cam_positions, strict=strict, center=focus)
+        _, scale = compute_unit_sphere_normalization(
+            cam_positions, strict=strict, center=focus
+        )
         return focus, scale
     elif center_method == "mean":
         center = cam_positions.mean(dim=0)
-        _, scale = compute_unit_sphere_normalization(cam_positions, strict=strict, center=center)
+        _, scale = compute_unit_sphere_normalization(
+            cam_positions, strict=strict, center=center
+        )
         return center, scale
     else:
         raise ValueError(f"Unknown center_method: {center_method!r}")
@@ -277,10 +286,11 @@ def compute_camera_unit_sphere_normalization(
 # Scene bounding box derived from cameras
 # ---------------------------------------------------------------------------
 
+
 def compute_scene_bbox_from_cameras(
     camtoworlds: Tensor,
     padding: float = 0.1,
-) -> Tuple[Tensor, Tensor]:
+) -> tuple[Tensor, Tensor]:
     """Compute a scene AABB from the camera positions.
 
     The bounding box of camera positions is grown by a relative padding on each
@@ -294,10 +304,10 @@ def compute_scene_bbox_from_cameras(
     Returns:
         (bbox_min [3], bbox_max [3])
     """
-    cam_pos  = get_camera_positions(camtoworlds)
+    cam_pos = get_camera_positions(camtoworlds)
     bbox_min = cam_pos.min(dim=0).values
     bbox_max = cam_pos.max(dim=0).values
-    extent   = bbox_max - bbox_min
+    extent = bbox_max - bbox_min
     return bbox_min - padding * extent, bbox_max + padding * extent
 
 
@@ -305,7 +315,7 @@ def compute_bbox_normalization(
     bbox_min: Tensor,
     bbox_max: Tensor,
     output_range: float = 1.0,
-) -> Tuple[Tensor, Tensor]:
+) -> tuple[Tensor, Tensor]:
     """Compute (center, scale) so that the bounding box maps to
     [-output_range, output_range]^3.
 
@@ -323,5 +333,5 @@ def compute_bbox_normalization(
     """
     center = 0.5 * (bbox_min + bbox_max)
     extent = (bbox_max - bbox_min).max()
-    scale  = (extent / (2.0 * output_range)).clamp(min=1e-8)
+    scale = (extent / (2.0 * output_range)).clamp(min=1e-8)
     return center, scale

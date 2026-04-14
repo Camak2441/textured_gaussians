@@ -12,5 +12,7 @@ python simple_trainer_textured_gaussians.py mcmc \
     --alpha_loss \
     --textured_rgb \
     --textured_alpha \
-    --filtering=mipmapped \
+    --filtering=anisotropic \
+    --freeze_geometry=0 \
+    --steps_scaler=0.1 \
     --port 6070

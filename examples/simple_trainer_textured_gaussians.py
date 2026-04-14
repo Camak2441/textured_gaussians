@@ -2,8 +2,6 @@ import json
 import math
 import os
 import time
-from dataclasses import dataclass, field
-from typing import Dict, List, Literal, Optional, Tuple, Union
 from typing_extensions import assert_never
 
 import imageio
@@ -21,6 +19,7 @@ from torch import Tensor
 from torch.utils.tensorboard import SummaryWriter
 from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
+from examples.config import Config
 from examples.scene_args_loader import process_config
 from texture_models import canonical_model_name, load_factor, load_model
 from textured_gaussians.utils import Filtering, TextureGrads
@@ -52,251 +51,6 @@ from textured_gaussians.cuda._wrapper import (
 )
 
 
-@dataclass
-class Config:
-    # Disable viewer
-    disable_viewer: bool = False
-    # Path to the .pt file. If provide, it will skip training and render a video
-    ckpt: Optional[str] = None
-
-    scene: Optional[str] = None
-
-    # Dataset mode
-    dataset_type: str = "colmap"
-
-    # Whether to attempt to resume from a previous checkpoint
-    resume: bool = False
-
-    # Path to the Mip-NeRF 360 dataset
-    data_dir: str = "data/360_v2/garden"
-    # Downsample factor for the dataset
-    data_factor: int = 4
-    # Directory to save results
-    result_dir: str = "results/garden"
-    # Every N images there is a test image
-    test_every: int = 8
-    # Random crop size for training  (experimental)
-    patch_size: Optional[int] = None
-    # A global scaler that applies to the scene size related parameters
-    global_scale: float = 1.0
-
-    # Port for the viewer server
-    port: int = 8080
-
-    # Batch size for training. Learning rates are scaled automatically
-    batch_size: int = 1
-    # A global factor to scale the number of training steps
-    steps_scaler: float = 1.0
-
-    # Number of training steps
-    max_steps: int = 30_000
-    # Steps to evaluate the model
-    eval_steps: List[int] = field(default_factory=lambda: [7_000, 30_000])
-    # Steps to save the model
-    save_steps: List[int] = field(
-        default_factory=lambda: list(range(500, 100_000, 500))
-    )
-    freeze_geometry: Optional[int] = None
-    # Steps to save the model textures
-    render_traj_steps: List[int] = field(
-        default_factory=lambda: [
-            100,
-            1_000,
-            2_000,
-            4_000,
-            7_000,
-            10_000,
-            20_000,
-            30_000,
-        ]
-    )
-    render_texture_steps: List[int] = field(
-        default_factory=lambda: [
-            100,
-            1_000,
-            2_000,
-            4_000,
-            7_000,
-            10_000,
-            20_000,
-            30_000,
-        ]
-    )
-    # The step to start from, mostly used for resume
-    init_step: int = 0
-
-    # Initialization strategy
-    init_type: Literal["sfm", "pretrained", "random"] = "sfm"
-    # Initial number of GSs. Ignored if using sfm
-    init_num_pts: int = 100_000
-    # Initial extent of GSs as a multiple of the camera extent. Ignored if using sfm
-    init_extent: float = 3.0
-    # Degree of spherical harmonics
-    sh_degree: int = 3
-    # Turn on another SH degree every this steps
-    sh_degree_interval: int = 1000
-    # Initial opacity of GS
-    init_opa: float = 0.1
-    # Initial scale of GS
-    init_scale: float = 1.0
-    # Weight for SSIM loss
-    ssim_lambda: float = 0.2
-
-    # Near plane clipping distance
-    near_plane: float = 0.2
-    # Far plane clipping distance
-    far_plane: float = 200
-
-    # GSs with opacity below this value will be pruned
-    prune_opa: float = 0.05
-    # GSs with image plane gradient above this value will be split/duplicated
-    grow_grad2d: float = 0.0002
-    # GSs with scale below this value will be duplicated. Above will be split
-    grow_scale3d: float = 0.01
-    # GSs with scale above this value will be pruned.
-    prune_scale3d: float = 0.1
-
-    # Start refining GSs after this iteration
-    refine_start_iter: int = 500
-    # Stop refining GSs after this iteration
-    refine_stop_iter: int = 15_000
-    # Reset opacities every this steps
-    reset_every: int = 3000
-    # Refine GSs every this steps
-    refine_every: int = 100
-
-    min_opacity: float = 0.005
-
-    # Use packed mode for rasterization, this leads to less memory usage but slightly slower.
-    packed: bool = False
-    # Use sparse gradients for optimization. (experimental)
-    sparse_grad: bool = False
-    # Use absolute gradient for pruning. This typically requires larger --grow_grad2d, e.g., 0.0008 or 0.0006
-    absgrad: bool = False
-    # Anti-aliasing in rasterization. Might slightly hurt quantitative metrics.
-    antialiased: bool = False
-    # Whether to use revised opacity heuristic from arXiv:2404.06109 (experimental)
-    revised_opacity: bool = False
-
-    # Use random background for training to discourage transparency
-    background_mode: Optional[str] = None
-
-    # Enable camera optimization.
-    pose_opt: bool = False
-    # Learning rate for camera optimization
-    pose_opt_lr: float = 1e-5
-    # Regularization for camera optimization as weight decay
-    pose_opt_reg: float = 1e-6
-    # Add noise to camera extrinsics. This is only to test the camera pose optimization.
-    pose_noise: float = 0.0
-
-    # Enable appearance optimization. (experimental)
-    app_opt: bool = False
-    # Appearance embedding dimension
-    app_embed_dim: int = 16
-    # Learning rate for appearance optimization
-    app_opt_lr: float = 1e-3
-    # Regularization for appearance optimization as weight decay
-    app_opt_reg: float = 1e-6
-
-    # Enable depth loss. (experimental)
-    depth_loss: bool = False
-    # Weight for depth loss
-    depth_lambda: float = 1e-2
-
-    # Enable normal consistency loss. (Currently for 2DGS only)
-    normal_loss: bool = False
-    # Weight for normal loss
-    normal_lambda: float = 5e-2
-    # Iteration to start normal consistency regulerization
-    normal_start_iter: int = 7_000
-
-    # Distortion loss. (experimental)
-    dist_loss: bool = False
-    # Weight for distortion loss
-    dist_lambda: float = 1e-2
-    # Iteration to start distortion loss regulerization
-    dist_start_iter: int = 3_000
-
-    # Alpha loss
-    alpha_loss: bool = False
-    alpha_lambda: float = 1e-1
-
-    # scale_loss
-    scale_loss: bool = False
-    scale_lambda: float = 1e-1
-
-    # Frequency regularization for DCT textures — penalises high-frequency coefficients
-    freq_loss: bool = False
-    freq_lambda: float = 1e-3
-
-    # Model for splatting.
-    model_type: Literal[
-        "2dgs",
-        "tgs",
-        "dtgs",
-        "itgs",
-    ] = "2dgs"
-    texture_model: Optional[str] = None
-    num_texture_samples: int = 10
-    sample_alpha_threshold: float = 0.1
-    texture_batch_size: Optional[int] = None
-    texture_grad_method: Literal["dev", "cpu", "checkpoint"] = "checkpoint"
-    texture_input_type: Literal["gaussian", "world", "world_and_view"] = "gaussian"
-    world_sample_normalisation: Literal[
-        "none", "unit_sphere", "unit_sphere_strict", "bbox"
-    ] = "none"
-    base_color_factor: Optional[str] = None
-
-    # Dump information to tensorboard every this steps
-    tb_every: int = 100
-    # Save training images to tensorboard
-    tb_save_image: bool = False
-
-    # Strategy for GS densification
-    strategy: Union[DefaultStrategy, MCMCStrategy] = field(default_factory=MCMCStrategy)
-
-    # Pretrained checkpoints
-    pretrained_path: Optional[str] = None
-    # Checkpoint for resuming training
-    checkpoint_path: Optional[Tuple[str, str]] = None
-
-    # textured gaussians
-    texture_resolution: int = 64
-    texture_height: Optional[int] = None
-    saved_texture_resolution: Optional[int] = None
-    saved_texture_width: Optional[int] = None
-    saved_texture_height: Optional[int] = None
-    textured_rgb: bool = False
-    textured_rgb_clamp: Literal["none", "normalize", "clamp", "sigmoid"] = "clamp"
-    textured_alpha: bool = False
-    textured_alpha_clamp: Literal["none", "normalize", "clamp", "sigmoid"] = "normalize"
-
-    filtering: Literal["bilinear", "mipmapped", "mipmapped2", "anisotropic"] = (
-        "bilinear"
-    )
-
-    def adjust_steps(self, factor: float):
-        self.eval_steps = [int(i * factor) for i in self.eval_steps]
-        self.save_steps = [int(i * factor) for i in self.save_steps]
-        self.max_steps = int(self.max_steps * factor)
-        self.sh_degree_interval = int(self.sh_degree_interval * factor)
-
-        strategy = self.strategy
-        if isinstance(strategy, DefaultStrategy):
-            strategy.refine_start_iter = int(strategy.refine_start_iter * factor)
-            strategy.refine_stop_iter = int(strategy.refine_stop_iter * factor)
-            strategy.reset_every = int(strategy.reset_every * factor)
-            strategy.refine_every = int(strategy.refine_every * factor)
-        elif isinstance(strategy, MCMCStrategy):
-            strategy.refine_start_iter = int(strategy.refine_start_iter * factor)
-            strategy.refine_stop_iter = int(strategy.refine_stop_iter * factor)
-            strategy.refine_every = int(strategy.refine_every * factor)
-            strategy.min_opacity = float(self.min_opacity)
-        else:
-            assert_never(strategy)
-
-
 def create_splats_with_optimizers(
     parser: Parser,
     cfg: Config,
@@ -309,10 +63,10 @@ def create_splats_with_optimizers(
     sh_degree: int = 3,
     sparse_grad: bool = False,
     batch_size: int = 1,
-    feature_dim: Optional[int] = None,
+    feature_dim: int | None = None,
     device: str = "cuda",
-) -> Tuple[
-    torch.nn.ParameterDict, Dict[str, torch.optim.Optimizer], Optional[torch.nn.Module]
+) -> tuple[
+    torch.nn.ParameterDict, dict[str, torch.optim.Optimizer], torch.nn.Module | None
 ]:
     match init_type:
         case "sfm":
@@ -392,28 +146,20 @@ def create_splats_with_optimizers(
     texture_model = None
     match cfg.model_type:
         case "tgs":
-            if cfg.texture_height is None:
-                textures = torch.ones(
-                    points.shape[0], cfg.texture_height, cfg.texture_width, 4
-                )
-            else:
-                textures = torch.ones(
-                    points.shape[0], cfg.texture_height, cfg.texture_width, 4
-                )
+            textures = torch.ones(
+                points.shape[0], cfg.texture_height, cfg.texture_width, 4
+            )
             textures[:, :, :, :3] = 0.1  # init color to low value
             textures[:, :, :, 3] = 1.0  # init alpha to 1.0
             params.append(("textures", torch.nn.Parameter(textures), 2.5e-3))
         case "dtgs":
-            if cfg.texture_height is None:
-                textures = torch.ones(
-                    points.shape[0], cfg.texture_height, cfg.texture_width, 4
-                )
-            else:
-                textures = torch.ones(
-                    points.shape[0], cfg.texture_height, cfg.texture_width, 4
-                )
+            textures = torch.ones(
+                points.shape[0], cfg.texture_height, cfg.texture_width, 4
+            )
             textures[:, :, :, :] = 0.1  # init to having no frequencies
-            textures[:, 0, 0, 3] = 1.0  # init alpha to flat opaque
+            textures[:, 0, 0, 3] = (
+                cfg.texture_height * cfg.texture_width
+            )  # init alpha to flat opaque
             params.append(("textures", torch.nn.Parameter(textures), 1.5e-3))
         case "itgs":
             texture_model_name = canonical_model_name(cfg.texture_model)
@@ -484,10 +230,16 @@ class Runner:
             else:
                 bg_color = (0, 0, 0)
             self.trainset = BlenderDataset(
-                data_dir=cfg.data_dir, split="train", bg_color=bg_color
+                data_dir=cfg.data_dir,
+                split="train",
+                bg_color=bg_color,
+                factor=cfg.data_factor,
             )
             self.valset = BlenderDataset(
-                data_dir=cfg.data_dir, split="val", bg_color=bg_color
+                data_dir=cfg.data_dir,
+                split="val",
+                bg_color=bg_color,
+                factor=cfg.data_factor,
             )
             self.scene_scale = 1.0  # no scaling required
         else:
@@ -626,9 +378,8 @@ class Runner:
                 case "none":
                     pass
                 case "normalize":
-                    rgb_textures = (
-                        rgb_textures / rgb_textures.amax(dim=[1, 2], keepdim=True)
-                        + 1e-6
+                    rgb_textures = rgb_textures / (
+                        rgb_textures.amax(dim=[1, 2], keepdim=True) + 1e-6
                     )
                     rgb_textures = rgb_textures.clamp(0.0, 1.0)
                 case "clamp":
@@ -660,7 +411,7 @@ class Runner:
         return textures
 
     @torch.no_grad()
-    def render_textures(self, width: int, height: int) -> Optional[Tensor]:
+    def render_textures(self, width: int, height: int) -> Tensor | None:
         """Render textures for all Gaussians.
 
         Args:
@@ -771,6 +522,27 @@ class Runner:
                             textures[start:end] = outputs.reshape(B, height, width, 4)
                         return textures
         return None
+
+    @torch.no_grad()
+    def resize_textures(self, width: int, height: int):
+        match self.model_type:
+            case "tgs":
+                # textures: [N, L, L, 4]
+                textures = self.splats["textures"]
+                textures = textures.permute(0, 3, 1, 2)  # [N, 4, L, L]
+                textures = F.interpolate(
+                    textures, size=(height, width), mode="bicubic", align_corners=False
+                )
+                textures = textures.permute(0, 2, 3, 1)  # [N, H, W, 4]
+                self.splats["textures"] = textures
+                # The ParameterDict creates a new Parameter object on assignment,
+                # so the optimizer must be updated to reference it. The optimizer
+                # state is also cleared because the tensor shape has changed.
+                opt = self.optimizers["textures"]
+                opt.param_groups[0]["params"] = [self.splats["textures"]]
+                opt.state.clear()
+            case "dtgs":
+                print("DCT texture resizing is not yet supported.")
 
     @torch.no_grad()
     def render_textures_video(self, width: int, height: int, step: int):
@@ -896,7 +668,7 @@ class Runner:
 
     def _compute_coord_normalisation(
         self, cfg: "Config"
-    ) -> Tuple[Optional[Tensor], Optional[Tensor]]:
+    ) -> tuple[Tensor | None, Tensor | None]:
         """Compute (coord_center, coord_scale) from the training cameras.
 
         Returns (None, None) when strategy is "none" or texture_input_type is
@@ -936,7 +708,7 @@ class Runner:
         width: int,
         height: int,
         **kwargs,
-    ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Dict]:
+    ) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, dict]:
         means = self.splats["means"]  # [N, 3]
         # quats = F.normalize(self.splats["quats"], dim=-1)  # [N, 4]
         # rasterization does normalization internally
@@ -1481,12 +1253,18 @@ class Runner:
             for scheduler in schedulers:
                 scheduler.step()
 
+            if step + 1 in cfg.texture_resize_points:
+                width, height = cfg.texture_resize_points[step + 1]
+                print(f"Resizing textures to {width}x{height}")
+                self.resize_textures(width, height)
+
             # save checkpoint
-            if step in [i - 1 for i in cfg.save_steps] or step == max_steps - 1:
-                if (
-                    step not in [i - 1 for i in cfg.eval_steps]
-                    and step != max_steps - 1
-                ):
+            if (
+                (cfg.save_every is not None and (step + 1) % cfg.save_every == 0)
+                or (cfg.save_steps is not None and step + 1 in cfg.save_steps)
+                or step + 1 == max_steps
+            ):
+                if step + 1 not in cfg.eval_steps and step + 1 != max_steps:
                     mem = max(max_mem, torch.cuda.max_memory_allocated() / 1024**3)
                     stats = {
                         "mem": mem,
@@ -1545,7 +1323,7 @@ class Runner:
                     prev_ckpt_step = step
 
             # eval the full set
-            if step in [i - 1 for i in cfg.eval_steps] or step == max_steps - 1:
+            if step + 1 in cfg.eval_steps or step + 1 == max_steps:
                 mem = max(max_mem, torch.cuda.max_memory_allocated() / 1024**3)
                 stats = {
                     "mem": mem,
@@ -1566,13 +1344,10 @@ class Runner:
                 torch.save(ckpt_data, f"{self.ckpt_dir}/ckpt_{step}.pt")
                 self.eval(step)
 
-            if step in [i - 1 for i in cfg.render_traj_steps] or step == max_steps - 1:
+            if step + 1 in cfg.render_traj_steps or step + 1 == max_steps:
                 self.render_traj(step)
 
-            if (
-                step in [i - 1 for i in cfg.render_texture_steps]
-                or step == max_steps - 1
-            ):
+            if step + 1 in cfg.render_texture_steps or step + 1 == max_steps:
                 self.render_textures_video(
                     width=cfg.saved_texture_width,
                     height=cfg.saved_texture_height,
@@ -1591,7 +1366,9 @@ class Runner:
                     num_train_rays_per_step * num_train_steps_per_sec
                 )
                 # Update the viewer state.
-                # self.viewer.state.num_train_rays_per_sec = num_train_rays_per_sec
+                self.viewer.render_tab_state.num_train_rays_per_sec = (
+                    num_train_rays_per_sec
+                )
                 # Update the scene.
                 self.viewer.update(step, num_train_rays_per_step)
 
@@ -1603,7 +1380,7 @@ class Runner:
         device = self.device
 
         valloader = torch.utils.data.DataLoader(
-            self.valset, batch_size=1, shuffle=False, num_workers=1
+            self.valset, batch_size=1, shuffle=False, num_workers=0
         )
         ellipse_time = 0
         metrics = {"psnr": [], "ssim": [], "lpips": []}
@@ -1847,8 +1624,89 @@ class Runner:
         print(f"Video saved to {video_dir}/traj_{step}.mp4")
 
     @torch.no_grad()
+    def render_camera_path(self, step: int, camera_path_file: str):
+        """Render a video from a nerfview camera path JSON file."""
+        import json as _json
+
+        print(f"Rendering camera path from {camera_path_file}...")
+        cfg = self.cfg
+        device = self.device
+
+        with open(camera_path_file) as f:
+            path_data = _json.load(f)
+
+        render_width = int(path_data["render_width"])
+        render_height = int(path_data["render_height"])
+        fps = float(path_data["fps"])
+        frames = path_data["camera_path"]
+
+        # nerfview applies two transforms when saving the camera path JSON:
+        #   1. right-multiplies rotation by R_x180 (180 deg about X)
+        #   2. divides translation by scale_ratio (default 10.0)
+        # We must undo both to get back to the coordinate frame rasterize_splats expects.
+        R_x180 = np.diag([1.0, -1.0, -1.0]).astype(np.float32)
+        scale_ratio = 10.0
+
+        canvas_all = []
+        for frame in tqdm.tqdm(frames, desc="Rendering camera path"):
+            # Reconstruct c2w (4x4) from flat row-major list, then undo nerfview transforms
+            c2w = np.array(frame["camera_to_world"], dtype=np.float32).reshape(4, 4)
+            c2w[:3, :3] = c2w[:3, :3] @ R_x180  # undo right-multiply by R_x180
+            c2w[:3, 3] *= scale_ratio  # undo division by scale_ratio
+            camtoworld = torch.from_numpy(c2w).float().to(device).unsqueeze(0)
+
+            # Reconstruct K from vertical FOV (degrees)
+            fov_rad = np.deg2rad(frame["fov"])
+            focal = render_height / 2.0 / np.tan(fov_rad / 2.0)
+            K = np.array(
+                [
+                    [focal, 0.0, render_width / 2.0],
+                    [0.0, focal, render_height / 2.0],
+                    [0.0, 0.0, 1.0],
+                ],
+                dtype=np.float32,
+            )
+            Ks = torch.from_numpy(K).float().to(device).unsqueeze(0)
+
+            opt_kwargs = {}
+            if self.base_color_factor is not None:
+                opt_kwargs["base_color_factor"] = self.base_color_factor
+
+            renders, _, _, _, _, _, _, _, _ = self.rasterize_splats(
+                camtoworlds=camtoworld,
+                Ks=Ks,
+                width=render_width,
+                height=render_height,
+                sh_degree=cfg.sh_degree,
+                near_plane=cfg.near_plane,
+                far_plane=cfg.far_plane,
+                render_mode="RGB",
+                filtering=cfg.filtering,
+                num_texture_samples=cfg.num_texture_samples,
+                sample_alpha_threshold=cfg.sample_alpha_threshold,
+                texture_batch_size=cfg.texture_batch_size,
+                texture_grad_method=cfg.texture_grad_method,
+                texture_input_type=cfg.texture_input_type,
+                coord_center=self.coord_center,
+                coord_scale=self.coord_scale,
+                **opt_kwargs,
+            )  # [1, H, W, 3]
+            colors = torch.clamp(renders[0, ..., :3], 0.0, 1.0)
+            canvas_all.append((colors.cpu().numpy() * 255).astype(np.uint8))
+
+        video_dir = f"{cfg.result_dir}/videos"
+        os.makedirs(video_dir, exist_ok=True)
+        video_name = os.path.splitext(os.path.basename(camera_path_file))[0]
+        out_path = f"{video_dir}/camera_path_{video_name}_{step}.mp4"
+        writer = imageio.get_writer(out_path, fps=fps)
+        for canvas in canvas_all:
+            writer.append_data(canvas)
+        writer.close()
+        print(f"Video saved to {out_path}")
+
+    @torch.no_grad()
     def _viewer_render_fn(
-        self, camera_state: nerfview.CameraState, img_wh: Tuple[int, int]
+        self, camera_state: nerfview.CameraState, img_wh: tuple[int, int]
     ):
         """Callable function for the viewer."""
         W, H = img_wh
@@ -1873,6 +1731,9 @@ class Runner:
             sample_alpha_threshold=self.cfg.sample_alpha_threshold,
             texture_batch_size=self.cfg.texture_batch_size,
             texture_grad_method=self.cfg.texture_grad_method,
+            texture_input_type=self.cfg.texture_input_type,
+            coord_center=self.coord_center,
+            coord_scale=self.coord_scale,
             **opt_kwargs,
         )  # [1, H, W, 3]
         return render_colors[0].cpu().numpy()
@@ -1881,7 +1742,18 @@ class Runner:
 def main(cfg: Config):
     runner = Runner(cfg)
 
-    if cfg.ckpt is not None:
+    if cfg.viewer_only:
+        if cfg.ckpt is not None:
+            ckpt = torch.load(cfg.ckpt, map_location=runner.device)
+            for k in runner.splats.keys():
+                runner.splats[k].data = ckpt["splats"][k]
+            if runner.texture_model is not None and "texture_model" in ckpt:
+                runner.texture_model.load_state_dict(ckpt["texture_model"])
+            if "base_color_factor" in ckpt:
+                runner.base_color_factor = ckpt["base_color_factor"]
+        input("Viewer running... Press enter to exit: ")
+        exit(0)
+    elif cfg.ckpt is not None:
         # run eval only
         ckpt = torch.load(cfg.ckpt, map_location=runner.device)
         for k in runner.splats.keys():
@@ -1892,6 +1764,10 @@ def main(cfg: Config):
             runner.base_color_factor = ckpt["base_color_factor"]
         runner.eval(step=ckpt["step"])
         runner.render_traj(step=ckpt["step"])
+        if cfg.camera_path is not None:
+            runner.render_camera_path(
+                step=ckpt["step"], camera_path_file=cfg.camera_path
+            )
         runner.render_textures_video(
             width=cfg.saved_texture_width,
             height=cfg.saved_texture_height,

@@ -1,8 +1,10 @@
 cd ../examples
-export CUDA_VISIBLE_DEVICES=${2:-0}
+export CUDA_VISIBLE_DEVICES=${3:-0}
 results_dir="../results/textured_gaussians_rgba"
 python simple_trainer_textured_gaussians.py mcmc \
     --scene "$1" \
+    --ckpt "../results/tgs_to0/$1/ckpts/ckpt_$2.pt" \
+    --viewer_only \
     --init_extent 1 \
     --init_type=pretrained \
     --background_mode "white" \
@@ -13,6 +15,7 @@ python simple_trainer_textured_gaussians.py mcmc \
     --alpha_loss \
     --textured_rgb \
     --textured_alpha \
+    --filtering=anisotropic \
     --port 6070
 
     
