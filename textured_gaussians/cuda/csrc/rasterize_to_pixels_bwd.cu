@@ -77,8 +77,8 @@ namespace gsplat
             return;
         }
 
-        const S px = (S)j + 0.5f;
-        const S py = (S)i + 0.5f;
+        const S px = (S)j + S(0.5);
+        const S py = (S)i + S(0.5);
         // clamp this value to the last pixel
         const int32_t pix_id =
             min(i * image_width + j, image_width * image_height - 1);
@@ -101,16 +101,16 @@ namespace gsplat
         extern __shared__ int s[];
         int32_t *id_batch = (int32_t *)s; // [block_size]
         vec3<S> *xy_opacity_batch =
-            reinterpret_cast<vec3<float> *>(&id_batch[block_size]); // [block_size]
+            reinterpret_cast<vec3<S> *>(&id_batch[block_size]); // [block_size]
         vec3<S> *conic_batch =
-            reinterpret_cast<vec3<float> *>(&xy_opacity_batch[block_size]); // [block_size]
-        S *rgbs_batch = (S *)&conic_batch[block_size];                      // [block_size * COLOR_DIM]
+            reinterpret_cast<vec3<S> *>(&xy_opacity_batch[block_size]); // [block_size]
+        S *rgbs_batch = (S *)&conic_batch[block_size];                  // [block_size * COLOR_DIM]
 
         // this is the T AFTER the last gaussian in this pixel
-        S T_final = 1.0f - render_alphas[pix_id];
+        S T_final = S(1) - render_alphas[pix_id];
         S T = T_final;
         // the contribution from gaussians behind the current one
-        S buffer[COLOR_DIM] = {0.f};
+        S buffer[COLOR_DIM] = {S(0)};
         // index of last gaussian to contribute to this pixel
         const int32_t bin_final = inside ? last_ids[pix_id] : 0;
 
@@ -180,12 +180,12 @@ namespace gsplat
                     vec3<S> xy_opac = xy_opacity_batch[t];
                     opac = xy_opac.z;
                     delta = {xy_opac.x - px, xy_opac.y - py};
-                    S sigma = 0.5f * (conic.x * delta.x * delta.x +
-                                      conic.z * delta.y * delta.y) +
+                    S sigma = S(0.5) * (conic.x * delta.x * delta.x +
+                                        conic.z * delta.y * delta.y) +
                               conic.y * delta.x * delta.y;
-                    vis = __expf(-sigma);
-                    alpha = min(0.999f, opac * vis);
-                    if (sigma < 0.f || alpha < 1.f / 255.f)
+                    vis = exp(-sigma);
+                    alpha = min(S(0.999), opac * vis);
+                    if (sigma < S(0) || alpha < S(1) / S(255))
                     {
                         valid = false;
                     }
@@ -196,16 +196,16 @@ namespace gsplat
                 {
                     continue;
                 }
-                S v_rgb_local[COLOR_DIM] = {0.f};
-                vec3<S> v_conic_local = {0.f, 0.f, 0.f};
-                vec2<S> v_xy_local = {0.f, 0.f};
-                vec2<S> v_xy_abs_local = {0.f, 0.f};
-                S v_opacity_local = 0.f;
+                S v_rgb_local[COLOR_DIM] = {S(0)};
+                vec3<S> v_conic_local = {S(0), S(0), S(0)};
+                vec2<S> v_xy_local = {S(0), S(0)};
+                vec2<S> v_xy_abs_local = {S(0), S(0)};
+                S v_opacity_local = S(0);
                 // initialize everything to 0, only set if the lane is valid
                 if (valid)
                 {
                     // compute the current T for this gaussian
-                    S ra = 1.0f / (1.0f - alpha);
+                    S ra = S(1) / (S(1) - alpha);
                     T *= ra;
                     // update v_rgb for this gaussian
                     const S fac = alpha * T;
@@ -215,7 +215,7 @@ namespace gsplat
                         v_rgb_local[k] = fac * v_render_c[k];
                     }
                     // contribution from this pixel
-                    S v_alpha = 0.f;
+                    S v_alpha = S(0);
                     for (uint32_t k = 0; k < COLOR_DIM; ++k)
                     {
                         v_alpha +=
@@ -227,7 +227,7 @@ namespace gsplat
                     // contribution from background pixel
                     if (backgrounds != nullptr)
                     {
-                        S accum = 0.f;
+                        S accum = S(0);
                         GSPLAT_PRAGMA_UNROLL
                         for (uint32_t k = 0; k < COLOR_DIM; ++k)
                         {
@@ -236,13 +236,13 @@ namespace gsplat
                         v_alpha += -T_final * ra * accum;
                     }
 
-                    if (opac * vis <= 0.999f)
+                    if (opac * vis <= S(0.999))
                     {
                         const S v_sigma = -opac * vis * v_alpha;
                         v_conic_local = {
-                            0.5f * v_sigma * delta.x * delta.x,
+                            S(0.5) * v_sigma * delta.x * delta.x,
                             v_sigma * delta.x * delta.y,
-                            0.5f * v_sigma * delta.y * delta.y};
+                            S(0.5) * v_sigma * delta.y * delta.y};
                         v_xy_local = {
                             v_sigma * (conic.x * delta.x + conic.y * delta.y),
                             v_sigma * (conic.y * delta.x + conic.z * delta.y)};

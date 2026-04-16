@@ -129,9 +129,9 @@ __global__ void fully_fused_projection_fwd_2dgs_kernel(
 
     mat3<T> RS_camera =
         R * quat_to_rotmat<T>(glm::make_vec4(quats)) *
-        mat3<T>(scales[0], 0.0      , 0.0,
-                0.0      , scales[1], 0.0,
-                0.0      , 0.0      , 1.0);
+        mat3<T>(scales[0], T(0)     , T(0),
+                T(0)     , scales[1], T(0),
+                T(0)     , T(0)     , T(1));
 
     mat3<T> WH = mat3<T>(RS_camera[0], RS_camera[1], mean_c);
 
@@ -141,9 +141,9 @@ __global__ void fully_fused_projection_fwd_2dgs_kernel(
     // [0,   Ks[4],  0]
     // [Ks[2], Ks[5],  1]
     mat3<T> world_2_pix =
-        mat3<T>(Ks[0], 0.0  , Ks[2],
-                0.0  , Ks[4], Ks[5],
-                0.0  , 0.0  , 1.0);
+        mat3<T>(Ks[0], T(0) , Ks[2],
+                T(0) , Ks[4], Ks[5],
+                T(0) , T(0) , T(1));
 
     // WH is defined as [R⋅v_x, R⋅v_y, mean_c]: q_uv = [u,v,-1] -> q_cam = [c1,c2,c3]
     // here is the issue, world_2_pix is actually K^T
@@ -163,7 +163,7 @@ __global__ void fully_fused_projection_fwd_2dgs_kernel(
 
     // we know that KWH brings [u,v,-1] to ray1, ray2, ray3] = [xz, yz, z]
     // temp_point is [1,1,-1], which is a "corner" of the UV space.
-    const vec3<T> temp_point = vec3<T>(1.0f, 1.0f, -1.0f);
+    const vec3<T> temp_point = vec3<T>(T(1), T(1), T(-1));
 
     // ==============================================
     // trivial implementation to find mean and 1 sigma radius
@@ -183,10 +183,10 @@ __global__ void fully_fused_projection_fwd_2dgs_kernel(
     const T distance = sum(temp_point * M2 * M2);
 
     // ill-conditioned primitives will have distance = 0.0f, we ignore them
-    if (distance == 0.0f)
+    if (distance == T(0))
         return;
 
-    const vec3<T> f = (1 / distance) * temp_point;
+    const vec3<T> f = (T(1) / distance) * temp_point;
     const vec2<T> mean2d = vec2<T>(sum(f * M0 * M2), sum(f * M1 * M2));
 
     const vec2<T> temp = {sum(f * M0 * M0), sum(f * M1 * M1)};
@@ -194,7 +194,7 @@ __global__ void fully_fused_projection_fwd_2dgs_kernel(
 
     // ==============================================
     const T radius =
-        ceil(3.f * sqrt(max(1e-4, max(half_extend.x, half_extend.y))));
+        ceil(T(3) * sqrt(max(T(1e-4), max(half_extend.x, half_extend.y))));
 
     if (radius <= radius_clip) {
         radii[idx] = 0;

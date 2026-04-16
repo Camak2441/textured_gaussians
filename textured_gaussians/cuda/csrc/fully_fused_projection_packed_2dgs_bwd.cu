@@ -83,7 +83,7 @@ __global__ void fully_fused_projection_packed_bwd_2dgs_kernel(
 
     vec4<T> quat = glm::make_vec4(quats + gid * 4);
     vec2<T> scale = glm::make_vec2(scales + gid * 3);
-    mat3<T> P = mat3<T>(Ks[0], 0.0, Ks[2], 0.0, Ks[4], Ks[5], 0.0, 0.0, 1.0);
+    mat3<T> P = mat3<T>(Ks[0], T(0), Ks[2], T(0), Ks[4], Ks[5], T(0), T(0), T(1));
 
     mat3<T> _v_ray_transforms = mat3<T>(
         v_ray_transforms[0],
@@ -101,9 +101,9 @@ __global__ void fully_fused_projection_packed_bwd_2dgs_kernel(
 
     vec3<T> v_normal = glm::make_vec3(v_normals);
 
-    vec3<T> v_mean(0.f);
-    vec2<T> v_scale(0.f);
-    vec4<T> v_quat(0.f);
+    vec3<T> v_mean(T(0));
+    vec2<T> v_scale(T(0));
+    vec4<T> v_quat(T(0));
     compute_ray_transforms_aabb_vjp<T>(
         ray_transforms,
         v_means2d,

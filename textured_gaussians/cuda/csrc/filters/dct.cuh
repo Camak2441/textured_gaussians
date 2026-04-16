@@ -10,7 +10,7 @@
 #define FILTER_INV_SQUARE 2.0f
 #define ISQRT2 0.70710678118f
 
-namespace gsplat
+namespace gsplat::dct
 {
     // Fast cosine approximation
     // Only works for x > - pi/2
@@ -18,14 +18,14 @@ namespace gsplat
     template <typename T>
     inline __device__ constexpr T dct_cos(T x)
     {
-        T k = fmodf(x + M_PI_2, M_PI) - M_PI_2;
+        T k = fmod(x + T(M_PI_2), T(M_PI)) - T(M_PI_2);
         k = k * k;
-        T m = 1 - k / 2 + k * k * 0.921279629f / 24;
-        return copysignf(m, fmodf(x + 3 * M_PI_2, 2 * M_PI) - M_PI);
+        T m = T(1) - k / T(2) + k * k * T(0.921279629) / T(24);
+        return copysign(m, fmod(x + T(3) * T(M_PI_2), T(2) * T(M_PI)) - T(M_PI));
     }
 
     template <typename T>
-    inline __device__ void precompute_dct_factors(
+    inline __device__ void precompute(
         int texture_res_x,
         int texture_res_y,
         T u, // from 0 to 1
@@ -33,13 +33,13 @@ namespace gsplat
         T *ucos,
         T *vcos)
     {
-        ucos[0] = 1.f;
-        vcos[0] = 1.f;
+        ucos[0] = T(1);
+        vcos[0] = T(1);
         T rsqrti;
         T pii = 0;
         for (int i = 1; i < texture_res_x; ++i)
         {
-            rsqrti = rsqrtf((float)(i + 1));
+            rsqrti = rsqrt((T)(i + 1));
             pii += M_PI;
             ucos[i] = dct_cos(pii * u) * rsqrti;
             vcos[i] = dct_cos(pii * v) * rsqrti;
@@ -48,7 +48,7 @@ namespace gsplat
 
     // Helper function for trilinear interpolation coordinate and weight calculation
     template <typename T>
-    inline __device__ T dct_sample(
+    inline __device__ T sample(
         at::PackedTensorAccessor32<const T, 4, at::RestrictPtrTraits> textures, // [N, Texture_Resolution, Texture_Resolution, 4]
         int texture_res_x,
         int texture_res_y,
@@ -74,7 +74,7 @@ namespace gsplat
 
     // Helper function for trilinear interpolation coordinate and weight calculation
     template <uint32_t COLOR_DIM, typename T>
-    inline __device__ void dct_color_sample(
+    inline __device__ void color_sample(
         at::PackedTensorAccessor32<const T, 4, at::RestrictPtrTraits> textures, // [N, Texture_Resolution, Texture_Resolution, 4]
         int texture_res_x,
         int texture_res_y,
@@ -103,7 +103,7 @@ namespace gsplat
     }
 
     template <typename T>
-    inline __device__ void dct_update(
+    inline __device__ void update(
         at::PackedTensorAccessor32<T, 4, at::RestrictPtrTraits> v_textures, // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM]
         int texture_res_x,
         int texture_res_y,
@@ -128,7 +128,7 @@ namespace gsplat
     }
 
     template <uint32_t COLOR_DIM, typename T>
-    inline __device__ void dct_color_sample_and_update(
+    inline __device__ void color_sample_and_update(
         at::PackedTensorAccessor32<const T, 4, at::RestrictPtrTraits> textures, // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM]
         at::PackedTensorAccessor32<T, 4, at::RestrictPtrTraits> v_textures,     // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM]
         int texture_res_x,
@@ -159,6 +159,6 @@ namespace gsplat
         }
         return;
     }
-}
+} // namespace gsplat::dct
 
 #endif // GSPLAT_CUDA_DCT_FILTER_H

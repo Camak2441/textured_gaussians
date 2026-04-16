@@ -69,8 +69,8 @@ __global__ void fully_fused_projection_bwd_kernel(
     // vjp: compute the inverse of the 2d covariance
     mat2<T> covar2d_inv = mat2<T>(conics[0], conics[1], conics[1], conics[2]);
     mat2<T> v_covar2d_inv =
-        mat2<T>(v_conics[0], v_conics[1] * .5f, v_conics[1] * .5f, v_conics[2]);
-    mat2<T> v_covar2d(0.f);
+        mat2<T>(v_conics[0], v_conics[1] * T(0.5), v_conics[1] * T(0.5), v_conics[2]);
+    mat2<T> v_covar2d(T(0));
     inverse_vjp(covar2d_inv, v_covar2d_inv, v_covar2d);
 
     if (v_compensations != nullptr) {
@@ -125,8 +125,8 @@ __global__ void fully_fused_projection_bwd_kernel(
 
     // vjp: perspective projection
     T fx = Ks[0], cx = Ks[2], fy = Ks[4], cy = Ks[5];
-    mat3<T> v_covar_c(0.f);
-    vec3<T> v_mean_c(0.f);
+    mat3<T> v_covar_c(T(0));
+    vec3<T> v_mean_c(T(0));
 
     switch (camera_model) {
         case CameraModelType::PINHOLE: // perspective projection
@@ -183,10 +183,10 @@ __global__ void fully_fused_projection_bwd_kernel(
     v_mean_c.z += v_depths[0];
 
     // vjp: transform Gaussian covariance to camera space
-    vec3<T> v_mean(0.f);
-    mat3<T> v_covar(0.f);
-    mat3<T> v_R(0.f);
-    vec3<T> v_t(0.f);
+    vec3<T> v_mean(T(0));
+    mat3<T> v_covar(T(0));
+    mat3<T> v_R(T(0));
+    vec3<T> v_t(T(0));
     pos_world_to_cam_vjp(
         R, t, glm::make_vec3(means), v_mean_c, v_R, v_t, v_mean
     );
@@ -221,8 +221,8 @@ __global__ void fully_fused_projection_bwd_kernel(
     } else {
         // Directly output gradients w.r.t. the quaternion and scale
         mat3<T> rotmat = quat_to_rotmat<T>(quat);
-        vec4<T> v_quat(0.f);
-        vec3<T> v_scale(0.f);
+        vec4<T> v_quat(T(0));
+        vec3<T> v_scale(T(0));
         quat_scale_to_covar_vjp<T>(
             quat, scale, rotmat, v_covar, v_quat, v_scale
         );

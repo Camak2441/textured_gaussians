@@ -1,0 +1,9 @@
+bash train/mip2_tgs.sh bicycle
+bash train/mip2_tgs.sh bonsai
+bash train/mip2_tgs.sh counter
+bash train/mip2_tgs.sh flowers
+bash train/mip2_tgs.sh garden
+bash train/mip2_tgs.sh kitchen
+bash train/mip2_tgs.sh room
+bash train/mip2_tgs.sh stump
+bash train/mip2_tgs.sh treehill

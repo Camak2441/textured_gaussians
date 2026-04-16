@@ -39,8 +39,8 @@ namespace gsplat
 
         for (int log_scale = log_start_res; log_scale < log_texture_res && log_scale < log_start_res + log_reduce; ++log_scale)
         {
-            uint32_t t_low_base = t_base_index(log_scale + 1, 0);
-            uint32_t t_high_base = t_base_index(log_scale, 0);
+            uint32_t t_low_base = mip2::t_base_index(log_scale + 1, 0);
+            uint32_t t_high_base = mip2::t_base_index(log_scale, 0);
             for (int v = pixel_y * reduce_scale; v < (pixel_y + 1) * reduce_scale; ++v)
             {
                 for (int u = pixel_x * reduce_scale; u < (pixel_x + 1) * reduce_scale; ++u)
@@ -48,10 +48,10 @@ namespace gsplat
                     GSPLAT_PRAGMA_UNROLL
                     for (int k = 0; k < COLOR_DIM; ++k)
                     {
-                        v_mip_textures[g][t_low_base + v * 2 * level_scale * 2 + u * 2][k] += v_mip_textures[g][t_high_base + v * level_scale + u][k] / 4.0f;
-                        v_mip_textures[g][t_low_base + v * 2 * level_scale * 2 + u * 2 + 1][k] += v_mip_textures[g][t_high_base + v * level_scale + u][k] / 4.0f;
-                        v_mip_textures[g][t_low_base + (v * 2 + 1) * level_scale * 2 + u * 2][k] += v_mip_textures[g][t_high_base + v * level_scale + u][k] / 4.0f;
-                        v_mip_textures[g][t_low_base + (v * 2 + 1) * level_scale * 2 + u * 2 + 1][k] += v_mip_textures[g][t_high_base + v * level_scale + u][k] / 4.0f;
+                        v_mip_textures[g][t_low_base + v * 2 * level_scale * 2 + u * 2][k] += v_mip_textures[g][t_high_base + v * level_scale + u][k] / S(4);
+                        v_mip_textures[g][t_low_base + v * 2 * level_scale * 2 + u * 2 + 1][k] += v_mip_textures[g][t_high_base + v * level_scale + u][k] / S(4);
+                        v_mip_textures[g][t_low_base + (v * 2 + 1) * level_scale * 2 + u * 2][k] += v_mip_textures[g][t_high_base + v * level_scale + u][k] / S(4);
+                        v_mip_textures[g][t_low_base + (v * 2 + 1) * level_scale * 2 + u * 2 + 1][k] += v_mip_textures[g][t_high_base + v * level_scale + u][k] / S(4);
                     }
                 }
             }
@@ -73,7 +73,7 @@ namespace gsplat
     {
         uint32_t texture_res = 1 << log_texture_res;
 
-        uint32_t removed_texels = t_base_index_host(log_texture_res, 0);
+        uint32_t removed_texels = mip2::t_base_index_host(log_texture_res, 0);
 
         // Each block covers a tile on the image. In total there are
         // C * tile_height * tile_width blocks.

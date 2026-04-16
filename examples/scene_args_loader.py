@@ -12,7 +12,7 @@ from examples.texture_models import (
 from textured_gaussians.utils import TEXTURE_INPUT_SIZES
 from utils import get_file_with_max_int
 
-_PATHS_FILE = os.path.join(os.path.dirname(__file__), "..", "paths.yml")
+_PATHS_FILE = os.path.join(os.path.dirname(__file__), "..", "cfg.yml")
 _PATHS_FILE = os.path.normpath(_PATHS_FILE)
 
 
@@ -218,6 +218,9 @@ def process_config(cfg: Config):
                     case "anisotropic":
                         if cfg.result_dir is None:
                             cfg.result_dir = f"{_RESULTS_DIR}/aniso_tgs{args_suffix}/{scene_args["result_dir"]}"
+                    case "anisotropic_bilinear":
+                        if cfg.result_dir is None:
+                            cfg.result_dir = f"{_RESULTS_DIR}/aniso_bilinear_tgs{args_suffix}/{scene_args["result_dir"]}"
 
             case "itgs":
                 args_suffix = create_args_suffix()

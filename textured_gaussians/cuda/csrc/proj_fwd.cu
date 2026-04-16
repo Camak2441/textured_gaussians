@@ -48,8 +48,8 @@ __global__ void proj_fwd_kernel(
     covars2d += idx * 4;
 
     OpT fx = Ks[0], cx = Ks[2], fy = Ks[4], cy = Ks[5];
-    mat2<OpT> covar2d(0.f);
-    vec2<OpT> mean2d(0.f);
+    mat2<OpT> covar2d(OpT(0));
+    vec2<OpT> mean2d(OpT(0));
     const vec3<OpT> mean = glm::make_vec3(means);
     const mat3<OpT> covar = glm::make_mat3(covars);
 

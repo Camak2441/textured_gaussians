@@ -11,7 +11,7 @@
 #define FILTER_INV_SQUARE 2.0f
 #define ISQRT2 0.70710678118f
 
-namespace gsplat
+namespace gsplat::mip2
 { // Helper function for trilinear interpolation coordinate and weight calculation
     inline uint32_t t_base_index_host(
         uint32_t log_texture_res, uint32_t t)
@@ -27,7 +27,7 @@ namespace gsplat
 
     // Helper function for trilinear interpolation coordinate and weight calculation
     template <typename T>
-    inline __device__ int32_t compute_trilinear_coords_weights2(
+    inline __device__ int32_t precompute(
         T s_x, T s_y, vec2<T> dsdx, vec2<T> dsdy, int texture_res, int log_texture_res,
         int32_t (&mipcoords)[8], T (&trilerp_weights)[8])
     {
@@ -105,6 +105,6 @@ namespace gsplat
         trilerp_weights[7] = w_u_large * w_v_large * w_t;
         return 1;
     }
-}
+} // namespace gsplat::mip2
 
 #endif

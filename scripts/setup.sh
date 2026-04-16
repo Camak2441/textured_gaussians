@@ -1,6 +1,11 @@
-PATHS_FILE="$(dirname "${BASH_SOURCE[0]}")/../paths.yml"
-if [ -f "$PATHS_FILE" ]; then
-    CUDA_PATH=$(grep '^cuda_path:' "$PATHS_FILE" | sed 's/^cuda_path:[[:space:]]*//' | tr -d "\"'")
+CFG_FILE="$(dirname "${BASH_SOURCE[0]}")/../cfg.yml"
+if [ -f "$CFG_FILE" ]; then
+    CUDA_PATH=$(grep '^cuda_path:' "$CFG_FILE" | sed 's/^cuda_path:[[:space:]]*//' | tr -d "\"'")
+    CFG_MAX_JOBS=$(grep '^max_jobs:' "$CFG_FILE" | sed 's/^max_jobs:[[:space:]]*//' | tr -d "\"'")
+    if [ -n "$CFG_MAX_JOBS" ]; then
+        export MAX_JOBS=$CFG_MAX_JOBS
+        echo "MAX_JOBS=$MAX_JOBS"
+    fi
 fi
 export CUDA_HOME="${CUDA_PATH:-/usr/local/cuda-12.8}"
 echo "CUDA_HOME=$CUDA_HOME"

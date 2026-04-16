@@ -166,7 +166,7 @@ __global__ void fully_fused_projection_packed_fwd_kernel(
         }
 
         det = add_blur(eps2d, covar2d, compensation);
-        if (det <= 0.f) {
+        if (det <= T(0)) {
             valid = false;
         } else {
             // compute the inverse of the 2d covariance
@@ -178,10 +178,10 @@ __global__ void fully_fused_projection_packed_fwd_kernel(
     T radius;
     if (valid) {
         // take 3 sigma as the radius (non differentiable)
-        T b = 0.5f * (covar2d[0][0] + covar2d[1][1]);
-        T v1 = b + sqrt(max(0.1f, b * b - det));
-        T v2 = b - sqrt(max(0.1f, b * b - det));
-        radius = ceil(3.f * sqrt(max(v1, v2)));
+        T b = T(0.5) * (covar2d[0][0] + covar2d[1][1]);
+        T v1 = b + sqrt(max(T(0.1), b * b - det));
+        T v2 = b - sqrt(max(T(0.1), b * b - det));
+        radius = ceil(T(3) * sqrt(max(v1, v2)));
 
         if (radius <= radius_clip) {
             valid = false;

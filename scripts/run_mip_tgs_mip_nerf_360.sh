@@ -1,9 +1,0 @@
-bash run_mip_tgs.sh bicycle
-bash run_mip_tgs.sh bonsai
-bash run_mip_tgs.sh counter
-bash run_mip_tgs.sh flowers
-bash run_mip_tgs.sh garden
-bash run_mip_tgs.sh kitchen
-bash run_mip_tgs.sh room
-bash run_mip_tgs.sh stump
-bash run_mip_tgs.sh treehill

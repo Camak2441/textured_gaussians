@@ -784,6 +784,67 @@ namespace gsplat
         torch::Tensor,
         torch::Tensor,
         torch::Tensor>
+    rasterize_to_pixels_fwd_aniso_bilinear_textured_gaussians_tensor(
+        const torch::Tensor &means2d,
+        const torch::Tensor &ray_transforms,
+        const torch::Tensor &colors,
+        const torch::Tensor &opacities,
+        const torch::Tensor &textures,
+        const torch::Tensor &normals,
+        const at::optional<torch::Tensor> &backgrounds,
+        const at::optional<torch::Tensor> &masks,
+        const uint32_t image_width,
+        const uint32_t image_height,
+        const uint32_t tile_size,
+        const torch::Tensor &tile_offsets,
+        const torch::Tensor &flatten_ids,
+        const float gs_contrib_threshold);
+
+    std::tuple<
+        torch::Tensor,
+        torch::Tensor,
+        torch::Tensor,
+        torch::Tensor,
+        torch::Tensor,
+        torch::Tensor,
+        torch::Tensor,
+        torch::Tensor>
+    rasterize_to_pixels_bwd_aniso_bilinear_textured_gaussians_tensor(
+        const torch::Tensor &means2d,
+        const torch::Tensor &ray_transforms,
+        const torch::Tensor &colors,
+        const torch::Tensor &opacities,
+        const torch::Tensor &textures,
+        const torch::Tensor &normals,
+        const torch::Tensor &densify,
+        const at::optional<torch::Tensor> &backgrounds,
+        const at::optional<torch::Tensor> &masks,
+        const uint32_t image_width,
+        const uint32_t image_height,
+        const uint32_t tile_size,
+        const torch::Tensor &tile_offsets,
+        const torch::Tensor &flatten_ids,
+        const torch::Tensor &render_colors,
+        const torch::Tensor &render_alphas,
+        const torch::Tensor &last_ids,
+        const torch::Tensor &median_ids,
+        const torch::Tensor &v_render_colors,
+        const torch::Tensor &v_render_alphas,
+        const torch::Tensor &v_render_normals,
+        const torch::Tensor &v_render_distort,
+        const torch::Tensor &v_render_median,
+        bool absgrad);
+
+    std::tuple<
+        torch::Tensor,
+        torch::Tensor,
+        torch::Tensor,
+        torch::Tensor,
+        torch::Tensor,
+        torch::Tensor,
+        torch::Tensor,
+        torch::Tensor,
+        torch::Tensor>
     rasterize_to_pixels_fwd_bilinear2_textured_gaussians_tensor(
         // Gaussian parameters
         const torch::Tensor &means2d,                   // [C, N, 2] or [nnz, 2]

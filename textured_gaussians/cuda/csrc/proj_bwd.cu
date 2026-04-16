@@ -53,8 +53,8 @@ __global__ void proj_bwd_kernel(
     v_covars2d += idx * 4;
 
     OpT fx = Ks[0], cx = Ks[2], fy = Ks[4], cy = Ks[5];
-    mat3<OpT> v_covar(0.f);
-    vec3<OpT> v_mean(0.f);
+    mat3<OpT> v_covar(OpT(0));
+    vec3<OpT> v_mean(OpT(0));
     const vec3<OpT> mean = glm::make_vec3(means);
     const mat3<OpT> covar = glm::make_mat3(covars);
     const vec2<OpT> v_mean2d = glm::make_vec2(v_means2d);

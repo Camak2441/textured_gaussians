@@ -26,15 +26,15 @@ namespace gsplat
         T xy = x * y, xz = x * z, yz = y * z;
         T wx = w * x, wy = w * y, wz = w * z;
         return mat3<T>(
-            (1.f - 2.f * (y2 + z2)),
-            (2.f * (xy + wz)),
-            (2.f * (xz - wy)), // 1st col
-            (2.f * (xy - wz)),
-            (1.f - 2.f * (x2 + z2)),
-            (2.f * (yz + wx)), // 2nd col
-            (2.f * (xz + wy)),
-            (2.f * (yz - wx)),
-            (1.f - 2.f * (x2 + y2)) // 3rd col
+            (T(1) - T(2) * (y2 + z2)),
+            (T(2) * (xy + wz)),
+            (T(2) * (xz - wy)), // 1st col
+            (T(2) * (xy - wz)),
+            (T(1) - T(2) * (x2 + z2)),
+            (T(2) * (yz + wx)), // 2nd col
+            (T(2) * (xz + wy)),
+            (T(2) * (yz - wx)),
+            (T(1) - T(2) * (x2 + y2)) // 3rd col
         );
     }
 
@@ -50,15 +50,15 @@ namespace gsplat
         z *= inv_norm;
         w *= inv_norm;
         vec4<T> v_quat_n = vec4<T>(
-            2.f * (x * (v_R[1][2] - v_R[2][1]) + y * (v_R[2][0] - v_R[0][2]) +
+            T(2) * (x * (v_R[1][2] - v_R[2][1]) + y * (v_R[2][0] - v_R[0][2]) +
                    z * (v_R[0][1] - v_R[1][0])),
-            2.f *
-                (-2.f * x * (v_R[1][1] + v_R[2][2]) + y * (v_R[0][1] + v_R[1][0]) +
+            T(2) *
+                (-T(2) * x * (v_R[1][1] + v_R[2][2]) + y * (v_R[0][1] + v_R[1][0]) +
                  z * (v_R[0][2] + v_R[2][0]) + w * (v_R[1][2] - v_R[2][1])),
-            2.f * (x * (v_R[0][1] + v_R[1][0]) - 2.f * y * (v_R[0][0] + v_R[2][2]) +
+            T(2) * (x * (v_R[0][1] + v_R[1][0]) - T(2) * y * (v_R[0][0] + v_R[2][2]) +
                    z * (v_R[1][2] + v_R[2][1]) + w * (v_R[2][0] - v_R[0][2])),
-            2.f * (x * (v_R[0][2] + v_R[2][0]) + y * (v_R[1][2] + v_R[2][1]) -
-                   2.f * z * (v_R[0][0] + v_R[1][1]) + w * (v_R[0][1] - v_R[1][0])));
+            T(2) * (x * (v_R[0][2] + v_R[2][0]) + y * (v_R[1][2] + v_R[2][1]) -
+                   T(2) * z * (v_R[0][0] + v_R[1][1]) + w * (v_R[0][1] - v_R[1][0])));
 
         vec4<T> quat_n = vec4<T>(w, x, y, z);
         v_quat += (v_quat_n - glm::dot(v_quat_n, quat_n) * quat_n) * inv_norm;
@@ -77,7 +77,7 @@ namespace gsplat
         {
             // C = R * S * S * Rt
             mat3<T> S =
-                mat3<T>(scale[0], 0.f, 0.f, 0.f, scale[1], 0.f, 0.f, 0.f, scale[2]);
+                mat3<T>(scale[0], T(0), T(0), T(0), scale[1], T(0), T(0), T(0), scale[2]);
             mat3<T> M = R * S;
             *covar = M * glm::transpose(M);
         }
@@ -85,15 +85,15 @@ namespace gsplat
         {
             // P = R * S^-1 * S^-1 * Rt
             mat3<T> S = mat3<T>(
-                1.0f / scale[0],
-                0.f,
-                0.f,
-                0.f,
-                1.0f / scale[1],
-                0.f,
-                0.f,
-                0.f,
-                1.0f / scale[2]);
+                T(1) / scale[0],
+                T(0),
+                T(0),
+                T(0),
+                T(1) / scale[1],
+                T(0),
+                T(0),
+                T(0),
+                T(1) / scale[2]);
             mat3<T> M = R * S;
             *preci = M * glm::transpose(M);
         }
@@ -116,7 +116,7 @@ namespace gsplat
         T sx = scale[0], sy = scale[1], sz = scale[2];
 
         // M = R * S
-        mat3<T> S = mat3<T>(sx, 0.f, 0.f, 0.f, sy, 0.f, 0.f, 0.f, sz);
+        mat3<T> S = mat3<T>(sx, T(0), T(0), T(0), sy, T(0), T(0), T(0), sz);
         mat3<T> M = R * S;
 
         // https://math.stackexchange.com/a/3850121
@@ -153,10 +153,10 @@ namespace gsplat
         vec3<T> &v_scale)
     {
         T w = quat[0], x = quat[1], y = quat[2], z = quat[3];
-        T sx = 1.0f / scale[0], sy = 1.0f / scale[1], sz = 1.0f / scale[2];
+        T sx = T(1) / scale[0], sy = T(1) / scale[1], sz = T(1) / scale[2];
 
         // M = R * S
-        mat3<T> S = mat3<T>(sx, 0.f, 0.f, 0.f, sy, 0.f, 0.f, 0.f, sz);
+        mat3<T> S = mat3<T>(sx, T(0), T(0), T(0), sy, T(0), T(0), T(0), sz);
         mat3<T> M = R * S;
 
         // https://math.stackexchange.com/a/3850121
@@ -202,11 +202,11 @@ namespace gsplat
         // mat3x2 is 3 columns x 2 rows.
         mat3x2<T> J = mat3x2<T>(
             fx,
-            0.f, // 1st column
-            0.f,
+            T(0), // 1st column
+            T(0),
             fy, // 2nd column
-            0.f,
-            0.f // 3rd column
+            T(0),
+            T(0) // 3rd column
         );
         cov2d = J * cov3d * glm::transpose(J);
         mean2d = vec2<T>({fx * x + cx, fy * y + cy});
@@ -235,11 +235,11 @@ namespace gsplat
         // mat3x2 is 3 columns x 2 rows.
         mat3x2<T> J = mat3x2<T>(
             fx,
-            0.f, // 1st column
-            0.f,
+            T(0), // 1st column
+            T(0),
             fy, // 2nd column
-            0.f,
-            0.f // 3rd column
+            T(0),
+            T(0) // 3rd column
         );
 
         // cov = J * V * Jt; G = df/dcov = v_cov
@@ -250,7 +250,7 @@ namespace gsplat
         // df/dx = fx * df/dpixx
         // df/dy = fy * df/dpixy
         // df/dz = 0
-        v_mean3d += vec3<T>(fx * v_mean2d[0], fy * v_mean2d[1], 0.f);
+        v_mean3d += vec3<T>(fx * v_mean2d[0], fy * v_mean2d[1], T(0));
     }
 
     template <typename T>
@@ -270,14 +270,14 @@ namespace gsplat
     {
         T x = mean3d[0], y = mean3d[1], z = mean3d[2];
 
-        T tan_fovx = 0.5f * width / fx;
-        T tan_fovy = 0.5f * height / fy;
-        T lim_x_pos = (width - cx) / fx + 0.3f * tan_fovx;
-        T lim_x_neg = cx / fx + 0.3f * tan_fovx;
-        T lim_y_pos = (height - cy) / fy + 0.3f * tan_fovy;
-        T lim_y_neg = cy / fy + 0.3f * tan_fovy;
+        T tan_fovx = T(0.5) * width / fx;
+        T tan_fovy = T(0.5) * height / fy;
+        T lim_x_pos = (width - cx) / fx + T(0.3) * tan_fovx;
+        T lim_x_neg = cx / fx + T(0.3) * tan_fovx;
+        T lim_y_pos = (height - cy) / fy + T(0.3) * tan_fovy;
+        T lim_y_neg = cy / fy + T(0.3) * tan_fovy;
 
-        T rz = 1.f / z;
+        T rz = T(1) / z;
         T rz2 = rz * rz;
         T tx = z * min(lim_x_pos, max(-lim_x_neg, x * rz));
         T ty = z * min(lim_y_pos, max(-lim_y_neg, y * rz));
@@ -285,8 +285,8 @@ namespace gsplat
         // mat3x2 is 3 columns x 2 rows.
         mat3x2<T> J = mat3x2<T>(
             fx * rz,
-            0.f, // 1st column
-            0.f,
+            T(0), // 1st column
+            T(0),
             fy * rz, // 2nd column
             -fx * tx * rz2,
             -fy * ty * rz2 // 3rd column
@@ -315,14 +315,14 @@ namespace gsplat
     {
         T x = mean3d[0], y = mean3d[1], z = mean3d[2];
 
-        T tan_fovx = 0.5f * width / fx;
-        T tan_fovy = 0.5f * height / fy;
-        T lim_x_pos = (width - cx) / fx + 0.3f * tan_fovx;
-        T lim_x_neg = cx / fx + 0.3f * tan_fovx;
-        T lim_y_pos = (height - cy) / fy + 0.3f * tan_fovy;
-        T lim_y_neg = cy / fy + 0.3f * tan_fovy;
+        T tan_fovx = T(0.5) * width / fx;
+        T tan_fovy = T(0.5) * height / fy;
+        T lim_x_pos = (width - cx) / fx + T(0.3) * tan_fovx;
+        T lim_x_neg = cx / fx + T(0.3) * tan_fovx;
+        T lim_y_pos = (height - cy) / fy + T(0.3) * tan_fovy;
+        T lim_y_neg = cy / fy + T(0.3) * tan_fovy;
 
-        T rz = 1.f / z;
+        T rz = T(1) / z;
         T rz2 = rz * rz;
         T tx = z * min(lim_x_pos, max(-lim_x_neg, x * rz));
         T ty = z * min(lim_y_pos, max(-lim_y_neg, y * rz));
@@ -330,8 +330,8 @@ namespace gsplat
         // mat3x2 is 3 columns x 2 rows.
         mat3x2<T> J = mat3x2<T>(
             fx * rz,
-            0.f, // 1st column
-            0.f,
+            T(0), // 1st column
+            T(0),
             fy * rz, // 2nd column
             -fx * tx * rz2,
             -fy * ty * rz2 // 3rd column
@@ -376,8 +376,8 @@ namespace gsplat
             v_mean3d.z += -fy * rz3 * v_J[2][1] * ty;
         }
         v_mean3d.z += -fx * rz2 * v_J[0][0] - fy * rz2 * v_J[1][1] +
-                      2.f * fx * tx * rz3 * v_J[2][0] +
-                      2.f * fy * ty * rz3 * v_J[2][1];
+                      T(2) * fx * tx * rz3 * v_J[2][0] +
+                      T(2) * fy * ty * rz3 * v_J[2][1];
     }
 
     template <typename T>
@@ -397,7 +397,7 @@ namespace gsplat
     {
         T x = mean3d[0], y = mean3d[1], z = mean3d[2];
 
-        T eps = 0.0000001f;
+        T eps = T(0.0000001);
         T xy_len = glm::length(glm::vec2({x, y})) + eps;
         T theta = glm::atan(xy_len, z + eps);
         mean2d =
@@ -407,7 +407,7 @@ namespace gsplat
         T y2 = y * y;
         T xy = x * y;
         T x2y2 = x2 + y2;
-        T x2y2z2_inv = 1.f / (x2y2 + z * z);
+        T x2y2z2_inv = T(1) / (x2y2 + z * z);
 
         T b = glm::atan(xy_len, z) / xy_len / x2y2;
         T a = z * x2y2z2_inv / (x2y2);
@@ -441,14 +441,14 @@ namespace gsplat
     {
         T x = mean3d[0], y = mean3d[1], z = mean3d[2];
 
-        const T eps = 0.0000001f;
+        const T eps = T(0.0000001);
         T x2 = x * x + eps;
         T y2 = y * y;
         T xy = x * y;
         T x2y2 = x2 + y2;
         T len_xy = length(glm::vec2({x, y})) + eps;
         const T x2y2z2 = x2y2 + z * z;
-        T x2y2z2_inv = 1.f / x2y2z2;
+        T x2y2z2_inv = T(1) / x2y2z2;
         T b = glm::atan(len_xy, z) / len_xy / x2y2;
         T a = z * x2y2z2_inv / (x2y2);
         v_mean3d += vec3<T>(
@@ -492,21 +492,21 @@ namespace gsplat
         T dJ_dx02 = fx * S1 * inv1;
         T dJ_dx10 = fy * B * inv2;
         T dJ_dx11 = fy * C * inv2;
-        T dJ_dx12 = 2.f * fy * xy * inv1;
+        T dJ_dx12 = T(2) * fy * xy * inv1;
 
         T dJ_dy00 = dJ_dx01;
         T dJ_dy01 = fx * C * inv2;
-        T dJ_dy02 = 2.f * fx * xy * inv1;
+        T dJ_dy02 = T(2) * fx * xy * inv1;
         T dJ_dy10 = dJ_dx11;
         T dJ_dy11 = fy * D * inv2;
         T dJ_dy12 = fy * S2 * inv1;
 
         T dJ_dz00 = dJ_dx02;
         T dJ_dz01 = dJ_dy02;
-        T dJ_dz02 = 2.f * fx * x * z * inv1;
+        T dJ_dz02 = T(2) * fx * x * z * inv1;
         T dJ_dz10 = dJ_dx12;
         T dJ_dz11 = dJ_dy12;
-        T dJ_dz12 = 2.f * fy * y * z * inv1;
+        T dJ_dz12 = T(2) * fy * y * z * inv1;
 
         T dL_dtx_raw = dJ_dx00 * v_J[0][0] + dJ_dx01 * v_J[1][0] +
                        dJ_dx02 * v_J[2][0] + dJ_dx10 * v_J[0][1] +
@@ -589,11 +589,11 @@ namespace gsplat
     inline __device__ T inverse(const mat2<T> M, mat2<T> &Minv)
     {
         T det = M[0][0] * M[1][1] - M[0][1] * M[1][0];
-        if (det <= 0.f)
+        if (det <= T(0))
         {
             return det;
         }
-        T invDet = 1.f / det;
+        T invDet = T(1) / det;
         Minv[0][0] = M[1][1] * invDet;
         Minv[0][1] = -M[0][1] * invDet;
         Minv[1][0] = Minv[0][1];
@@ -616,7 +616,7 @@ namespace gsplat
         covar[0][0] += eps2d;
         covar[1][1] += eps2d;
         T det_blur = covar[0][0] * covar[1][1] - covar[0][1] * covar[1][0];
-        compensation = sqrt(max(0.f, det_orig / det_blur));
+        compensation = sqrt(max(T(0), det_orig / det_blur));
         return det_blur;
     }
 

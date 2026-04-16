@@ -152,7 +152,7 @@ __global__ void fully_fused_projection_fwd_kernel(
 
     T compensation;
     T det = add_blur(eps2d, covar2d, compensation);
-    if (det <= 0.f) {
+    if (det <= T(0)) {
         radii[idx] = 0;
         return;
     }
@@ -162,9 +162,9 @@ __global__ void fully_fused_projection_fwd_kernel(
     inverse(covar2d, covar2d_inv);
 
     // take 3 sigma as the radius (non differentiable)
-    T b = 0.5f * (covar2d[0][0] + covar2d[1][1]);
-    T v1 = b + sqrt(max(0.01f, b * b - det));
-    T radius = ceil(3.f * sqrt(v1));
+    T b = T(0.5) * (covar2d[0][0] + covar2d[1][1]);
+    T v1 = b + sqrt(max(T(0.01), b * b - det));
+    T radius = ceil(T(3) * sqrt(v1));
     // T v2 = b - sqrt(max(0.1f, b * b - det));
     // T radius = ceil(3.f * sqrt(max(v1, v2)));
 

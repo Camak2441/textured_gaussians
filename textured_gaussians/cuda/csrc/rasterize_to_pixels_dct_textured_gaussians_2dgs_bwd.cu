@@ -113,8 +113,8 @@ namespace gsplat
             return;
         }
 
-        const S px = (S)j + 0.5f;
-        const S py = (S)i + 0.5f;
+        const S px = (S)j + S(0.5);
+        const S py = (S)i + S(0.5);
         // clamp this value to the last pixel
         const int32_t pix_id =
             min(i * image_width + j, image_width * image_height - 1);
@@ -145,10 +145,10 @@ namespace gsplat
         extern __shared__ int s[];
         int32_t *id_batch = (int32_t *)s; // [block_size]
 
-        vec3<S> *xy_opacity_batch = reinterpret_cast<vec3<float> *>(&id_batch[block_size]);   // [block_size]
-        vec3<S> *u_Ms_batch = reinterpret_cast<vec3<float> *>(&xy_opacity_batch[block_size]); // [block_size]
-        vec3<S> *v_Ms_batch = reinterpret_cast<vec3<float> *>(&u_Ms_batch[block_size]);       // [block_size]
-        vec3<S> *w_Ms_batch = reinterpret_cast<vec3<float> *>(&v_Ms_batch[block_size]);       // [block_size]
+        vec3<S> *xy_opacity_batch = reinterpret_cast<vec3<S> *>(&id_batch[block_size]);   // [block_size]
+        vec3<S> *u_Ms_batch = reinterpret_cast<vec3<S> *>(&xy_opacity_batch[block_size]); // [block_size]
+        vec3<S> *v_Ms_batch = reinterpret_cast<vec3<S> *>(&u_Ms_batch[block_size]);       // [block_size]
+        vec3<S> *w_Ms_batch = reinterpret_cast<vec3<S> *>(&v_Ms_batch[block_size]);       // [block_size]
 
         // extended memory block
         S *rgbs_batch = (S *)&w_Ms_batch[block_size];           // [block_size * COLOR_DIM]
@@ -158,13 +158,13 @@ namespace gsplat
         S *vcos = (S *)(&ucos[block_size * texture_res_x]);
 
         // this is the T AFTER the last gaussian in this pixel
-        S T_final = 1.0f - render_alphas[pix_id];
+        S T_final = S(1) - render_alphas[pix_id];
         S T = T_final;
 
         // the contribution from gaussians behind the current one
         // this is used to compute d(alpha)/d(c_i)
-        S buffer[COLOR_DIM] = {0.f};
-        S buffer_normals[3] = {0.f};
+        S buffer[COLOR_DIM] = {S(0)};
+        S buffer_normals[3] = {S(0)};
 
         // index of last gaussian to contribute to this pixel
         const int32_t bin_final = inside ? last_ids[pix_id] : 0;
@@ -199,7 +199,7 @@ namespace gsplat
         }
 
         // PREPARE FOR DISTORTION (IF DISTORSION LOSS ENABLED)
-        S v_distort = 0.f;
+        S v_distort = S(0);
         S accum_d, accum_w;
         S accum_d_buffer, accum_w_buffer, distort_buffer;
         if (v_render_distort != nullptr)
@@ -210,7 +210,7 @@ namespace gsplat
             accum_d = accum_d_buffer;
             accum_w_buffer = render_alphas[pix_id];
             accum_w = accum_w_buffer;
-            distort_buffer = 0.f;
+            distort_buffer = S(0);
         }
 
         // median depth gradients
@@ -329,7 +329,7 @@ namespace gsplat
                 int32_t valid_texture = -1;
 
                 // alpha scaling factor
-                S alpha_scaling_factor = 0.0f;
+                S alpha_scaling_factor = S(0);
 
                 /**
                  * ==================================================
@@ -357,7 +357,7 @@ namespace gsplat
                         valid = false;
                     s = {ray_cross.x / ray_cross.z, ray_cross.y / ray_cross.z};
 
-                    if (s.x < -3.0f || s.x > 3.0f || s.y < -3.0f || s.y > 3.0f)
+                    if (s.x < -S(3) || s.x > S(3) || s.y < -S(3) || s.y > S(3))
                     {
                         valid_texture = -1;
                     }
@@ -366,19 +366,19 @@ namespace gsplat
                         valid_texture = 1;
                     }
 
-                    u = (S)((s.x + 3.0f) / 6.0f * (texture_res_x - 2) + 1.f) / texture_res_x;
-                    v = (S)((s.y + 3.0f) / 6.0f * (texture_res_y - 2) + 1.f) / texture_res_y;
+                    u = (S)((s.x + S(3)) / S(6) * (texture_res_x - 2) + S(1)) / texture_res_x;
+                    v = (S)((s.y + S(3)) / S(6) * (texture_res_y - 2) + S(1)) / texture_res_y;
 
                     // computer alpha scaling factor
                     if (valid_texture > 0)
                     {
-                        precompute_dct_factors(texture_res_x, texture_res_y, u, v, ucos, vcos);
-                        alpha_scaling_factor = 0.0f;
-                        alpha_scaling_factor = min(max(0.f, dct_sample(textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, 3)), 1.f);
+                        dct::precompute(texture_res_x, texture_res_y, u, v, ucos, vcos);
+                        alpha_scaling_factor = S(0);
+                        alpha_scaling_factor = min(max(S(0), dct::sample(textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, 3)), S(1));
                     }
                     else
                     {
-                        alpha_scaling_factor = 1.0f;
+                        alpha_scaling_factor = S(1);
                     }
                     // printf("alpha_scaling_factor: %f\n", alpha_scaling_factor);
 
@@ -391,12 +391,12 @@ namespace gsplat
                     gauss_weight = min(gauss_weight_3d, gauss_weight_2d);
 
                     // visibility and alpha
-                    const S sigma = 0.5f * gauss_weight;
-                    vis = __expf(-sigma);
-                    alpha = min(0.999f, opac * vis * alpha_scaling_factor); // clipped alpha
+                    const S sigma = S(0.5) * gauss_weight;
+                    vis = exp(-sigma);
+                    alpha = min(S(0.999), opac * vis * alpha_scaling_factor); // clipped alpha
 
                     // gaussian throw out
-                    if (sigma < 0.f || alpha < 1.f / 255.f)
+                    if (sigma < S(0) || alpha < S(1) / S(255))
                     {
                         valid = false;
                     }
@@ -417,23 +417,23 @@ namespace gsplat
                  * ==================================================
                  */
                 // rgb gradients
-                S v_rgb_local[COLOR_DIM] = {0.f};
+                S v_rgb_local[COLOR_DIM] = {S(0)};
                 // normal gradients
-                S v_normal_local[3] = {0.f};
+                S v_normal_local[3] = {S(0)};
 
                 // ray transform gradients
-                vec3<S> v_u_M_local = {0.f, 0.f, 0.f};
-                vec3<S> v_v_M_local = {0.f, 0.f, 0.f};
-                vec3<S> v_w_M_local = {0.f, 0.f, 0.f};
+                vec3<S> v_u_M_local = {S(0), S(0), S(0)};
+                vec3<S> v_v_M_local = {S(0), S(0), S(0)};
+                vec3<S> v_w_M_local = {S(0), S(0), S(0)};
 
                 // 2D mean gradients, used if 2d gaussian weight is applied
-                vec2<S> v_xy_local = {0.f, 0.f};
+                vec2<S> v_xy_local = {S(0), S(0)};
 
                 // absolute 2D mean gradients, used if 2d gaussian weight is applied
-                vec2<S> v_xy_abs_local = {0.f, 0.f};
+                vec2<S> v_xy_abs_local = {S(0), S(0)};
 
                 // opacity gradients
-                S v_opacity_local = 0.f;
+                S v_opacity_local = S(0);
 
                 // initialize everything to 0, only set if the lane is valid
                 /**
@@ -459,7 +459,7 @@ namespace gsplat
                     // compute the current T for this gaussian
                     // since the output T = coprod (1 - alpha_i), we have T_(i-1) = T_i * 1/(1 - alpha_(i-1))
                     // potential numerical stability issue if alpha -> 1
-                    S ra = 1.0f / (1.0f - alpha);
+                    S ra = S(1) / (S(1) - alpha);
                     T *= ra;
 
                     // update v_rgb for this gaussian
@@ -467,7 +467,7 @@ namespace gsplat
                     // we have d(img)/d(c_i) = (a_i G_i) * T
                     // where alpha_i is a_i * G_i
                     const S fac = alpha * T;
-                    S tex_colors[COLOR_DIM] = {0.f};
+                    S tex_colors[COLOR_DIM] = {S(0)};
                     S deltas[COLOR_DIM];
 
                     GSPLAT_PRAGMA_UNROLL
@@ -479,13 +479,13 @@ namespace gsplat
 
                     if (valid_texture > 0)
                     {
-                        dct_color_sample_and_update<COLOR_DIM, S>(textures, v_textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, tex_colors, deltas);
+                        dct::color_sample_and_update<COLOR_DIM, S>(textures, v_textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, tex_colors, deltas);
                     }
 
                     // contribution from this pixel to alpha
                     // we have d(alpha)/d(c_i) = c_i * G_i * T + [grad contribution from following gaussians in T term]
                     // this can be proven by symbolic differentiation of a_i with respect to c_out
-                    S v_alpha = 0.f;
+                    S v_alpha = S(0);
                     for (uint32_t k = 0; k < COLOR_DIM; ++k)
                     {
                         auto base_color = rgbs_batch[t * COLOR_DIM + k];
@@ -519,7 +519,7 @@ namespace gsplat
                     // this allows us to swtich background colors to prevent overfitting to particular backgrounds i.e. black
                     if (backgrounds != nullptr)
                     {
-                        S accum = 0.f;
+                        S accum = S(0);
                         GSPLAT_PRAGMA_UNROLL
                         for (uint32_t k = 0; k < COLOR_DIM; ++k)
                         {
@@ -534,8 +534,8 @@ namespace gsplat
                         // last channel of colors is depth
                         S depth = rgbs_batch[t * COLOR_DIM + COLOR_DIM - 1];
                         S dl_dw =
-                            2.0f *
-                            (2.0f * (depth * accum_w_buffer - accum_d_buffer) +
+                            S(2) *
+                            (S(2) * (depth * accum_w_buffer - accum_d_buffer) +
                              (accum_d - depth * accum_w));
                         // df / d(alpha)
                         v_alpha += (dl_dw * T - distort_buffer * ra) * v_distort;
@@ -544,7 +544,7 @@ namespace gsplat
                         distort_buffer += dl_dw * fac;
                         // df / d(depth). put it in the last channel of v_rgb
                         v_rgb_local[COLOR_DIM - 1] +=
-                            2.0f * fac * (2.0f - 2.0f * T - accum_w + fac) *
+                            S(2) * fac * (S(2) - S(2) * T - accum_w + fac) *
                             v_distort;
                     }
 
@@ -552,9 +552,9 @@ namespace gsplat
                      * 2DGS backward pass: compute gradients of d_out / d_G_i and d_G_i w.r.t geometry parameters
                      * ==================================================
                      */
-                    if (opac * vis * alpha_scaling_factor <= 0.999f)
+                    if (opac * vis * alpha_scaling_factor <= S(0.999))
                     {
-                        S v_depth = 0.f;
+                        S v_depth = S(0);
                         // d(a_i * G_i) / d(G_i) = a_i
                         const S v_G = opac * v_alpha * alpha_scaling_factor;
 
@@ -569,7 +569,7 @@ namespace gsplat
 
                             // backward through the projective transform
                             // @see rasterize_to_pixels_2dgs_fwd.cu to understand what is going on here
-                            const vec3<S> v_z_w_M = {s.x, s.y, 1.0};
+                            const vec3<S> v_z_w_M = {s.x, s.y, S(1)};
                             const S v_sx_pz = v_s.x / ray_cross.z;
                             const S v_sy_pz = v_s.y / ray_cross.z;
                             const vec3<S> v_ray_cross = {
@@ -604,7 +604,7 @@ namespace gsplat
                         // update alpha scaling factor gradients
                         if (valid_texture > 0)
                         {
-                            dct_update(v_textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, 3, vis * opac * v_alpha);
+                            dct::update(v_textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, 3, vis * opac * v_alpha);
                         }
                     }
 

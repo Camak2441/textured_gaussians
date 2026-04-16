@@ -58,11 +58,11 @@ namespace gsplat
         ucos += tr * texture_res_x;
         vcos += tr * texture_res_y;
 
-        S u = (((S)pixel_x) / (image_width - 1) * (texture_res_x - 2) + 1.f) / texture_res_x;
-        S v = (((S)pixel_y) / (image_height - 1) * (texture_res_y - 2) + 1.f) / texture_res_y;
-        precompute_dct_factors(texture_res_x, texture_res_y, u, v, ucos, vcos);
+        S u = (((S)pixel_x) / (image_width - 1) * (texture_res_x - 2) + S(1)) / texture_res_x;
+        S v = (((S)pixel_y) / (image_height - 1) * (texture_res_y - 2) + S(1)) / texture_res_y;
+        dct::precompute(texture_res_x, texture_res_y, u, v, ucos, vcos);
 
-        dct_color_sample<COLOR_DIM, S>(textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, render_colors);
+        dct::color_sample<COLOR_DIM, S>(textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, render_colors);
     }
 
     template <uint32_t CDIM>

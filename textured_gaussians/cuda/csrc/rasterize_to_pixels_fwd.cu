@@ -61,8 +61,8 @@ namespace gsplat
             masks += camera_id * tile_height * tile_width;
         }
 
-        S px = (S)j + 0.5f;
-        S py = (S)i + 0.5f;
+        S px = (S)j + S(0.5);
+        S py = (S)i + S(0.5);
         int32_t pix_id = i * image_width + j;
 
         // return if out of bounds
@@ -77,7 +77,7 @@ namespace gsplat
             for (uint32_t k = 0; k < COLOR_DIM; ++k)
             {
                 render_colors[pix_id * COLOR_DIM + k] =
-                    backgrounds == nullptr ? 0.0f : backgrounds[k];
+                    backgrounds == nullptr ? S(0) : backgrounds[k];
             }
             return;
         }
@@ -97,15 +97,15 @@ namespace gsplat
         extern __shared__ int s[];
         int32_t *id_batch = (int32_t *)s; // [block_size]
         vec3<S> *xy_opacity_batch =
-            reinterpret_cast<vec3<float> *>(&id_batch[block_size]); // [block_size]
+            reinterpret_cast<vec3<S> *>(&id_batch[block_size]); // [block_size]
         vec3<S> *conic_batch =
-            reinterpret_cast<vec3<float> *>(&xy_opacity_batch[block_size]); // [block_size]
+            reinterpret_cast<vec3<S> *>(&xy_opacity_batch[block_size]); // [block_size]
 
         // current visibility left to render
         // transmittance is gonna be used in the backward pass which requires a high
         // numerical precision so we use double for it. However double make bwd 1.5x
         // slower so we stick with float for now.
-        S T = 1.0f;
+        S T = S(1);
         // index of most recent gaussian to write to this thread's pixel
         uint32_t cur_idx = 0;
 
@@ -114,7 +114,7 @@ namespace gsplat
         // designated pixel
         uint32_t tr = block.thread_rank();
 
-        S pix_out[COLOR_DIM] = {0.f};
+        S pix_out[COLOR_DIM] = {S(0)};
         for (uint32_t b = 0; b < num_batches; ++b)
         {
             // resync all threads before beginning next batch
@@ -149,16 +149,16 @@ namespace gsplat
                 const vec3<S> xy_opac = xy_opacity_batch[t];
                 const S opac = xy_opac.z;
                 const vec2<S> delta = {xy_opac.x - px, xy_opac.y - py};
-                const S sigma = 0.5f * (conic.x * delta.x * delta.x +
-                                        conic.z * delta.y * delta.y) +
+                const S sigma = S(0.5) * (conic.x * delta.x * delta.x +
+                                          conic.z * delta.y * delta.y) +
                                 conic.y * delta.x * delta.y;
-                S alpha = min(0.999f, opac * __expf(-sigma));
-                if (sigma < 0.f || alpha < 1.f / 255.f)
+                S alpha = min(S(0.999), opac * exp(-sigma));
+                if (sigma < S(0) || alpha < S(1) / S(255))
                 {
                     continue;
                 }
 
-                const S next_T = T * (1.0f - alpha);
+                const S next_T = T * (S(1) - alpha);
                 if (next_T <= 1e-4)
                 { // this pixel is done: exclusive
                     done = true;
@@ -186,7 +186,7 @@ namespace gsplat
             // pass and it can be very small and causing large diff in gradients
             // with float32. However, double precision makes the backward pass 1.5x
             // slower so we stick with float for now.
-            render_alphas[pix_id] = 1.0f - T;
+            render_alphas[pix_id] = S(1) - T;
             GSPLAT_PRAGMA_UNROLL
             for (uint32_t k = 0; k < COLOR_DIM; ++k)
             {

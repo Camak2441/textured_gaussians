@@ -60,10 +60,10 @@ __global__ void world_to_cam_bwd_kernel(
     );
     const vec3<OpT> t = vec3<OpT>(viewmats[3], viewmats[7], viewmats[11]);
 
-    vec3<OpT> v_mean(0.f);
-    mat3<OpT> v_covar(0.f);
-    mat3<OpT> v_R(0.f);
-    vec3<OpT> v_t(0.f);
+    vec3<OpT> v_mean(OpT(0));
+    mat3<OpT> v_covar(OpT(0));
+    mat3<OpT> v_R(OpT(0));
+    vec3<OpT> v_t(OpT(0));
 
     if (v_means_c != nullptr) {
         const vec3<OpT> v_mean_c = glm::make_vec3(v_means_c + idx * 3);

@@ -100,8 +100,8 @@ namespace gsplat
         }
 
         // find the center of the pixel
-        S px = (S)j + 0.5f;
-        S py = (S)i + 0.5f;
+        S px = (S)j + S(0.5);
+        S py = (S)i + S(0.5);
         int32_t pix_id = i * image_width + j;
 
         // return if out of bounds
@@ -116,7 +116,7 @@ namespace gsplat
             for (uint32_t k = 0; k < COLOR_DIM; ++k)
             {
                 render_colors[pix_id * COLOR_DIM + k] =
-                    backgrounds == nullptr ? 0.0f : backgrounds[k];
+                    backgrounds == nullptr ? S(0) : backgrounds[k];
             }
             return;
         }
@@ -151,12 +151,12 @@ namespace gsplat
 
         // stores the concatination for projected primitive source (x, y) and opacity alpha
         vec3<S> *xy_opacity_batch =
-            reinterpret_cast<vec3<float> *>(&id_batch[block_size]); // [block_size]
+            reinterpret_cast<vec3<S> *>(&id_batch[block_size]); // [block_size]
 
         // these are row vectors of the ray transformation matrices for the current batch of gaussians
-        vec3<S> *u_Ms_batch = reinterpret_cast<vec3<float> *>(&xy_opacity_batch[block_size]); // [block_size]
-        vec3<S> *v_Ms_batch = reinterpret_cast<vec3<float> *>(&u_Ms_batch[block_size]);       // [block_size]
-        vec3<S> *w_Ms_batch = reinterpret_cast<vec3<float> *>(&v_Ms_batch[block_size]);       // [block_size]
+        vec3<S> *u_Ms_batch = reinterpret_cast<vec3<S> *>(&xy_opacity_batch[block_size]); // [block_size]
+        vec3<S> *v_Ms_batch = reinterpret_cast<vec3<S> *>(&u_Ms_batch[block_size]);       // [block_size]
+        vec3<S> *w_Ms_batch = reinterpret_cast<vec3<S> *>(&v_Ms_batch[block_size]);       // [block_size]
 
         S *ucos = (S *)(&w_Ms_batch[block_size]);
         S *vcos = (S *)(&ucos[block_size * texture_res_x]);
@@ -166,7 +166,7 @@ namespace gsplat
         // numerical precision so we use double for it. However double make bwd 1.5x
         // slower so we stick with float for now.
         // The coefficient for volumetric rendering for our responsible pixel.
-        S T = 1.0f;
+        S T = S(1);
         // index of most recent gaussian to write to this thread's pixel
         uint32_t cur_idx = 0;
 
@@ -181,12 +181,12 @@ namespace gsplat
         // Per-pixel distortion error proposed in Mip-NeRF 360.
         // Implemented reference:
         // https://github.com/nerfstudio-project/nerfacc/blob/master/nerfacc/losses.py#L7
-        S distort = 0.f;
-        S accum_vis_depth = 0.f; // accumulate vis * depth
+        S distort = S(0);
+        S accum_vis_depth = S(0); // accumulate vis * depth
 
         // keep track of median depth contribution
-        S median_depth = 0.f;
-        uint32_t median_idx = 0.f;
+        S median_depth = S(0);
+        uint32_t median_idx = 0;
 
         /**
          * ==============================
@@ -197,9 +197,9 @@ namespace gsplat
          */
 
         // TODO (WZ): merge pix_out and normal_out to
-        //  S pix_out[COLOR_DIM + 3] = {0.f}
-        S pix_out[COLOR_DIM] = {0.f};
-        S normal_out[3] = {0.f};
+        //  S pix_out[COLOR_DIM + 3] = {}
+        S pix_out[COLOR_DIM] = {S(0)};
+        S normal_out[3] = {S(0)};
         for (uint32_t b = 0; b < num_batches; ++b)
         {
             // resync all threads before beginning next batch
@@ -304,24 +304,24 @@ namespace gsplat
                 const vec2<S> s = vec2<S>(ray_cross.x / ray_cross.z, ray_cross.y / ray_cross.z);
 
                 int32_t valid_texture = 1;
-                if (s.x < -3.0f || s.x > 3.0f || s.y < -3.0f || s.y > 3.0f)
+                if (s.x < S(-3) || s.x > S(3) || s.y < S(-3) || s.y > S(3))
                 {
                     valid_texture = -1;
                 }
 
-                const S u = (S)((s.x + 3.0f) / 6.0f * (texture_res_x - 2) + 1.f) / texture_res_x;
-                const S v = (S)((s.y + 3.0f) / 6.0f * (texture_res_y - 2) + 1.f) / texture_res_y;
+                const S u = (S)((s.x + S(3)) / S(6) * (texture_res_x - 2) + S(1)) / texture_res_x;
+                const S v = (S)((s.y + S(3)) / S(6) * (texture_res_y - 2) + S(1)) / texture_res_y;
 
                 // calculate alpha texture scaling factor
-                S alpha_scaling_factor = 0.0f;
+                S alpha_scaling_factor = S(0);
                 if (valid_texture > 0)
                 {
-                    precompute_dct_factors(texture_res_x, texture_res_y, u, v, ucos, vcos);
-                    alpha_scaling_factor = min(max(0.f, dct_sample(textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, 3)), 1.f);
+                    dct::precompute(texture_res_x, texture_res_y, u, v, ucos, vcos);
+                    alpha_scaling_factor = min(max(S(0), dct::sample(textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, 3)), S(1));
                 }
                 else
                 {
-                    alpha_scaling_factor = 1.0f;
+                    alpha_scaling_factor = S(1);
                 }
 
                 // IMPORTANT: This is where the gaussian kernel is evaluated!!!!!
@@ -337,17 +337,17 @@ namespace gsplat
                 // merge ray-intersection kernel and 2d gaussian kernel
                 const S gauss_weight = min(gauss_weight_3d, gauss_weight_2d);
 
-                const S sigma = 0.5f * gauss_weight;
+                const S sigma = S(0.5) * gauss_weight;
                 // evaluation of the gaussian exponential term
-                S alpha = min(0.999f, opac * __expf(-sigma) * alpha_scaling_factor);
+                S alpha = min(S(0.999), opac * exp(-sigma) * alpha_scaling_factor);
 
                 // ignore transparent gaussians
-                if (sigma < 0.f || alpha < 1.f / 255.f)
+                if (sigma < S(0) || alpha < S(1) / S(255))
                 {
                     continue;
                 }
 
-                const S next_T = T * (1.0f - alpha);
+                const S next_T = T * (S(1) - alpha);
                 if (next_T <= 1e-4)
                 { // this pixel is done: exclusive
                     done = true;
@@ -357,10 +357,10 @@ namespace gsplat
                 // run volumetric rendering...
                 const S vis = alpha * T;
                 const S *c_ptr = colors + g * COLOR_DIM;
-                S tex_color[COLOR_DIM] = {0.0f};
+                S tex_color[COLOR_DIM] = {S(0)};
                 if (valid_texture > 0)
                 {
-                    dct_color_sample<COLOR_DIM, S>(textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, tex_color);
+                    dct::color_sample<COLOR_DIM, S>(textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, tex_color);
                 }
                 GSPLAT_PRAGMA_UNROLL
                 for (uint32_t k = 0; k < COLOR_DIM; ++k)
@@ -381,11 +381,11 @@ namespace gsplat
                     const S depth = c_ptr[COLOR_DIM - 1];
                     // in nerfacc, loss_bi_0 = weights * t_mids *
                     // exclusive_sum(weights)
-                    const S distort_bi_0 = vis * depth * (1.0f - T);
+                    const S distort_bi_0 = vis * depth * (S(1) - T);
                     // in nerfacc, loss_bi_1 = weights * exclusive_sum(weights *
                     // t_mids)
                     const S distort_bi_1 = vis * accum_vis_depth;
-                    distort += 2.0f * (distort_bi_0 - distort_bi_1);
+                    distort += S(2) * (distort_bi_0 - distort_bi_1);
                     accum_vis_depth += vis * depth;
                 }
 
@@ -404,7 +404,7 @@ namespace gsplat
                 if (alpha > gs_contrib_threshold)
                 {
                     atomicAdd(&gs_contrib_sum[g], alpha);
-                    atomicAdd(&gs_contrib_count[g], 1.0f);
+                    atomicAdd(&gs_contrib_count[g], S(1));
                 }
             }
         }
@@ -415,7 +415,7 @@ namespace gsplat
             // pass and it can be very small and causing large diff in gradients
             // with float32. However, double precision makes the backward pass 1.5x
             // slower so we stick with float for now.
-            render_alphas[pix_id] = 1.0f - T;
+            render_alphas[pix_id] = S(1) - T;
             GSPLAT_PRAGMA_UNROLL
             for (uint32_t k = 0; k < COLOR_DIM; ++k)
             {

@@ -39,8 +39,8 @@ namespace gsplat
         {
             level_scale >>= 1;
             reduce_scale >>= 1;
-            uint32_t t_low_base = t_base_index(log_scale, 0);
-            uint32_t t_high_base = t_base_index(log_scale - 1, 0);
+            uint32_t t_low_base = mip2::t_base_index(log_scale, 0);
+            uint32_t t_high_base = mip2::t_base_index(log_scale - 1, 0);
             for (int v = pixel_y * reduce_scale; v < (pixel_y + 1) * reduce_scale; ++v)
             {
                 for (int u = pixel_x * reduce_scale; u < (pixel_x + 1) * reduce_scale; ++u)
@@ -49,7 +49,7 @@ namespace gsplat
                     for (int k = 0; k < COLOR_DIM; ++k)
                     {
                         mip_textures[g][t_high_base + v * level_scale + u][k] =
-                            (mip_textures[g][t_low_base + v * 2 * level_scale * 2 + u * 2][k] + mip_textures[g][t_low_base + v * 2 * level_scale * 2 + u * 2 + 1][k] + mip_textures[g][t_low_base + (v * 2 + 1) * level_scale * 2 + u * 2][k] + mip_textures[g][t_low_base + (v * 2 + 1) * level_scale * 2 + u * 2 + 1][k]) / 4.0f;
+                            (mip_textures[g][t_low_base + v * 2 * level_scale * 2 + u * 2][k] + mip_textures[g][t_low_base + v * 2 * level_scale * 2 + u * 2 + 1][k] + mip_textures[g][t_low_base + (v * 2 + 1) * level_scale * 2 + u * 2][k] + mip_textures[g][t_low_base + (v * 2 + 1) * level_scale * 2 + u * 2 + 1][k]) / S(4);
                     }
                 }
             }
@@ -71,7 +71,7 @@ namespace gsplat
         uint32_t texture_res = 1 << log_texture_res;
         uint32_t channels = textures.size(3);
 
-        uint32_t added_texels = t_base_index_host(log_texture_res, 0);
+        uint32_t added_texels = mip2::t_base_index_host(log_texture_res, 0);
 
         torch::Tensor mip_textures = torch::cat({torch::empty(
                                                      {N, added_texels, channels},

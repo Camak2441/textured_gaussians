@@ -116,8 +116,8 @@ namespace gsplat
         const S fx = cam_K[0], fy = cam_K[4], cx = cam_K[2], cy = cam_K[5];
 
         // find the center of the pixel
-        S px = (S)j + 0.5f;
-        S py = (S)i + 0.5f;
+        S px = (S)j + S(0.5);
+        S py = (S)i + S(0.5);
         int32_t pix_id = i * image_width + j;
 
         bool inside = (i < image_height && j < image_width);
@@ -146,11 +146,11 @@ namespace gsplat
         int32_t *id_batch = (int32_t *)s; // [block_size]
 
         vec3<S> *xy_opacity_batch =
-            reinterpret_cast<vec3<float> *>(&id_batch[block_size]); // [block_size]
+            reinterpret_cast<vec3<S> *>(&id_batch[block_size]); // [block_size]
 
-        vec3<S> *u_Ms_batch = reinterpret_cast<vec3<float> *>(&xy_opacity_batch[block_size]); // [block_size]
-        vec3<S> *v_Ms_batch = reinterpret_cast<vec3<float> *>(&u_Ms_batch[block_size]);       // [block_size]
-        vec3<S> *w_Ms_batch = reinterpret_cast<vec3<float> *>(&v_Ms_batch[block_size]);       // [block_size]
+        vec3<S> *u_Ms_batch = reinterpret_cast<vec3<S> *>(&xy_opacity_batch[block_size]); // [block_size]
+        vec3<S> *v_Ms_batch = reinterpret_cast<vec3<S> *>(&u_Ms_batch[block_size]);       // [block_size]
+        vec3<S> *w_Ms_batch = reinterpret_cast<vec3<S> *>(&v_Ms_batch[block_size]);       // [block_size]
 
         uint32_t tr = block.thread_rank();
 
@@ -235,8 +235,8 @@ namespace gsplat
 
                 const S gauss_weight = min(gauss_weight_3d, gauss_weight_2d);
 
-                const S sigma = 0.5f * gauss_weight;
-                const S alpha_approx = min(0.999f, opac * __expf(-sigma));
+                const S sigma = S(0.5) * gauss_weight;
+                const S alpha_approx = min(S(0.999), opac * exp(-sigma));
 
                 if (valid_texture > 0 && alpha_approx > sample_alpha_threshold)
                 {
@@ -263,7 +263,7 @@ namespace gsplat
                     const S vx = c2w_t_x - world_pos.x;
                     const S vy = c2w_t_y - world_pos.y;
                     const S vz = c2w_t_z - world_pos.z;
-                    const S inv_len = rsqrtf(vx * vx + vy * vy + vz * vz + 1e-8f);
+                    const S inv_len = rsqrt(vx * vx + vy * vy + vz * vz + S(1e-8));
                     const vec3<S> view_dir = {vx * inv_len, vy * inv_len, vz * inv_len};
 
                     const int sample = sample_counts[pix_id] >> 1;

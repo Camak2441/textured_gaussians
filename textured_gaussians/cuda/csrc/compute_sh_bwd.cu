@@ -32,7 +32,7 @@ __global__ void compute_sh_bwd_kernel(
         return;
     }
 
-    vec3<T> v_dir = {0.f, 0.f, 0.f};
+    vec3<T> v_dir = {T(0), T(0), T(0)};
     sh_coeffs_to_color_fast_vjp(
         degrees_to_use,
         c,

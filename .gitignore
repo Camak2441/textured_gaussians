@@ -39,4 +39,4 @@ temp/
 data/
 
 # Local path configuration
-paths.yml
+cfg.yml

@@ -26,7 +26,7 @@ inline __device__ void sh_coeffs_to_color_fast(
     if (degree >= 1) {
         // Normally rsqrt is faster than sqrt, but --use_fast_math will optimize
         // sqrt on single precision, so we use sqrt here.
-        T inorm = rsqrtf(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+        T inorm = rsqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
         T x = dir.x * inorm;
         T y = dir.y * inorm;
         T z = dir.z * inorm;

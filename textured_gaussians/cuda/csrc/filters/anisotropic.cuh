@@ -10,7 +10,7 @@
 #define FILTER_INV_SQUARE 2.0f
 #define ISQRT2 0.70710678118f
 
-namespace gsplat
+namespace gsplat::anisotropic
 {
     template <typename T>
     inline __device__ T line_ratio_outside_pixel(
@@ -156,7 +156,7 @@ namespace gsplat
     }
 
     template <typename T>
-    inline __device__ vec2<T> convert_s_to_uv(vec2<T> s, int texture_res_x, int texture_res_y)
+    inline __device__ vec2<T> s_to_uv(vec2<T> s, int texture_res_x, int texture_res_y)
     {
         return vec2<T>((s.x + T(3)) / T(6) * texture_res_x, (s.y + T(3)) / T(6) * texture_res_y);
     }
@@ -164,17 +164,18 @@ namespace gsplat
     template <typename T>
     inline __device__ bool edge_normal(vec2<T> s0, vec2<T> s01, vec2<T> center, vec2<T> *n01)
     {
-        *n01 = vec2<T>(s01.y, -s01.x);
-        if (glm::length(*n01) == 0)
+        if (s01.x == 0 && s01.y == 0)
         {
             *n01 = s0 - center;
-            if (glm::length(*n01) == 0)
-            {
-                return false;
-            }
         }
-        *n01 /= glm::length(*n01);
-        // The winding should always be CCW so the normal should always point away from the centre.
+        else
+        {
+            *n01 = vec2<T>(s01.y, -s01.x);
+        }
+        T l = glm::length(*n01);
+        if (l == 0)
+            return false;
+        *n01 /= l;
         return true;
     }
 
@@ -191,7 +192,7 @@ namespace gsplat
     }
 
     template <typename T>
-    inline __device__ T precompute_aniso_data(
+    inline __device__ T precompute(
         vec2<T> *s0, vec2<T> *s1, vec2<T> *s2, vec2<T> *s3,
         vec2<T> *n01, vec2<T> *n12, vec2<T> *n23, vec2<T> *n30,
         T *n01min, T *n01max, T *n12min, T *n12max, T *n23min, T *n23max, T *n30min, T *n30max,
@@ -260,7 +261,7 @@ namespace gsplat
 
     // Helper function for anisotropic sampling
     template <typename T>
-    inline __device__ T anisotropic_sample(
+    inline __device__ T sample(
         at::PackedTensorAccessor32<const T, 4, at::RestrictPtrTraits> textures,
         int32_t g, int32_t k,
         vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
@@ -299,7 +300,7 @@ namespace gsplat
 
     // Helper function for anisotropic sampling
     template <uint32_t COLOR_DIM, uint32_t alphai, typename T>
-    inline __device__ void anisotropic_alpha_color_sample(
+    inline __device__ void alpha_color_sample(
         at::PackedTensorAccessor32<const T, 4, at::RestrictPtrTraits> textures,
         int32_t g,
         vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
@@ -349,9 +350,8 @@ namespace gsplat
     }
 
     // Helper function for anisotropic sampling
-    // Please pre-multiply delta by the area scale factor
     template <typename T>
-    inline __device__ void anisotropic_update(
+    inline __device__ void update(
         at::PackedTensorAccessor32<T, 4, at::RestrictPtrTraits> v_textures,
         int32_t g, int32_t k,
         vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
@@ -368,6 +368,7 @@ namespace gsplat
             return;
         }
 
+        T ndelta = delta * iarea;
         for (int v = minv; v < maxv; v++)
         {
             for (int u = minu; u < maxu; u++)
@@ -381,7 +382,7 @@ namespace gsplat
                 {
                     pixel_area = ratio_inside_pixel(s0, s1, s2, s3, n01, n12, n23, n30, n01min, n01max, n12min, n12max, n23min, n23max, n30min, n30max, vec2<T>(T(u) + T(0.5), T(v) + T(0.5)));
                 }
-                gpuAtomicAdd(&v_textures[g][v][u][k], delta * pixel_area * iarea);
+                gpuAtomicAdd(&v_textures[g][v][u][k], ndelta * pixel_area);
             }
         }
 
@@ -390,7 +391,7 @@ namespace gsplat
 
     // Helper function for anisotropic update
     template <uint32_t COLOR_DIM, typename T>
-    inline __device__ void anisotropic_color_sample_and_update(
+    inline __device__ void color_sample_and_update(
         at::PackedTensorAccessor32<const T, 4, at::RestrictPtrTraits> textures,
         at::PackedTensorAccessor32<T, 4, at::RestrictPtrTraits> v_textures,
         int32_t g,
@@ -415,6 +416,13 @@ namespace gsplat
             return;
         }
 
+        T ndeltas[COLOR_DIM];
+        GSPLAT_PRAGMA_UNROLL
+        for (int k = 0; k < COLOR_DIM; k++)
+        {
+            ndeltas[k] = deltas[k] * iarea;
+        }
+
         for (int v = minv; v < maxv; v++)
         {
             for (int u = minu; u < maxu; u++)
@@ -422,23 +430,23 @@ namespace gsplat
                 T pixel_area;
                 if ((u == s0texel.x && v == s0texel.y) || (u == s1texel.x && v == s1texel.y) || (u == s2texel.x && v == s2texel.y) || (u == s3texel.x && v == s3texel.y))
                 {
-                    pixel_area = ratio_corners_inside_pixel(s0, s1, s2, s3, vec2<T>(u, v)) * iarea;
+                    pixel_area = ratio_corners_inside_pixel(s0, s1, s2, s3, vec2<T>(u, v));
                 }
                 else
                 {
-                    pixel_area = ratio_inside_pixel(s0, s1, s2, s3, n01, n12, n23, n30, n01min, n01max, n12min, n12max, n23min, n23max, n30min, n30max, vec2<T>(T(u) + T(0.5), T(v) + T(0.5))) * iarea;
+                    pixel_area = ratio_inside_pixel(s0, s1, s2, s3, n01, n12, n23, n30, n01min, n01max, n12min, n12max, n23min, n23max, n30min, n30max, vec2<T>(T(u) + T(0.5), T(v) + T(0.5)));
                 }
                 GSPLAT_PRAGMA_UNROLL
                 for (int k = 0; k < COLOR_DIM; ++k)
                 {
                     col[k] += textures[g][v][u][k] * pixel_area;
-                    gpuAtomicAdd(&v_textures[g][v][u][k], deltas[k] * pixel_area);
+                    gpuAtomicAdd(&v_textures[g][v][u][k], ndeltas[k] * pixel_area);
                 }
             }
         }
 
         return;
     }
-}
+} // namespace gsplat::anisotropic
 
 #endif // GSPLAT_CUDA_ANISOTROPIC_FILTER_H

@@ -1,9 +1,0 @@
-bash run_dtgs.sh bicycle
-bash run_dtgs.sh bonsai
-bash run_dtgs.sh counter
-bash run_dtgs.sh flowers
-bash run_dtgs.sh garden
-bash run_dtgs.sh kitchen
-bash run_dtgs.sh room
-bash run_dtgs.sh stump
-bash run_dtgs.sh treehill

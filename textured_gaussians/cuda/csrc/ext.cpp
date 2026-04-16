@@ -108,6 +108,14 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
         "rasterize_to_pixels_bwd_aniso_textured_gaussians",
         &gsplat::rasterize_to_pixels_bwd_aniso_textured_gaussians_tensor);
 
+    // Anisotropic Bilinear Textured Gaussians
+    m.def(
+        "rasterize_to_pixels_fwd_aniso_bilinear_textured_gaussians",
+        &gsplat::rasterize_to_pixels_fwd_aniso_bilinear_textured_gaussians_tensor);
+    m.def(
+        "rasterize_to_pixels_bwd_aniso_bilinear_textured_gaussians",
+        &gsplat::rasterize_to_pixels_bwd_aniso_bilinear_textured_gaussians_tensor);
+
     // Bilinear2 Textured Gaussians
     m.def(
         "rasterize_to_pixels_fwd_bilinear2_textured_gaussians",

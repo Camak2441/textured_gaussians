@@ -9,11 +9,11 @@
 
 #define FILTER_INV_SQUARE 2.0f
 
-namespace gsplat
+namespace gsplat::bilinear
 {
     // Helper function for bilinear interpolation coordinate and weight calculation
     template <typename T>
-    inline __device__ int32_t compute_bilinear_coords_weights(
+    inline __device__ int32_t precompute(
         T s_x, T s_y, int texture_res_x, int texture_res_y,
         int32_t (&ucoords)[4], int32_t (&vcoords)[4], T (&bilerp_weights)[4])
     {
@@ -62,6 +62,6 @@ namespace gsplat
         bilerp_weights[3] = w_u * w_v;
         return 1;
     }
-}
+} // namespace gsplat::bilinear
 
 #endif // GSPLAT_CUDA_BILINEAR_FILTER_H

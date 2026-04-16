@@ -9,11 +9,11 @@
 
 #define FILTER_INV_SQUARE 2.0f
 
-namespace gsplat
+namespace gsplat::bilinear2
 {
     // Helper function for bilinear interpolation coordinate and weight calculation
     template <typename T>
-    inline __device__ int32_t compute_bilinear2_coords_weights(
+    inline __device__ int32_t precompute(
         T s_x, T s_y, int texture_res_x, int texture_res_y,
         int32_t (&ucoords)[4], int32_t (&vcoords)[4], T (&bilerp_weights)[4])
     {
@@ -65,7 +65,7 @@ namespace gsplat
     }
 
     template <typename T>
-    inline __device__ T bilinear2_sample(
+    inline __device__ T sample(
         at::PackedTensorAccessor32<const T, 4, at::RestrictPtrTraits> textures, // [N, Texture_Resolution, Texture_Resolution, 4]
         int texture_res_x,
         int texture_res_y,
@@ -80,7 +80,7 @@ namespace gsplat
     }
 
     template <typename T>
-    inline __device__ void bilinear2_update(
+    inline __device__ void update(
         at::PackedTensorAccessor32<T, 4, at::RestrictPtrTraits> v_textures, // [N, Texture_Resolution, Texture_Resolution, 4]
         int texture_res_x,
         int texture_res_y,
@@ -94,6 +94,6 @@ namespace gsplat
             return;
         gpuAtomicAdd(&v_textures[g][v][u][k], delta);
     }
-}
+} // namespace gsplat::bilinear2
 
 #endif // GSPLAT_CUDA_BILINEAR2_FILTER_H

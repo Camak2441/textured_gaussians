@@ -10,11 +10,11 @@
 #define FILTER_INV_SQUARE 2.0f
 #define ISQRT2 0.70710678118f
 
-namespace gsplat
+namespace gsplat::mip
 {
     // Helper function for trilinear interpolation coordinate and weight calculation
     template <typename T>
-    inline __device__ int32_t compute_trilinear_coords_weights(
+    inline __device__ int32_t precompute(
         T s_x, T s_y, vec2<T> dsdx, vec2<T> dsdy, int texture_res_x, int texture_res_y,
         int32_t (&ucoords)[8], int32_t (&vcoords)[8], int32_t (&tcoords)[8], T (&trilerp_weights)[8])
     {
@@ -104,7 +104,7 @@ namespace gsplat
     }
 
     template <typename T>
-    inline __device__ T mip_sample(
+    inline __device__ T sample(
         at::PackedTensorAccessor32<const T, 4, at::RestrictPtrTraits> textures, // [N, Texture_Resolution, Texture_Resolution, 4]
         int32_t g,
         int32_t k,
@@ -133,7 +133,7 @@ namespace gsplat
     }
 
     template <typename T>
-    inline __device__ T mip_efficient_sample(
+    inline __device__ T efficient_sample(
         at::PackedTensorAccessor32<const T, 4, at::RestrictPtrTraits> textures, // [N, Texture_Resolution, Texture_Resolution, 4]
         int32_t g,
         int32_t k,
@@ -146,28 +146,28 @@ namespace gsplat
         {
             if (ucoords[0] == ucoords[1] && vcoords[0] == vcoords[2])
             {
-                return mip_sample(textures, g, k, ucoords[0], vcoords[0], tcoords[0]);
+                return sample(textures, g, k, ucoords[0], vcoords[0], tcoords[0]);
             }
             else if (ucoords[0] == ucoords[1])
             {
-                T sample0 = mip_sample(textures, g, k, ucoords[0], vcoords[0], tcoords[0]);
-                T sample1 = mip_sample(textures, g, k, ucoords[2], vcoords[2], tcoords[2]);
+                T sample0 = sample(textures, g, k, ucoords[0], vcoords[0], tcoords[0]);
+                T sample1 = sample(textures, g, k, ucoords[2], vcoords[2], tcoords[2]);
                 T weight = trilerp_weights[0] + trilerp_weights[1];
                 return weight * sample0 + (T(1) - weight) * sample1;
             }
             else if (vcoords[0] == vcoords[2])
             {
-                T sample0 = mip_sample(textures, g, k, ucoords[0], vcoords[0], tcoords[0]);
-                T sample1 = mip_sample(textures, g, k, ucoords[1], vcoords[1], tcoords[1]);
+                T sample0 = sample(textures, g, k, ucoords[0], vcoords[0], tcoords[0]);
+                T sample1 = sample(textures, g, k, ucoords[1], vcoords[1], tcoords[1]);
                 T weight = trilerp_weights[0] + trilerp_weights[2];
                 return weight * sample0 + (T(1) - weight) * sample1;
             }
             else
             {
-                T sample0 = mip_sample(textures, g, k, ucoords[0], vcoords[0], tcoords[0]);
-                T sample1 = mip_sample(textures, g, k, ucoords[1], vcoords[1], tcoords[1]);
-                T sample2 = mip_sample(textures, g, k, ucoords[2], vcoords[2], tcoords[2]);
-                T sample3 = mip_sample(textures, g, k, ucoords[3], vcoords[3], tcoords[3]);
+                T sample0 = sample(textures, g, k, ucoords[0], vcoords[0], tcoords[0]);
+                T sample1 = sample(textures, g, k, ucoords[1], vcoords[1], tcoords[1]);
+                T sample2 = sample(textures, g, k, ucoords[2], vcoords[2], tcoords[2]);
+                T sample3 = sample(textures, g, k, ucoords[3], vcoords[3], tcoords[3]);
                 return trilerp_weights[0] * sample0 + trilerp_weights[1] * sample1 + trilerp_weights[2] * sample2 + trilerp_weights[3] * sample3;
             }
         }
@@ -181,7 +181,7 @@ namespace gsplat
         {
             for (int v = vcoords[4] * 2; v < vcoords[6] * 2 + 2; ++v)
             {
-                samples[v - minv][u - minu] = mip_sample(textures, g, k, u, v, tcoords[0]);
+                samples[v - minv][u - minu] = sample(textures, g, k, u, v, tcoords[0]);
             }
         }
 
@@ -203,7 +203,7 @@ namespace gsplat
     }
 
     template <typename T>
-    inline __device__ void mip_update(
+    inline __device__ void update(
         at::PackedTensorAccessor32<T, 4, at::RestrictPtrTraits> v_textures, // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM]
         int32_t g,
         int32_t k,
@@ -230,7 +230,7 @@ namespace gsplat
     }
 
     template <typename T>
-    inline __device__ void mip_efficient_update(
+    inline __device__ void efficient_update(
         at::PackedTensorAccessor32<T, 4, at::RestrictPtrTraits> v_textures, // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM]
         int32_t g,
         int32_t k,
@@ -244,29 +244,29 @@ namespace gsplat
         {
             if (ucoords[0] == ucoords[1] && vcoords[0] == vcoords[2])
             {
-                mip_update(v_textures, g, k, ucoords[0], vcoords[0], tcoords[0], delta);
+                update(v_textures, g, k, ucoords[0], vcoords[0], tcoords[0], delta);
                 return;
             }
             else if (ucoords[0] == ucoords[1])
             {
                 T weight = trilerp_weights[0] + trilerp_weights[1];
-                mip_update(v_textures, g, k, ucoords[0], vcoords[0], tcoords[0], weight * delta);
-                mip_update(v_textures, g, k, ucoords[2], vcoords[2], tcoords[2], (T(1) - weight) * delta);
+                update(v_textures, g, k, ucoords[0], vcoords[0], tcoords[0], weight * delta);
+                update(v_textures, g, k, ucoords[2], vcoords[2], tcoords[2], (T(1) - weight) * delta);
                 return;
             }
             else if (vcoords[0] == vcoords[2])
             {
                 T weight = trilerp_weights[0] + trilerp_weights[2];
-                mip_update(v_textures, g, k, ucoords[0], vcoords[0], tcoords[0], weight * delta);
-                mip_update(v_textures, g, k, ucoords[1], vcoords[1], tcoords[1], (T(1) - weight) * delta);
+                update(v_textures, g, k, ucoords[0], vcoords[0], tcoords[0], weight * delta);
+                update(v_textures, g, k, ucoords[1], vcoords[1], tcoords[1], (T(1) - weight) * delta);
                 return;
             }
             else
             {
-                mip_update(v_textures, g, k, ucoords[0], vcoords[0], tcoords[0], trilerp_weights[0] * delta);
-                mip_update(v_textures, g, k, ucoords[1], vcoords[1], tcoords[1], trilerp_weights[1] * delta);
-                mip_update(v_textures, g, k, ucoords[2], vcoords[2], tcoords[2], trilerp_weights[2] * delta);
-                mip_update(v_textures, g, k, ucoords[3], vcoords[3], tcoords[3], trilerp_weights[3] * delta);
+                update(v_textures, g, k, ucoords[0], vcoords[0], tcoords[0], trilerp_weights[0] * delta);
+                update(v_textures, g, k, ucoords[1], vcoords[1], tcoords[1], trilerp_weights[1] * delta);
+                update(v_textures, g, k, ucoords[2], vcoords[2], tcoords[2], trilerp_weights[2] * delta);
+                update(v_textures, g, k, ucoords[3], vcoords[3], tcoords[3], trilerp_weights[3] * delta);
                 return;
             }
         }
@@ -294,12 +294,12 @@ namespace gsplat
         {
             for (int v = vcoords[4] * 2; v < vcoords[6] * 2 + 2; ++v)
             {
-                mip_update(v_textures, g, k, u, v, tcoords[0], deltas[v - minv][u - minu]);
+                update(v_textures, g, k, u, v, tcoords[0], deltas[v - minv][u - minu]);
             }
         }
 
         return;
     }
-}
+} // namespace gsplat::mip
 
 #endif // GSPLAT_CUDA_MIP_FILTER_H

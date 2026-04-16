@@ -95,12 +95,12 @@ __global__ void fully_fused_projection_packed_fwd_2dgs_kernel(
 
         mat3<T> RS_camera =
             R * quat_to_rotmat<T>(glm::make_vec4(quats)) *
-            mat3<T>(scales[0], 0.0, 0.0, 0.0, scales[1], 0.0, 0.0, 0.0, 1.0);
+            mat3<T>(scales[0], T(0), T(0), T(0), scales[1], T(0), T(0), T(0), T(1));
         ;
         mat3<T> WH = mat3<T>(RS_camera[0], RS_camera[1], mean_c);
 
         mat3<T> world_2_pix =
-            mat3<T>(Ks[0], 0.0, Ks[2], 0.0, Ks[4], Ks[5], 0.0, 0.0, 1.0);
+            mat3<T>(Ks[0], T(0), Ks[2], T(0), Ks[4], Ks[5], T(0), T(0), T(1));
         M = glm::transpose(WH) * world_2_pix;
 
         // compute AABB
@@ -108,18 +108,18 @@ __global__ void fully_fused_projection_packed_fwd_2dgs_kernel(
         const vec3<T> M1 = vec3<T>(M[1][0], M[1][1], M[1][2]);
         const vec3<T> M2 = vec3<T>(M[2][0], M[2][1], M[2][2]);
 
-        const vec3<T> temp_point = vec3<T>(1.0f, 1.0f, -1.0f);
+        const vec3<T> temp_point = vec3<T>(T(1), T(1), T(-1));
         const T distance = sum(temp_point * M2 * M2);
 
-        if (distance == 0.0f)
+        if (distance == T(0))
             valid = false;
 
-        const vec3<T> f = (1 / distance) * temp_point;
+        const vec3<T> f = (T(1) / distance) * temp_point;
         mean2d = vec2<T>(sum(f * M0 * M2), sum(f * M1 * M2));
 
         const vec2<T> temp = {sum(f * M0 * M0), sum(f * M1 * M1)};
         const vec2<T> half_extend = mean2d * mean2d - temp;
-        radius = ceil(3.f * sqrt(max(1e-4, max(half_extend.x, half_extend.y))));
+        radius = ceil(T(3) * sqrt(max(T(1e-4), max(half_extend.x, half_extend.y))));
 
         if (radius <= radius_clip) {
             valid = false;

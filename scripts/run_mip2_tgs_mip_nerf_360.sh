@@ -1,9 +1,0 @@
-bash run_mip2_tgs.sh bicycle
-bash run_mip2_tgs.sh bonsai
-bash run_mip2_tgs.sh counter
-bash run_mip2_tgs.sh flowers
-bash run_mip2_tgs.sh garden
-bash run_mip2_tgs.sh kitchen
-bash run_mip2_tgs.sh room
-bash run_mip2_tgs.sh stump
-bash run_mip2_tgs.sh treehill

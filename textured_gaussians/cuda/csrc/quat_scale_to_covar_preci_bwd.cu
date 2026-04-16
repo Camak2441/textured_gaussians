@@ -48,8 +48,8 @@ __global__ void quat_scale_to_covar_preci_bwd_kernel(
     vec3<OpT> scale = glm::make_vec3(scales + idx * 3);
     mat3<OpT> rotmat = quat_to_rotmat<OpT>(quat);
 
-    vec4<OpT> v_quat(0.f);
-    vec3<OpT> v_scale(0.f);
+    vec4<OpT> v_quat(OpT(0));
+    vec3<OpT> v_scale(OpT(0));
     if (v_covars != nullptr) {
         // glm is column-major, input is row-major
         mat3<OpT> v_covar;
@@ -57,13 +57,13 @@ __global__ void quat_scale_to_covar_preci_bwd_kernel(
             v_covars += idx * 6;
             v_covar = mat3<OpT>(
                 v_covars[0],
-                v_covars[1] * .5f,
-                v_covars[2] * .5f,
-                v_covars[1] * .5f,
+                v_covars[1] * OpT(0.5),
+                v_covars[2] * OpT(0.5),
+                v_covars[1] * OpT(0.5),
                 v_covars[3],
-                v_covars[4] * .5f,
-                v_covars[2] * .5f,
-                v_covars[4] * .5f,
+                v_covars[4] * OpT(0.5),
+                v_covars[2] * OpT(0.5),
+                v_covars[4] * OpT(0.5),
                 v_covars[5]
             );
         } else {
@@ -82,13 +82,13 @@ __global__ void quat_scale_to_covar_preci_bwd_kernel(
             v_precis += idx * 6;
             v_preci = mat3<OpT>(
                 v_precis[0],
-                v_precis[1] * .5f,
-                v_precis[2] * .5f,
-                v_precis[1] * .5f,
+                v_precis[1] * OpT(0.5),
+                v_precis[2] * OpT(0.5),
+                v_precis[1] * OpT(0.5),
                 v_precis[3],
-                v_precis[4] * .5f,
-                v_precis[2] * .5f,
-                v_precis[4] * .5f,
+                v_precis[4] * OpT(0.5),
+                v_precis[2] * OpT(0.5),
+                v_precis[4] * OpT(0.5),
                 v_precis[5]
             );
         } else {
