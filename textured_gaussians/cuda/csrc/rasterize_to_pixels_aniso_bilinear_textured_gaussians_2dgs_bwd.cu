@@ -321,7 +321,7 @@ namespace gsplat
                 vec2<S> s2;
                 vec2<S> s3;
                 vec2<S> n01, n12, n23, n30;
-                S n01min, n01max, n12min, n12max, n23min, n23max, n30min, n30max;
+                S n01max, n12max, n23max, n30max;
                 int32_t minu, maxu, minv, maxv;
                 S area, iarea;
 
@@ -372,7 +372,7 @@ namespace gsplat
 
                     area = anisotropic_bilinear::precompute(
                         &s0, &s1, &s2, &s3, &n01, &n12, &n23, &n30,
-                        &n01min, &n01max, &n12min, &n12max, &n23min, &n23max, &n30min, &n30max,
+                        &n01max, &n12max, &n23max, &n30max,
                         &minu, &minv, &maxu, &maxv, texture_res_x, texture_res_y);
 
                     // compute texture coordinates and bilinear interpolation weights
@@ -391,7 +391,7 @@ namespace gsplat
                     {
                         alpha_scaling_factor = anisotropic_bilinear::sample(
                             textures, g, 3, s0, s1, s2, s3, n01, n12, n23, n30,
-                            n01min, n01max, n12min, n12max, n23min, n23max, n30min, n30max,
+                            n01max, n12max, n23max, n30max,
                             minu, maxu, minv, maxv,
                             area, iarea, texture_res_x, texture_res_y);
                     }
@@ -500,7 +500,7 @@ namespace gsplat
                         anisotropic_bilinear::color_sample_and_update<COLOR_DIM, S>(
                             textures, v_textures,
                             g, s0, s1, s2, s3, n01, n12, n23, n30,
-                            n01min, n01max, n12min, n12max, n23min, n23max, n30min, n30max,
+                            n01max, n12max, n23max, n30max,
                             minu, maxu, minv, maxv,
                             area, iarea, texture_res_x, texture_res_y,
                             tex_colors, deltas);
@@ -630,7 +630,7 @@ namespace gsplat
                         {
                             anisotropic_bilinear::update(
                                 v_textures, g, 3, s0, s1, s2, s3, n01, n12, n23, n30,
-                                n01min, n01max, n12min, n12max, n23min, n23max, n30min, n30max,
+                                n01max, n12max, n23max, n30max,
                                 minu, maxu, minv, maxv,
                                 area, iarea, texture_res_x, texture_res_y, vis * opac * v_alpha);
                         }

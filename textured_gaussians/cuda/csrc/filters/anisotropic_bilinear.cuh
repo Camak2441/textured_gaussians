@@ -188,7 +188,7 @@ namespace gsplat::anisotropic_bilinear
     inline __device__ T precompute(
         vec2<T> *s0, vec2<T> *s1, vec2<T> *s2, vec2<T> *s3,
         vec2<T> *n01, vec2<T> *n12, vec2<T> *n23, vec2<T> *n30,
-        T *n01min, T *n01max, T *n12min, T *n12max, T *n23min, T *n23max, T *n30min, T *n30max,
+        T *n01max, T *n12max, T *n23max, T *n30max,
         int32_t *minu, int32_t *minv, int32_t *maxu, int32_t *maxv,
         int texture_res_x, int texture_res_y)
     {
@@ -231,13 +231,9 @@ namespace gsplat::anisotropic_bilinear
         T n30c0 = abs(glm::dot(*n30, vec2<T>(T(0.5), T(0.5))));
         T n30c1 = abs(glm::dot(*n30, vec2<T>(T(0.5), T(-0.5))));
 
-        *n01min = min(n01c0, n01c1);
         *n01max = max(n01c0, n01c1);
-        *n12min = min(n12c0, n12c1);
         *n12max = max(n12c0, n12c1);
-        *n23min = min(n23c0, n23c1);
         *n23max = max(n23c0, n23c1);
-        *n30min = min(n30c0, n30c1);
         *n30max = max(n30c0, n30c1);
 
         return area;
@@ -249,7 +245,7 @@ namespace gsplat::anisotropic_bilinear
         int32_t g, int32_t k,
         vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
         vec2<T> n01, vec2<T> n12, vec2<T> n23, vec2<T> n30,
-        T n01min, T n01max, T n12min, T n12max, T n23min, T n23max, T n30min, T n30max,
+        T n01max, T n12max, T n23max, T n30max,
         int32_t minu, int32_t maxu, int32_t minv, int32_t maxv,
         T area, T iarea,
         int texture_res_x, int texture_res_y)
@@ -280,7 +276,7 @@ namespace gsplat::anisotropic_bilinear
         int32_t g,
         vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
         vec2<T> n01, vec2<T> n12, vec2<T> n23, vec2<T> n30,
-        T n01min, T n01max, T n12min, T n12max, T n23min, T n23max, T n30min, T n30max,
+        T n01max, T n12max, T n23max, T n30max,
         int32_t minu, int32_t maxu, int32_t minv, int32_t maxv,
         T area, T iarea,
         int texture_res_x, int texture_res_y,
@@ -320,7 +316,7 @@ namespace gsplat::anisotropic_bilinear
         int32_t g, int32_t k,
         vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
         vec2<T> n01, vec2<T> n12, vec2<T> n23, vec2<T> n30,
-        T n01min, T n01max, T n12min, T n12max, T n23min, T n23max, T n30min, T n30max,
+        T n01max, T n12max, T n23max, T n30max,
         int32_t minu, int32_t maxu, int32_t minv, int32_t maxv,
         T area, T iarea,
         int texture_res_x, int texture_res_y, T delta)
@@ -355,7 +351,7 @@ namespace gsplat::anisotropic_bilinear
         int32_t g,
         vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
         vec2<T> n01, vec2<T> n12, vec2<T> n23, vec2<T> n30,
-        T n01min, T n01max, T n12min, T n12max, T n23min, T n23max, T n30min, T n30max,
+        T n01max, T n12max, T n23max, T n30max,
         int32_t minu, int32_t maxu, int32_t minv, int32_t maxv,
         T area, T iarea,
         int texture_res_x, int texture_res_y,

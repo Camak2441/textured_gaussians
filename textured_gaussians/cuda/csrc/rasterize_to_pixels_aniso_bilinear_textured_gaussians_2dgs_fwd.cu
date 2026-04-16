@@ -311,13 +311,13 @@ namespace gsplat
                 vec2<S> s3 = anisotropic_bilinear::s_to_uv(vec2<S>(s3ray_cross.x / s3ray_cross.z, s3ray_cross.y / s3ray_cross.z), texture_res_x, texture_res_y);
 
                 vec2<S> n01, n12, n23, n30;
-                S n01min, n01max, n12min, n12max, n23min, n23max, n30min, n30max;
+                S n01max, n12max, n23max, n30max;
                 int32_t minu, maxu, minv, maxv;
                 S iarea;
 
                 const S area = anisotropic_bilinear::precompute(
                     &s0, &s1, &s2, &s3, &n01, &n12, &n23, &n30,
-                    &n01min, &n01max, &n12min, &n12max, &n23min, &n23max, &n30min, &n30max,
+                    &n01max, &n12max, &n23max, &n30max,
                     &minu, &minv, &maxu, &maxv, texture_res_x, texture_res_y);
 
                 int32_t valid_texture = 1;
@@ -361,7 +361,7 @@ namespace gsplat
                     anisotropic_bilinear::alpha_color_sample<COLOR_DIM, 3, S>(
                         textures, g, s0, s1, s2, s3,
                         n01, n12, n23, n30,
-                        n01min, n01max, n12min, n12max, n23min, n23max, n30min, n30max,
+                        n01max, n12max, n23max, n30max,
                         minu, maxu, minv, maxv,
                         area, iarea,
                         texture_res_x, texture_res_y,
