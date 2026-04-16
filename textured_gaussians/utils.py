@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 
-type Filtering = Literal["bilinear", "mipmapped", "mipmapped2", "anisotropic"]
+type Filtering = Literal["bilinear", "bilinear2", "mipmapped", "mipmapped2", "anisotropic"]
 type TextureGrads = Literal["dev", "cpu", "checkpoint"]
 type TextureInputType = Literal["gaussian", "world", "world_and_view"]
 

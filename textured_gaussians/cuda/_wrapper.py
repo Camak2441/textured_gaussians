@@ -1968,6 +1968,34 @@ def rasterize_to_pixels_textured_gaussians(
                 distloss,
                 gs_contrib_threshold,
             )
+        case "bilinear2":
+            (
+                render_colors,
+                render_alphas,
+                render_normals,
+                render_distort,
+                render_median,
+                gs_contrib_sum,
+                gs_contrib_count,
+            ) = _RasterizeToPixelsBilinear2TexturedGaussians.apply(
+                means2d.contiguous(),
+                ray_transforms.contiguous(),
+                colors.contiguous(),
+                opacities.contiguous(),
+                textures.contiguous(),
+                normals.contiguous(),
+                densify.contiguous(),
+                backgrounds,
+                masks,
+                image_width,
+                image_height,
+                tile_size,
+                isect_offsets.contiguous(),
+                flatten_ids.contiguous(),
+                absgrad,
+                distloss,
+                gs_contrib_threshold,
+            )
         case "anisotropic":
             (
                 render_colors,
@@ -3345,6 +3373,191 @@ class _RasterizeToPixelsMip2TexturedGaussians(torch.autograd.Function):
             None,  # flatten_ids
             None,  # absgrad
             None,  # distloss
+            None,  # gs_contrib_threshold
+        )
+
+
+class _RasterizeToPixelsBilinear2TexturedGaussians(torch.autograd.Function):
+    """Rasterize Textured Gaussians with bilinear2 filtering"""
+
+    @staticmethod
+    def forward(
+        ctx,
+        means2d: Tensor,
+        ray_transforms: Tensor,
+        colors: Tensor,
+        opacities: Tensor,
+        textures: Tensor,
+        normals: Tensor,
+        densify: Tensor,
+        backgrounds: Tensor,
+        masks: Tensor,
+        width: int,
+        height: int,
+        tile_size: int,
+        isect_offsets: Tensor,
+        flatten_ids: Tensor,
+        absgrad: bool,
+        distloss: bool,
+        gs_contrib_threshold: float,
+    ) -> Tuple[Tensor, Tensor]:
+        (
+            render_colors,
+            render_alphas,
+            render_normals,
+            render_distort,
+            render_median,
+            last_ids,
+            median_ids,
+            gs_contrib_sum,
+            gs_contrib_count,
+        ) = _make_lazy_cuda_func("rasterize_to_pixels_fwd_bilinear2_textured_gaussians")(
+            means2d,
+            ray_transforms,
+            colors,
+            opacities,
+            textures,
+            normals,
+            backgrounds,
+            masks,
+            width,
+            height,
+            tile_size,
+            isect_offsets,
+            flatten_ids,
+            gs_contrib_threshold,
+        )
+
+        ctx.save_for_backward(
+            means2d,
+            ray_transforms,
+            colors,
+            opacities,
+            textures,
+            normals,
+            densify,
+            backgrounds,
+            masks,
+            isect_offsets,
+            flatten_ids,
+            render_colors,
+            render_alphas,
+            last_ids,
+            median_ids,
+        )
+        ctx.width = width
+        ctx.height = height
+        ctx.tile_size = tile_size
+        ctx.absgrad = absgrad
+        ctx.distloss = distloss
+
+        render_alphas = render_alphas.float()
+        return (
+            render_colors,
+            render_alphas,
+            render_normals,
+            render_distort,
+            render_median,
+            gs_contrib_sum,
+            gs_contrib_count,
+        )
+
+    @staticmethod
+    def backward(
+        ctx,
+        v_render_colors: Tensor,
+        v_render_alphas: Tensor,
+        v_render_normals: Tensor,
+        v_render_distort: Tensor,
+        v_render_median: Tensor,
+        v_gs_contrib_sum: Tensor,
+        v_gs_contrib_count: Tensor,
+    ):
+        (
+            means2d,
+            ray_transforms,
+            colors,
+            opacities,
+            textures,
+            normals,
+            densify,
+            backgrounds,
+            masks,
+            isect_offsets,
+            flatten_ids,
+            render_colors,
+            render_alphas,
+            last_ids,
+            median_ids,
+        ) = ctx.saved_tensors
+        width = ctx.width
+        height = ctx.height
+        tile_size = ctx.tile_size
+        absgrad = ctx.absgrad
+
+        (
+            v_means2d_abs,
+            v_means2d,
+            v_ray_transforms,
+            v_colors,
+            v_opacities,
+            v_textures,
+            v_normals,
+            v_densify,
+        ) = _make_lazy_cuda_func("rasterize_to_pixels_bwd_bilinear2_textured_gaussians")(
+            means2d,
+            ray_transforms,
+            colors,
+            opacities,
+            textures,
+            normals,
+            densify,
+            backgrounds,
+            masks,
+            width,
+            height,
+            tile_size,
+            isect_offsets,
+            flatten_ids,
+            render_colors,
+            render_alphas,
+            last_ids,
+            median_ids,
+            v_render_colors.contiguous(),
+            v_render_alphas.contiguous(),
+            v_render_normals.contiguous(),
+            v_render_distort.contiguous(),
+            v_render_median.contiguous(),
+            absgrad,
+        )
+        torch.cuda.synchronize()
+        if absgrad:
+            means2d.absgrad = v_means2d_abs
+
+        if ctx.needs_input_grad[7]:
+            v_backgrounds = (v_render_colors * (1.0 - render_alphas).float()).sum(
+                dim=(1, 2)
+            )
+        else:
+            v_backgrounds = None
+
+        return (
+            v_means2d,
+            v_ray_transforms,
+            v_colors,
+            v_opacities,
+            v_textures,
+            v_normals,
+            v_densify,
+            v_backgrounds,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
             None,  # gs_contrib_threshold
         )
 

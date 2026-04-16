@@ -20,10 +20,10 @@ namespace gsplat
     {
         // Map s_x, s_y in [-3, 3] to texture coordinates
 
-        vec2<T> duvdx = vec2<T>((T)(dsdx.x / 6.0f * (texture_res_x - 1)), (T)(dsdx.y / 6.0f * (texture_res_y - 1)));
-        vec2<T> duvdy = vec2<T>((T)(dsdy.x / 6.0f * (texture_res_x - 1)), (T)(dsdy.y / 6.0f * (texture_res_y - 1)));
-        T duv = (T)max(glm::length(duvdx), glm::length(duvdy));
-        T t = (T)log2(duv);
+        vec2<T> duvdx = vec2<T>(dsdx.x / T(6) * (texture_res_x - 1), dsdx.y / T(6) * (texture_res_y - 1));
+        vec2<T> duvdy = vec2<T>(dsdy.x / T(6) * (texture_res_x - 1), dsdy.y / T(6) * (texture_res_y - 1));
+        T duv = max(glm::length(duvdx), glm::length(duvdy));
+        T t = log2(duv);
         if (t < 0)
         {
             t = 0;
@@ -34,18 +34,18 @@ namespace gsplat
         }
 
         // For ease of mipmapping, coordinate textures give the tl of the pixel
-        T u = (T)((s_x + 3.0f) / 6.0f * (texture_res_x - 1));
-        T v = (T)((s_y + 3.0f) / 6.0f * (texture_res_y - 1));
+        T u = (s_x + T(3)) / T(6) * (texture_res_x - 1);
+        T v = (s_y + T(3)) / T(6) * (texture_res_y - 1);
         int32_t t_low = (int32_t)floor(t);
         int32_t t_high = (int32_t)ceil(t);
 
         int32_t scale_small = 1 << t_low;
         int32_t scale_large = 1 << t_high;
 
-        T u_small = (u + 0.5) / scale_small - 0.5;
-        T u_large = (u + 0.5) / scale_large - 0.5;
-        T v_small = (v + 0.5) / scale_small - 0.5;
-        T v_large = (v + 0.5) / scale_large - 0.5;
+        T u_small = (u + T(0.5)) / scale_small - T(0.5);
+        T u_large = (u + T(0.5)) / scale_large - T(0.5);
+        T v_small = (v + T(0.5)) / scale_small - T(0.5);
+        T v_large = (v + T(0.5)) / scale_large - T(0.5);
 
         int32_t u_low_small = (int32_t)floor(u_small);
         int32_t u_low_large = (int32_t)floor(u_large);
@@ -92,13 +92,13 @@ namespace gsplat
         T w_u_large = u_large - (T)u_low_large;
         T w_v_large = v_large - (T)v_low_large;
         T w_t = t - (T)t_low;
-        trilerp_weights[0] = (1.0f - w_u_small) * (1.0f - w_v_small) * (1.0f - w_t);
-        trilerp_weights[1] = w_u_small * (1.0f - w_v_small) * (1.0f - w_t);
-        trilerp_weights[2] = (1.0f - w_u_small) * w_v_small * (1.0f - w_t);
-        trilerp_weights[3] = w_u_small * w_v_small * (1.0f - w_t);
-        trilerp_weights[4] = (1.0f - w_u_large) * (1.0f - w_v_large) * w_t;
-        trilerp_weights[5] = w_u_large * (1.0f - w_v_large) * w_t;
-        trilerp_weights[6] = (1.0f - w_u_large) * w_v_large * w_t;
+        trilerp_weights[0] = (T(1) - w_u_small) * (T(1) - w_v_small) * (T(1) - w_t);
+        trilerp_weights[1] = w_u_small * (T(1) - w_v_small) * (T(1) - w_t);
+        trilerp_weights[2] = (T(1) - w_u_small) * w_v_small * (T(1) - w_t);
+        trilerp_weights[3] = w_u_small * w_v_small * (T(1) - w_t);
+        trilerp_weights[4] = (T(1) - w_u_large) * (T(1) - w_v_large) * w_t;
+        trilerp_weights[5] = w_u_large * (T(1) - w_v_large) * w_t;
+        trilerp_weights[6] = (T(1) - w_u_large) * w_v_large * w_t;
         trilerp_weights[7] = w_u_large * w_v_large * w_t;
         return 1;
     }
@@ -129,7 +129,7 @@ namespace gsplat
             }
         }
 
-        return c * (1.0f / (scale * scale));
+        return c * (T(1) / (scale * scale));
     }
 
     template <typename T>
@@ -153,14 +153,14 @@ namespace gsplat
                 T sample0 = mip_sample(textures, g, k, ucoords[0], vcoords[0], tcoords[0]);
                 T sample1 = mip_sample(textures, g, k, ucoords[2], vcoords[2], tcoords[2]);
                 T weight = trilerp_weights[0] + trilerp_weights[1];
-                return weight * sample0 + (1.0 - weight) * sample1;
+                return weight * sample0 + (T(1) - weight) * sample1;
             }
             else if (vcoords[0] == vcoords[2])
             {
                 T sample0 = mip_sample(textures, g, k, ucoords[0], vcoords[0], tcoords[0]);
                 T sample1 = mip_sample(textures, g, k, ucoords[1], vcoords[1], tcoords[1]);
                 T weight = trilerp_weights[0] + trilerp_weights[2];
-                return weight * sample0 + (1.0 - weight) * sample1;
+                return weight * sample0 + (T(1) - weight) * sample1;
             }
             else
             {
@@ -224,7 +224,7 @@ namespace gsplat
         {
             for (int32_t v = vcoord * scale; v < (vcoord + 1) * scale; v++)
             {
-                gpuAtomicAdd(&v_textures[g][v][u][k], delta * (1.0f / (scale * scale)));
+                gpuAtomicAdd(&v_textures[g][v][u][k], delta * (T(1) / (scale * scale)));
             }
         }
     }
@@ -251,14 +251,14 @@ namespace gsplat
             {
                 T weight = trilerp_weights[0] + trilerp_weights[1];
                 mip_update(v_textures, g, k, ucoords[0], vcoords[0], tcoords[0], weight * delta);
-                mip_update(v_textures, g, k, ucoords[2], vcoords[2], tcoords[2], (((T)1.0) - weight) * delta);
+                mip_update(v_textures, g, k, ucoords[2], vcoords[2], tcoords[2], (T(1) - weight) * delta);
                 return;
             }
             else if (vcoords[0] == vcoords[2])
             {
                 T weight = trilerp_weights[0] + trilerp_weights[2];
                 mip_update(v_textures, g, k, ucoords[0], vcoords[0], tcoords[0], weight * delta);
-                mip_update(v_textures, g, k, ucoords[1], vcoords[1], tcoords[1], (((T)1.0) - weight) * delta);
+                mip_update(v_textures, g, k, ucoords[1], vcoords[1], tcoords[1], (T(1) - weight) * delta);
                 return;
             }
             else

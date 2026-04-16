@@ -16,7 +16,7 @@ namespace gsplat
     // Only works for x > - pi/2
     // Please do not use for anything else
     template <typename T>
-    inline __device__ T dct_cos(T x)
+    inline __device__ constexpr T dct_cos(T x)
     {
         T k = fmodf(x + M_PI_2, M_PI) - M_PI_2;
         k = k * k;

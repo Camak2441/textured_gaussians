@@ -17,13 +17,13 @@ namespace gsplat
         T s_x, T s_y, int texture_res_x, int texture_res_y,
         int32_t (&ucoords)[4], int32_t (&vcoords)[4], T (&bilerp_weights)[4])
     {
-        if (s_x < -3.0f || s_x > 3.0f || s_y < -3.0f || s_y > 3.0f)
+        if (s_x < T(-3) || s_x > T(3) || s_y < T(-3) || s_y > T(3))
         {
             return -1;
         }
         // Map s_x, s_y in [-3, 3] to texture coordinates
-        T u = (T)((s_x + 3.0f) / 6.0f * (texture_res_x - 1));
-        T v = (T)((s_y + 3.0f) / 6.0f * (texture_res_y - 1));
+        T u = (s_x + T(3)) / T(6) * (texture_res_x - 1);
+        T v = (s_y + T(3)) / T(6) * (texture_res_y - 1);
         // clamp the uv coordinates to valid range
         if (u < 0)
         {
@@ -56,9 +56,9 @@ namespace gsplat
         vcoords[3] = v_high;
         T w_u = u - (T)u_low;
         T w_v = v - (T)v_low;
-        bilerp_weights[0] = (1.0f - w_u) * (1.0f - w_v);
-        bilerp_weights[1] = w_u * (1.0f - w_v);
-        bilerp_weights[2] = (1.0f - w_u) * w_v;
+        bilerp_weights[0] = (T(1) - w_u) * (T(1) - w_v);
+        bilerp_weights[1] = w_u * (T(1) - w_v);
+        bilerp_weights[2] = (T(1) - w_u) * w_v;
         bilerp_weights[3] = w_u * w_v;
         return 1;
     }

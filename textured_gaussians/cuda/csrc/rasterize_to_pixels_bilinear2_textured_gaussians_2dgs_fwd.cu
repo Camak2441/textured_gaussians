@@ -1,7 +1,7 @@
 #include "bindings.h"
 #include "helpers.cuh"
 #include "types.cuh"
-#include "filters/anisotropic.cuh"
+#include "filters/bilinear2.cuh"
 #include <cooperative_groups.h>
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
@@ -21,7 +21,7 @@ namespace gsplat
      *
      */
     template <uint32_t COLOR_DIM, typename S>
-    __global__ void rasterize_to_pixels_fwd_aniso_textured_gaussians_kernel(
+    __global__ void rasterize_to_pixels_fwd_bilinear2_textured_gaussians_kernel(
         const uint32_t C,                                                       // number of cameras
         const uint32_t N,                                                       // number of gaussians
         const uint32_t n_isects,                                                // number of ray-primitive intersections.
@@ -100,8 +100,8 @@ namespace gsplat
         }
 
         // find the center of the pixel
-        S px = (S)j + (S)0.5f;
-        S py = (S)i + (S)0.5f;
+        S px = (S)j + 0.5f;
+        S py = (S)i + 0.5f;
         int32_t pix_id = i * image_width + j;
 
         // return if out of bounds
@@ -180,7 +180,7 @@ namespace gsplat
 
         // keep track of median depth contribution
         S median_depth = 0.f;
-        uint32_t median_idx = 0;
+        uint32_t median_idx = 0.f;
 
         /**
          * ==============================
@@ -287,52 +287,36 @@ namespace gsplat
                 const vec3<S> v_M = v_Ms_batch[t];
                 const vec3<S> w_M = w_Ms_batch[t];
 
-                // h_x and h_y are the homogeneous plane representations (they are contravariant to the points on the primitive plane)
-                const vec3<S> h_x = px * w_M - u_M;
-                const vec3<S> h_y = py * w_M - v_M;
+                // h_u and h_v are the homogeneous plane representations (they are contravariant to the points on the primitive plane)
+                const vec3<S> h_u = px * w_M - u_M;
+                const vec3<S> h_v = py * w_M - v_M;
 
-                const vec3<S> ray_cross = glm::cross(h_x, h_y);
-                if (ray_cross.z == 0.0f)
-                    continue;
-
-                const vec3<S> dxw = glm::cross(h_x, w_M);
-                const vec3<S> dyw = glm::cross(h_y, w_M);
-                const vec3<S> s0ray_cross = ray_cross - 0.5f * dxw - 0.5f * dyw;
-                const vec3<S> s1ray_cross = ray_cross + 0.5f * dxw - 0.5f * dyw;
-                const vec3<S> s2ray_cross = ray_cross + 0.5f * dxw + 0.5f * dyw;
-                const vec3<S> s3ray_cross = ray_cross - 0.5f * dxw + 0.5f * dyw;
-                if (s0ray_cross.z == 0.0f || s1ray_cross.z == 0.0f || s2ray_cross.z == 0.0f || s3ray_cross.z == 0.0f)
+                const vec3<S> ray_cross = glm::cross(h_u, h_v);
+                if (ray_cross.z == 0.0)
                     continue;
 
                 const vec2<S> s = vec2<S>(ray_cross.x / ray_cross.z, ray_cross.y / ray_cross.z);
-                vec2<S> s0 = convert_s_to_uv(vec2<S>(s0ray_cross.x / s0ray_cross.z, s0ray_cross.y / s0ray_cross.z), texture_res_x, texture_res_y);
-                vec2<S> s1 = convert_s_to_uv(vec2<S>(s1ray_cross.x / s1ray_cross.z, s1ray_cross.y / s1ray_cross.z), texture_res_x, texture_res_y);
-                vec2<S> s2 = convert_s_to_uv(vec2<S>(s2ray_cross.x / s2ray_cross.z, s2ray_cross.y / s2ray_cross.z), texture_res_x, texture_res_y);
-                vec2<S> s3 = convert_s_to_uv(vec2<S>(s3ray_cross.x / s3ray_cross.z, s3ray_cross.y / s3ray_cross.z), texture_res_x, texture_res_y);
 
-                vec2<S> n01, n12, n23, n30;
-                S n01min, n01max, n12min, n12max, n23min, n23max, n30min, n30max;
-                int32_t minu, maxu, minv, maxv;
-                vec2<int> s0texel, s1texel, s2texel, s3texel;
-                S iarea;
+                // calculate texture coordinates and bilinear interpolation weights
+                int32_t ucoords[4];
+                int32_t vcoords[4];
+                S bilerp_weights[4];
+                int32_t valid_texture = compute_bilinear2_coords_weights(s.x, s.y, texture_res_x, texture_res_y, ucoords, vcoords, bilerp_weights);
 
-                const S area = precompute_aniso_data(
-                    &s0, &s1, &s2, &s3, &n01, &n12, &n23, &n30,
-                    &n01min, &n01max, &n12min, &n12max, &n23min, &n23max, &n30min, &n30max,
-                    &minu, &minv, &maxu, &maxv, &s0texel, &s1texel, &s2texel, &s3texel,
-                    texture_res_x, texture_res_y);
-
-                int32_t valid_texture = 1;
-                if (area == 0 || minu == maxu || minv == maxv)
+                // calculate alpha texture scaling factor
+                S alpha_scaling_factor = 0.0f;
+                if (valid_texture > 0)
                 {
-                    valid_texture = 0;
+                    GSPLAT_PRAGMA_UNROLL
+                    for (uint32_t i = 0; i < 4; ++i)
+                    {
+                        alpha_scaling_factor += bilerp_weights[i] * bilinear2_sample(textures, texture_res_x, texture_res_y, g, vcoords[i], ucoords[i], 3);
+                    }
                 }
                 else
                 {
-                    iarea = 1.f / area;
+                    alpha_scaling_factor = 1.0f;
                 }
-
-                S tex_color[COLOR_DIM] = {0.0f};
 
                 // IMPORTANT: This is where the gaussian kernel is evaluated!!!!!
 
@@ -349,30 +333,7 @@ namespace gsplat
 
                 const S sigma = 0.5f * gauss_weight;
                 // evaluation of the gaussian exponential term
-                S alpha = opac * __expf(-sigma);
-
-                // ignore transparent gaussians
-                if (sigma < 0.f || alpha < 1.f / 255.f)
-                {
-                    continue;
-                }
-
-                if (valid_texture > 0)
-                {
-                    S alpha_scaling_factor = 0.0f;
-                    anisotropic_alpha_color_sample<COLOR_DIM, 3, S>(
-                        textures, g, s0, s1, s2, s3,
-                        n01, n12, n23, n30,
-                        n01min, n01max, n12min, n12max, n23min, n23max, n30min, n30max,
-                        minu, maxu, minv, maxv,
-                        s0texel, s1texel, s2texel, s3texel,
-                        area, iarea,
-                        texture_res_x, texture_res_y,
-                        &alpha_scaling_factor,
-                        tex_color);
-                    alpha *= alpha_scaling_factor;
-                }
-                alpha = min(0.999f, alpha);
+                S alpha = min(0.999f, opac * __expf(-sigma) * alpha_scaling_factor);
 
                 // ignore transparent gaussians
                 if (sigma < 0.f || alpha < 1.f / 255.f)
@@ -390,11 +351,19 @@ namespace gsplat
                 // run volumetric rendering...
                 const S vis = alpha * T;
                 const S *c_ptr = colors + g * COLOR_DIM;
-
                 GSPLAT_PRAGMA_UNROLL
                 for (uint32_t k = 0; k < COLOR_DIM; ++k)
                 {
-                    pix_out[k] += (c_ptr[k] + tex_color[k]) * vis;
+                    auto base_color = c_ptr[k];
+                    auto tex_color = 0.0;
+                    if (valid_texture > 0)
+                    {
+                        for (uint32_t i = 0; i < 4; ++i)
+                        {
+                            tex_color += bilerp_weights[i] * bilinear2_sample(textures, texture_res_x, texture_res_y, g, vcoords[i], ucoords[i], k);
+                        }
+                    }
+                    pix_out[k] += (base_color + tex_color) * vis;
                 }
 
                 const S *n_ptr = normals + g * 3;
@@ -482,7 +451,7 @@ namespace gsplat
         torch::Tensor,
         torch::Tensor,
         torch::Tensor>
-    call_fwd_aniso_kernel_with_dim(
+    call_fwd_t2_kernel_with_dim(
         // Gaussian parameters
         const torch::Tensor &means2d,                   // [C, N, 2] or [nnz, 2]
         const torch::Tensor &ray_transforms,            // [C, N, 3, 3] or [nnz, 3, 3]
@@ -573,7 +542,7 @@ namespace gsplat
         // channels into the kernel functions and avoid necessary global memory
         // writes. This requires moving the channel padding from python to C side.
         if (cudaFuncSetAttribute(
-                rasterize_to_pixels_fwd_aniso_textured_gaussians_kernel<CDIM, float>,
+                rasterize_to_pixels_fwd_bilinear2_textured_gaussians_kernel<CDIM, float>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
                 shared_mem) != cudaSuccess)
         {
@@ -582,7 +551,7 @@ namespace gsplat
                 shared_mem,
                 " bytes), try lowering tile_size.");
         }
-        rasterize_to_pixels_fwd_aniso_textured_gaussians_kernel<CDIM, float>
+        rasterize_to_pixels_fwd_bilinear2_textured_gaussians_kernel<CDIM, float>
             <<<blocks, threads, shared_mem, stream>>>(
                 C,
                 N,
@@ -637,7 +606,7 @@ namespace gsplat
         torch::Tensor,
         torch::Tensor,
         torch::Tensor>
-    rasterize_to_pixels_fwd_aniso_textured_gaussians_tensor(
+    rasterize_to_pixels_fwd_bilinear2_textured_gaussians_tensor(
         // Gaussian parameters
         const torch::Tensor &means2d,                   // [C, N, 2] or [nnz, 2]
         const torch::Tensor &ray_transforms,            // [C, N, 3, 3] or [nnz, 3, 3]
@@ -660,22 +629,22 @@ namespace gsplat
         GSPLAT_CHECK_INPUT(colors);
         uint32_t channels = colors.size(-1);
 
-#define __GS__CALL_(N)                            \
-    case N:                                       \
-        return call_fwd_aniso_kernel_with_dim<N>( \
-            means2d,                              \
-            ray_transforms,                       \
-            colors,                               \
-            opacities,                            \
-            textures,                             \
-            normals,                              \
-            backgrounds,                          \
-            masks,                                \
-            image_width,                          \
-            image_height,                         \
-            tile_size,                            \
-            tile_offsets,                         \
-            flatten_ids,                          \
+#define __GS__CALL_(N)                         \
+    case N:                                    \
+        return call_fwd_t2_kernel_with_dim<N>( \
+            means2d,                           \
+            ray_transforms,                    \
+            colors,                            \
+            opacities,                         \
+            textures,                          \
+            normals,                           \
+            backgrounds,                       \
+            masks,                             \
+            image_width,                       \
+            image_height,                      \
+            tile_size,                         \
+            tile_offsets,                      \
+            flatten_ids,                       \
             gs_contrib_threshold);
         // TODO: an optimization can be done by passing the actual number of
         // channels into the kernel functions and avoid necessary global memory

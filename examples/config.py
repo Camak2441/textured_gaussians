@@ -233,9 +233,9 @@ class Config:
     texture_resize_values: list[int] | None = None
     texture_resize_heights: list[int] | None = None
 
-    filtering: Literal["bilinear", "mipmapped", "mipmapped2", "anisotropic"] = (
-        "bilinear"
-    )
+    filtering: Literal[
+        "bilinear", "bilinear2", "mipmapped", "mipmapped2", "anisotropic"
+    ] = "bilinear"
 
     def adjust_steps(self, factor: float):
         self.eval_steps = [int(i * factor) for i in self.eval_steps]

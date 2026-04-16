@@ -206,6 +206,9 @@ def process_config(cfg: Config):
                     case "bilinear":
                         if cfg.result_dir is None:
                             cfg.result_dir = f"{_RESULTS_DIR}/tgs{args_suffix}/{scene_args["result_dir"]}"
+                    case "bilinear2":
+                        if cfg.result_dir is None:
+                            cfg.result_dir = f"{_RESULTS_DIR}/tgs2{args_suffix}/{scene_args["result_dir"]}"
                     case "mipmapped":
                         if cfg.result_dir is None:
                             cfg.result_dir = f"{_RESULTS_DIR}/mip_tgs{args_suffix}/{scene_args["result_dir"]}"

@@ -1,7 +1,7 @@
 #include "bindings.h"
 #include "helpers.cuh"
 #include "types.cuh"
-#include "filters/anisotropic.cuh"
+#include "filters/bilinear2.cuh"
 #include <cooperative_groups.h>
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
@@ -17,7 +17,7 @@ namespace gsplat
      * Rasterization to Pixels Backward Pass Textured Gaussians
      ****************************************************************************/
     template <uint32_t COLOR_DIM, typename S>
-    __global__ void rasterize_to_pixels_bwd_aniso_textured_gaussians_kernel(
+    __global__ void rasterize_to_pixels_bwd_bilinear2_textured_gaussians_kernel(
         const uint32_t C,        // number of cameras
         const uint32_t N,        // number of gaussians
         const uint32_t n_isects, // number of ray-primitive intersections.
@@ -316,16 +316,10 @@ namespace gsplat
                 vec3<S> ray_cross; // ray cross product, the ray of plane intersection, per pixel
                 vec3<S> w_M;       // depth component of the ray transform matrix, per pixel
 
-                vec2<S> s0;
-                vec2<S> s1;
-                vec2<S> s2;
-                vec2<S> s3;
-                vec2<S> n01, n12, n23, n30;
-                S n01min, n01max, n12min, n12max, n23min, n23max, n30min, n30max;
-                int32_t minu, maxu, minv, maxv;
-                vec2<int> s0texel, s1texel, s2texel, s3texel;
-                S area, iarea;
-
+                // texture coordinates and bilinear interpolation weights
+                int32_t ucoords[4];
+                int32_t vcoords[4];
+                S bilerp_weights[4];
                 int32_t valid_texture = -1;
 
                 // alpha scaling factor
@@ -353,54 +347,28 @@ namespace gsplat
                     ray_cross = glm::cross(h_u, h_v);
 
                     // no ray_crossion
-                    if (ray_cross.z == 0.0f)
+                    if (ray_cross.z == 0.0)
                         valid = false;
-
-                    const vec3<S> dxw = glm::cross(h_u, w_M);
-                    const vec3<S> dyw = glm::cross(h_v, w_M);
-                    const vec3<S> s0ray_cross = ray_cross - 0.5f * dxw - 0.5f * dyw;
-                    const vec3<S> s1ray_cross = ray_cross + 0.5f * dxw - 0.5f * dyw;
-                    const vec3<S> s2ray_cross = ray_cross + 0.5f * dxw + 0.5f * dyw;
-                    const vec3<S> s3ray_cross = ray_cross - 0.5f * dxw + 0.5f * dyw;
-                    if (s0ray_cross.z == 0.0f || s1ray_cross.z == 0.0f || s2ray_cross.z == 0.0f || s3ray_cross.z == 0.0f)
-                        valid = false;
-
                     s = {ray_cross.x / ray_cross.z, ray_cross.y / ray_cross.z};
-                    s0 = convert_s_to_uv(vec2<S>(s0ray_cross.x / s0ray_cross.z, s0ray_cross.y / s0ray_cross.z), texture_res_x, texture_res_y);
-                    s1 = convert_s_to_uv(vec2<S>(s1ray_cross.x / s1ray_cross.z, s1ray_cross.y / s1ray_cross.z), texture_res_x, texture_res_y);
-                    s2 = convert_s_to_uv(vec2<S>(s2ray_cross.x / s2ray_cross.z, s2ray_cross.y / s2ray_cross.z), texture_res_x, texture_res_y);
-                    s3 = convert_s_to_uv(vec2<S>(s3ray_cross.x / s3ray_cross.z, s3ray_cross.y / s3ray_cross.z), texture_res_x, texture_res_y);
-
-                    area = precompute_aniso_data(
-                        &s0, &s1, &s2, &s3, &n01, &n12, &n23, &n30,
-                        &n01min, &n01max, &n12min, &n12max, &n23min, &n23max, &n30min, &n30max,
-                        &minu, &minv, &maxu, &maxv, &s0texel, &s1texel, &s2texel, &s3texel,
-                        texture_res_x, texture_res_y);
 
                     // compute texture coordinates and bilinear interpolation weights
-                    valid_texture = 1;
-                    if (area == 0 || minu == maxu || minv == maxv)
-                    {
-                        valid_texture = 0;
-                    }
-                    else
-                    {
-                        iarea = 1.f / area;
-                    }
+                    valid_texture = compute_bilinear2_coords_weights(s.x, s.y, texture_res_x, texture_res_y, ucoords, vcoords, bilerp_weights);
 
-                    // calculate alpha texture scaling factor
+                    // computer alpha scaling factor
                     if (valid_texture > 0)
                     {
-                        alpha_scaling_factor = anisotropic_sample(
-                            textures, g, 3, s0, s1, s2, s3, n01, n12, n23, n30,
-                            n01min, n01max, n12min, n12max, n23min, n23max, n30min, n30max,
-                            minu, maxu, minv, maxv, s0texel, s1texel, s2texel, s3texel,
-                            area, iarea, texture_res_x, texture_res_y);
+                        // update texture gradients
+                        GSPLAT_PRAGMA_UNROLL
+                        for (uint32_t i = 0; i < 4; ++i)
+                        {
+                            alpha_scaling_factor += bilerp_weights[i] * bilinear2_sample(textures, texture_res_x, texture_res_y, g, vcoords[i], ucoords[i], 3);
+                        }
                     }
                     else
                     {
                         alpha_scaling_factor = 1.0f;
                     }
+                    // printf("alpha_scaling_factor: %f\n", alpha_scaling_factor);
 
                     // GAUSSIAN KERNEL EVALUATION
                     gauss_weight_3d = s.x * s.x + s.y * s.y;
@@ -488,24 +456,21 @@ namespace gsplat
                     // where alpha_i is a_i * G_i
                     const S fac = alpha * T;
                     S tex_colors[COLOR_DIM] = {0.f};
-                    S deltas[COLOR_DIM] = {0.f};
 
                     GSPLAT_PRAGMA_UNROLL
                     for (uint32_t k = 0; k < COLOR_DIM; ++k)
                     {
                         v_rgb_local[k] += fac * v_render_c[k];
-                        deltas[k] = fac * v_render_c[k];
-                    }
 
-                    if (valid_texture > 0)
-                    {
-                        anisotropic_color_sample_and_update<COLOR_DIM, S>(
-                            textures, v_textures,
-                            g, s0, s1, s2, s3, n01, n12, n23, n30,
-                            n01min, n01max, n12min, n12max, n23min, n23max, n30min, n30max,
-                            minu, maxu, minv, maxv, s0texel, s1texel, s2texel, s3texel,
-                            area, iarea, texture_res_x, texture_res_y,
-                            tex_colors, deltas);
+                        if (valid_texture > 0)
+                        {
+                            // update texture gradients
+                            for (uint32_t i = 0; i < 4; ++i)
+                            {
+                                bilinear2_update(v_textures, texture_res_x, texture_res_y, g, vcoords[i], ucoords[i], k, fac * bilerp_weights[i] * v_render_c[k]);
+                                tex_colors[k] += bilerp_weights[i] * bilinear2_sample(textures, texture_res_x, texture_res_y, g, vcoords[i], ucoords[i], k);
+                            }
+                        }
                     }
 
                     // contribution from this pixel to alpha
@@ -630,11 +595,10 @@ namespace gsplat
                         // update alpha scaling factor gradients
                         if (valid_texture > 0)
                         {
-                            anisotropic_update(
-                                v_textures, g, 3, s0, s1, s2, s3, n01, n12, n23, n30,
-                                n01min, n01max, n12min, n12max, n23min, n23max, n30min, n30max,
-                                minu, maxu, minv, maxv, s0texel, s1texel, s2texel, s3texel,
-                                area, iarea, texture_res_x, texture_res_y, vis * opac * v_alpha);
+                            for (uint32_t i = 0; i < 4; ++i)
+                            {
+                                bilinear2_update(v_textures, texture_res_x, texture_res_y, g, vcoords[i], ucoords[i], 3, bilerp_weights[i] * vis * opac * v_alpha);
+                            }
                         }
                     }
 
@@ -742,7 +706,7 @@ namespace gsplat
         torch::Tensor,
         torch::Tensor,
         torch::Tensor>
-    call_bwd_aniso_kernel_with_dim(
+    call_bwd_t2_kernel_with_dim(
         // Gaussian parameters
         const torch::Tensor &means2d,        // [C, N, 2] or [nnz, 2]
         const torch::Tensor &ray_transforms, // [C, N, 3, 3] or [nnz, 3, 3]
@@ -841,7 +805,7 @@ namespace gsplat
             at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
 
             if (cudaFuncSetAttribute(
-                    rasterize_to_pixels_bwd_aniso_textured_gaussians_kernel<CDIM, float>,
+                    rasterize_to_pixels_bwd_bilinear2_textured_gaussians_kernel<CDIM, float>,
                     cudaFuncAttributeMaxDynamicSharedMemorySize,
                     shared_mem) != cudaSuccess)
             {
@@ -850,7 +814,7 @@ namespace gsplat
                     shared_mem,
                     " bytes), try lowering tile_size.");
             }
-            rasterize_to_pixels_bwd_aniso_textured_gaussians_kernel<CDIM, float>
+            rasterize_to_pixels_bwd_bilinear2_textured_gaussians_kernel<CDIM, float>
                 <<<blocks, threads, shared_mem, stream>>>(
                     C,
                     N,
@@ -913,7 +877,7 @@ namespace gsplat
         torch::Tensor,
         torch::Tensor,
         torch::Tensor>
-    rasterize_to_pixels_bwd_aniso_textured_gaussians_tensor(
+    rasterize_to_pixels_bwd_bilinear2_textured_gaussians_tensor(
         // Gaussian parameters
         const torch::Tensor &means2d,        // [C, N, 2] or [nnz, 2]
         const torch::Tensor &ray_transforms, // [C, N, 3, 3] or [nnz, 3, 3]
@@ -946,35 +910,36 @@ namespace gsplat
         // options
         bool absgrad)
     {
+
         GSPLAT_CHECK_INPUT(colors);
         uint32_t COLOR_DIM = colors.size(-1);
 
-#define __GS__CALL_(N)                            \
-    case N:                                       \
-        return call_bwd_aniso_kernel_with_dim<N>( \
-            means2d,                              \
-            ray_transforms,                       \
-            colors,                               \
-            opacities,                            \
-            textures,                             \
-            normals,                              \
-            densify,                              \
-            backgrounds,                          \
-            masks,                                \
-            image_width,                          \
-            image_height,                         \
-            tile_size,                            \
-            tile_offsets,                         \
-            flatten_ids,                          \
-            render_colors,                        \
-            render_alphas,                        \
-            last_ids,                             \
-            median_ids,                           \
-            v_render_colors,                      \
-            v_render_alphas,                      \
-            v_render_normals,                     \
-            v_render_distort,                     \
-            v_render_median,                      \
+#define __GS__CALL_(N)                         \
+    case N:                                    \
+        return call_bwd_t2_kernel_with_dim<N>( \
+            means2d,                           \
+            ray_transforms,                    \
+            colors,                            \
+            opacities,                         \
+            textures,                          \
+            normals,                           \
+            densify,                           \
+            backgrounds,                       \
+            masks,                             \
+            image_width,                       \
+            image_height,                      \
+            tile_size,                         \
+            tile_offsets,                      \
+            flatten_ids,                       \
+            render_colors,                     \
+            render_alphas,                     \
+            last_ids,                          \
+            median_ids,                        \
+            v_render_colors,                   \
+            v_render_alphas,                   \
+            v_render_normals,                  \
+            v_render_distort,                  \
+            v_render_median,                   \
             absgrad);
 
         switch (COLOR_DIM)
