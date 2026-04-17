@@ -1,9 +1,12 @@
 #!/usr/bin/bash
 
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
 cd ../examples
-export CUDA_VISIBLE_DEVICES=${2:-0}
+export CUDA_VISIBLE_DEVICES=${3:-0}
 python simple_trainer_textured_gaussians.py mcmc \
     --scene "$1" \
+    --ckpt "../results/tgs_to0/$1/ckpts/ckpt_2999.pt" \
     --init_extent 1 \
     --init_type=pretrained \
     --background_mode "white" \
@@ -14,6 +17,7 @@ python simple_trainer_textured_gaussians.py mcmc \
     --alpha_loss \
     --textured_rgb \
     --textured_alpha \
+    --camera_path $( $SCRIPT_DIR/camera_path_args.sh "$2" ) \
     --freeze_geometry=0 \
-    --steps_scaler=0.1 \
+    --disable_viewer \
     --port 6070

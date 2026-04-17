@@ -1,3 +1,5 @@
+#!/usr/bin/bash
+
 cd ../examples
 export CUDA_VISIBLE_DEVICES=${2:-0}
 python simple_trainer_textured_gaussians.py mcmc \

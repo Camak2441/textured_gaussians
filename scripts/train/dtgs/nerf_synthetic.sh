@@ -1,3 +1,5 @@
+#!/usr/bin/bash
+
 bash train/dtgs/_.sh chair
 bash train/dtgs/_.sh drums
 bash train/dtgs/_.sh ficus

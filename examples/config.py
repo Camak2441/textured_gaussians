@@ -14,7 +14,7 @@ class Config:
     # Path to the .pt file. If provide, it will skip training and render a video
     ckpt: str | None = None
     # Path to a nerfview camera path JSON for offline rendering
-    camera_path: str | None = None
+    camera_path: list[str] | None = None
 
     scene: str | None = None
     result_dir_suffix: str | None = None

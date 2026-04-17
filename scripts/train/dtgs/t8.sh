@@ -1,3 +1,5 @@
+#!/usr/bin/bash
+
 cd ../examples
 export CUDA_VISIBLE_DEVICES=${2:-0}
 results_dir="../results/dct_textured_gaussians_rgba"

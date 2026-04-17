@@ -1,6 +1,7 @@
+#!/usr/bin/bash
+
 cd ../examples
 export CUDA_VISIBLE_DEVICES=${4:-0}
-results_dir="../results/implicit_textured_gaussians_rgba"
 python simple_trainer_textured_gaussians.py mcmc \
     --scene "$1" \
     --init_extent 1 \
@@ -20,6 +21,3 @@ python simple_trainer_textured_gaussians.py mcmc \
     --textured_rgb \
     --textured_alpha \
     --port 6070
-
-    
-    # --texture_batch_size 917504 \

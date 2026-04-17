@@ -1,3 +1,5 @@
+#!/usr/bin/bash
+
 bash train/dtgs/_.sh bicycle
 bash train/dtgs/_.sh bonsai
 bash train/dtgs/_.sh counter

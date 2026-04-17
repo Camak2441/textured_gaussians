@@ -1,3 +1,5 @@
+#!/usr/bin/bash
+
 cd ../examples
 export CUDA_VISIBLE_DEVICES=${2:-0}
 python simple_trainer_textured_gaussians.py mcmc \
@@ -14,3 +16,4 @@ python simple_trainer_textured_gaussians.py mcmc \
     --textured_alpha \
     --filtering=anisotropic \
     --port 6070
+    

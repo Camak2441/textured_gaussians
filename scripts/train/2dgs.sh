@@ -1,6 +1,7 @@
+#!/usr/bin/bash
+
 cd ../examples
 export CUDA_VISIBLE_DEVICES=${2:-0}
-results_dir="../results/2dgs"
 python simple_trainer_textured_gaussians.py mcmc \
     --scene "$1" \
     --init_extent 1 \
@@ -11,7 +12,3 @@ python simple_trainer_textured_gaussians.py mcmc \
     --strategy.cap-max=10000 \
     --alpha_loss \
     --port 6070
-    
-    # --data_dir "../data/nerf_synthetic/ficus" \
-    # --result_dir "../results/2dgs/ficus" \
-    # --dataset "blender" \

@@ -1,6 +1,9 @@
+#!/usr/bin/bash
+
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
 cd ../examples
 export CUDA_VISIBLE_DEVICES=${3:-0}
-results_dir="../results/textured_gaussians_rgba"
 python simple_trainer_textured_gaussians.py mcmc \
     --scene "$1" \
     --ckpt "../results/mip_tgs/$1/ckpts/ckpt_29999.pt" \
@@ -15,11 +18,6 @@ python simple_trainer_textured_gaussians.py mcmc \
     --alpha_loss \
     --textured_rgb \
     --textured_alpha \
-    --camera_path "../examples/results/camera_paths/$2.json" \
+    --camera_path $( $SCRIPT_DIR/camera_path_args.sh "$2" ) \
+    --disable_viewer \
     --port 6070
-
-    
-    # --data_dir "../data/nerf_synthetic/chair/" \
-    # --pretrained_path "../results/2dgs/chair/ckpts/ckpt_29999.pt" \
-    # --result_dir "${results_dir}/chair" \
-    # --dataset "blender" \

@@ -1753,6 +1753,22 @@ def main(cfg: Config):
                 runner.base_color_factor = ckpt["base_color_factor"]
         input("Viewer running... Press enter to exit: ")
         exit(0)
+    elif cfg.ckpt is not None and cfg.camera_path is not None:
+        ckpt = torch.load(cfg.ckpt, map_location=runner.device)
+        for k in runner.splats.keys():
+            runner.splats[k].data = ckpt["splats"][k]
+        if runner.texture_model is not None and "texture_model" in ckpt:
+            runner.texture_model.load_state_dict(ckpt["texture_model"])
+        if "base_color_factor" in ckpt:
+            runner.base_color_factor = ckpt["base_color_factor"]
+        for camera_path_file in cfg.camera_path:
+            try:
+                runner.render_camera_path(
+                    step=ckpt["step"], camera_path_file=camera_path_file
+                )
+            except Exception as e:
+                print(f"Encountered exception whilst rendering {camera_path_file}")
+                print(e)
     elif cfg.ckpt is not None:
         # run eval only
         ckpt = torch.load(cfg.ckpt, map_location=runner.device)
@@ -1764,10 +1780,6 @@ def main(cfg: Config):
             runner.base_color_factor = ckpt["base_color_factor"]
         runner.eval(step=ckpt["step"])
         runner.render_traj(step=ckpt["step"])
-        if cfg.camera_path is not None:
-            runner.render_camera_path(
-                step=ckpt["step"], camera_path_file=cfg.camera_path
-            )
         runner.render_textures_video(
             width=cfg.saved_texture_width,
             height=cfg.saved_texture_height,

@@ -1,6 +1,7 @@
+#!/usr/bin/bash
+
 cd ../examples
 export CUDA_VISIBLE_DEVICES=${2:-0}
-results_dir="../results/textured_gaussians_rgba"
 python simple_trainer_textured_gaussians.py mcmc \
     --scene "$1" \
     --init_extent 1 \
@@ -16,9 +17,3 @@ python simple_trainer_textured_gaussians.py mcmc \
     --data_factor 16 \
     --resume \
     --port 6070
-
-    
-    # --data_dir "../data/nerf_synthetic/chair/" \
-    # --pretrained_path "../results/2dgs/chair/ckpts/ckpt_29999.pt" \
-    # --result_dir "${results_dir}/chair" \
-    # --dataset "blender" \
