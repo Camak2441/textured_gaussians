@@ -7,7 +7,7 @@ export CUDA_VISIBLE_DEVICES=${3:-0}
 python simple_trainer_textured_gaussians.py mcmc \
     --scene "$1" \
     --ckpt "../results/mip_tgs/$1/ckpts/ckpt_29999.pt" \
-    --result_dir_suffix "with_tgs" \
+    --result_dir "../results/mip_tgs_with_tgs/$1" \
     --init_extent 1 \
     --init_type=pretrained \
     --background_mode "white" \

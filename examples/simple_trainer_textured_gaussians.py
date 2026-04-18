@@ -1,7 +1,9 @@
+import io
 import json
 import math
 import os
 import time
+import zipfile
 from typing_extensions import assert_never
 
 import imageio
@@ -652,19 +654,22 @@ class Runner:
 
         print("Saving texture images...")
 
-        texture_dir = f"{self.cfg.result_dir}/textures{width}x{height}/step_{step}"
-        os.makedirs(texture_dir, exist_ok=True)
+        texture_zip = f"{self.cfg.result_dir}/textures{width}x{height}/step_{step}.zip"
+        os.makedirs(os.path.dirname(texture_zip), exist_ok=True)
 
         textures = self.render_textures(width, height)  # [N, H, W, 4]
         if textures is None:
             return
 
         N = textures.shape[0]
-        for i in tqdm.trange(N, desc="Saving texture images"):
-            rgba = (textures[i].clamp(0, 1).cpu().numpy() * 255).astype(np.uint8)
-            imageio.imwrite(f"{texture_dir}/{i:06d}.png", rgba)
+        with zipfile.ZipFile(texture_zip, "w", compression=zipfile.ZIP_STORED) as zf:
+            for i in tqdm.trange(N, desc="Saving texture images"):
+                rgba = (textures[i].clamp(0, 1).cpu().numpy() * 255).astype(np.uint8)
+                buf = io.BytesIO()
+                imageio.imwrite(buf, rgba, format="png")
+                zf.writestr(f"{i:06d}.png", buf.getvalue())
 
-        print(f"Saved {N} texture images to {texture_dir}")
+        print(f"Saved {N} texture images to {texture_zip}")
 
     def _compute_coord_normalisation(
         self, cfg: "Config"
@@ -1236,10 +1241,19 @@ class Runner:
                 for optimizer in self.optimizers.values():
                     optimizer.step()
                     optimizer.zero_grad(set_to_none=True)
-            elif "textures" in self.optimizers:
-                optimizer = self.optimizers["textures"]
-                optimizer.step()
-                optimizer.zero_grad(set_to_none=True)
+            else:
+                for opt_key in [
+                    "opacities",
+                    "sh0",
+                    "shN",
+                    "features",
+                    "colors",
+                    "textures",
+                ]:
+                    if opt_key in self.optimizers:
+                        optimizer = self.optimizers[opt_key]
+                        optimizer.step()
+                        optimizer.zero_grad(set_to_none=True)
 
             for optimizer in self.pose_optimizers:
                 optimizer.step()
@@ -1384,6 +1398,10 @@ class Runner:
         )
         ellipse_time = 0
         metrics = {"psnr": [], "ssim": [], "lpips": []}
+        render_zip_path = f"{self.render_dir}/step_{step}.zip"
+        render_zip = zipfile.ZipFile(
+            render_zip_path, "w", compression=zipfile.ZIP_STORED
+        )
         for i, data in enumerate(valloader):
             camtoworlds = data["camtoworld"].to(device)
             Ks = data["K"].to(device)
@@ -1446,9 +1464,9 @@ class Runner:
 
             # write images
             canvas = torch.cat([pixels, colors], dim=2).squeeze(0).cpu().numpy()
-            imageio.imwrite(
-                f"{self.render_dir}/val_{i:04d}.png", (canvas * 255).astype(np.uint8)
-            )
+            buf = io.BytesIO()
+            imageio.imwrite(buf, (canvas * 255).astype(np.uint8), format="png")
+            render_zip.writestr(f"val_{i:04d}.png", buf.getvalue())
 
             # write median depths
             render_median = (render_median - render_median.min()) / (
@@ -1459,17 +1477,16 @@ class Runner:
                 render_median.detach().cpu().squeeze(0).repeat(1, 1, 3).numpy()
             )
 
-            imageio.imwrite(
-                f"{self.render_dir}/val_{i:04d}_median_depth_{step}.png",
-                (render_median * 255).astype(np.uint8),
-            )
+            buf = io.BytesIO()
+            imageio.imwrite(buf, (render_median * 255).astype(np.uint8), format="png")
+            render_zip.writestr(f"val_{i:04d}_median_depth_{step}.png", buf.getvalue())
 
             # write normals
             normals = (normals * 0.5 + 0.5).squeeze(0).cpu().numpy()
             normals_output = (normals * 255).astype(np.uint8)
-            imageio.imwrite(
-                f"{self.render_dir}/val_{i:04d}_normal_{step}.png", normals_output
-            )
+            buf = io.BytesIO()
+            imageio.imwrite(buf, normals_output, format="png")
+            render_zip.writestr(f"val_{i:04d}_normal_{step}.png", buf.getvalue())
 
             # write normals from depth
             normals_from_depth *= alphas.squeeze(0).detach()
@@ -1480,9 +1497,10 @@ class Runner:
             normals_from_depth_output = (normals_from_depth * 255).astype(np.uint8)
             if len(normals_from_depth_output.shape) == 4:
                 normals_from_depth_output = normals_from_depth_output.squeeze(0)
-            imageio.imwrite(
-                f"{self.render_dir}/val_{i:04d}_normals_from_depth_{step}.png",
-                normals_from_depth_output,
+            buf = io.BytesIO()
+            imageio.imwrite(buf, normals_from_depth_output, format="png")
+            render_zip.writestr(
+                f"val_{i:04d}_normals_from_depth_{step}.png", buf.getvalue()
             )
 
             # write distortions
@@ -1497,15 +1515,18 @@ class Runner:
                 .numpy()
                 .astype(np.uint8)
             )
-            imageio.imwrite(
-                f"{self.render_dir}/val_{i:04d}_distortions_{step}.png", render_dist
-            )
+            buf = io.BytesIO()
+            imageio.imwrite(buf, render_dist, format="png")
+            render_zip.writestr(f"val_{i:04d}_distortions_{step}.png", buf.getvalue())
 
             pixels = pixels.permute(0, 3, 1, 2)  # [1, 3, H, W]
             colors = colors.permute(0, 3, 1, 2)  # [1, 3, H, W]
             metrics["psnr"].append(self.psnr(colors, pixels))
             metrics["ssim"].append(self.ssim(colors, pixels))
             metrics["lpips"].append(self.lpips(colors, pixels))
+
+        render_zip.close()
+        print(f"Saved render images to {render_zip_path}")
 
         ellipse_time /= len(valloader)
 

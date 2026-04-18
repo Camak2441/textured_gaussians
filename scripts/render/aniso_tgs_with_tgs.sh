@@ -7,6 +7,7 @@ export CUDA_VISIBLE_DEVICES=${3:-0}
 python simple_trainer_textured_gaussians.py mcmc \
     --scene "$1" \
     --ckpt "../results/aniso_tgs/$1/ckpts/ckpt_29999.pt" \
+    --result_dir "../results/aniso_tgs_with_tgs/$1" \
     --result_dir_suffix "with_tgs" \
     --init_extent 1 \
     --init_type=pretrained \

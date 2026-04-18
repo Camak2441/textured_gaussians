@@ -18,3 +18,4 @@ python simple_trainer_textured_gaussians.py mcmc \
     --freeze_geometry=0 \
     --steps_scaler=0.1 \
     --port 6070
+    
