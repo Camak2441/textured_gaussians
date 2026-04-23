@@ -279,6 +279,8 @@ class Config:
         "bilinear",
         "bilinear_bwd2",
         "bilinear2",
+        "bilinear3",
+        "bilinear3_bwd2",
         "mipmapped",
         "mipmapped2",
         "anisotropic",
