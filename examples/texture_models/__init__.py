@@ -1,14 +1,11 @@
-import json
-from typing import Optional, Tuple
-
 import torch
-from examples.texture_models.factor_model import (
-    Constant,
-    Exponential,
-    FactorModel,
-    LinearInterpolate,
+from examples.clsarg_utils import (
+    add_dict,
+    check_keys_are_in_order,
+    dump_argstr,
+    load_argstr,
+    quote_json,
 )
-from texture_models.utils import add_dict, check_keys_are_in_order, quote_json
 from texture_models.mlp import MLP, FourierMLP, FourierSelector, FourierSelector2
 from texture_models.siren import SIREN
 from texture_models.debug import ConstColor
@@ -35,47 +32,14 @@ GET_SUBMODEL_ARGS = {
 }
 
 
-FACTOR_PREFIXES = {
-    "Constant": Constant,
-    "LinearInterpolate": LinearInterpolate,
-    "Exponential": Exponential,
-}
-
-
-def _dump_argstr(kwargs: dict[str, any]) -> str:
-    match kwargs:
-        case bool():
-            return str(kwargs).lower()
-        case int():
-            return str(kwargs)
-        case float():
-            return str(kwargs)
-        case str():
-            return '"' + kwargs + '"'
-        case list():
-            s = []
-            for item in kwargs:
-                s.append(_dump_argstr(item))
-            return "[" + ",".join(s) + "]"
-        case dict():
-            s = []
-            for key in kwargs:
-                s.append(key + "=" + _dump_argstr(kwargs[key]))
-            return "(" + ",".join(s) + ")"
-
-
-def _load_argstr(argstr: str) -> dict[str, any]:
-    return json.loads(quote_json("{" + argstr[1:-1].replace("=", ":") + "}"))
-
-
-def canonical_model_name(model_name: str):
+def canonical_model_name(model_name: str) -> str:
     for prefix in MODEL_PREFIXES:
         if model_name.startswith(prefix):
             argstr = model_name[len(prefix) :]
             if not (argstr.startswith("(") and argstr.endswith(")")):
                 print("Argstr does not contain args in brackets. Continuing.")
                 continue
-            kwargs = _load_argstr(argstr)
+            kwargs = load_argstr(argstr)
             if prefix in GET_DEFAULT_ARGS:
                 kwargs = add_dict(GET_DEFAULT_ARGS[prefix], kwargs)
             args = list(kwargs)
@@ -90,40 +54,23 @@ def canonical_model_name(model_name: str):
                     ]
                 else:
                     result_kwargs[arg] = kwargs[arg]
-            return prefix + _dump_argstr(result_kwargs)
+            return prefix + dump_argstr(result_kwargs)
     raise Exception(f"Unknown model {model_name}")
 
 
-def canonical_factor_name(factor_name: str):
-    for prefix in FACTOR_PREFIXES:
-        if factor_name.startswith(prefix):
-            argstr = factor_name[len(prefix) :]
-            if not (argstr.startswith("(") and argstr.endswith(")")):
-                print("Argstr does not contain args in brackets. Continuing.")
-                continue
-            kwargs = _load_argstr(argstr)
-            args = list(kwargs)
-            args.sort()
-            result_kwargs = {}
-            for arg in args:
-                result_kwargs[arg] = kwargs[arg]
-            return prefix + _dump_argstr(result_kwargs)
-    raise Exception(f"Unknown factor {factor_name}")
-
-
-def pop_arg_from_model_name(model_name: str, arg: str) -> Tuple[str, Optional[any]]:
+def pop_arg_from_model_name(model_name: str, arg: str) -> tuple[str, any]:
     for prefix in MODEL_PREFIXES:
         if model_name.startswith(prefix):
             argstr = model_name[len(prefix) :]
             if not (argstr.startswith("(") and argstr.endswith(")")):
                 print("Argstr does not contain args in brackets. Continuing.")
                 continue
-            kwargs = _load_argstr(argstr)
+            kwargs = load_argstr(argstr)
             if prefix in GET_DEFAULT_ARGS:
                 kwargs = add_dict(GET_DEFAULT_ARGS[prefix], kwargs)
             if arg in kwargs:
                 value = kwargs.pop(arg)
-                return prefix + _dump_argstr(kwargs), value
+                return prefix + dump_argstr(kwargs), value
             else:
                 return model_name, None
 
@@ -135,11 +82,11 @@ def add_arg_to_model_name(model_name: str, arg: str, value: any) -> str:
             if not (argstr.startswith("(") and argstr.endswith(")")):
                 print("Argstr does not contain args in brackets. Continuing.")
                 continue
-            kwargs = _load_argstr(argstr)
+            kwargs = load_argstr(argstr)
             if prefix in GET_DEFAULT_ARGS:
                 kwargs = add_dict(GET_DEFAULT_ARGS[prefix], kwargs)
             kwargs[arg] = value
-            return prefix + _dump_argstr(kwargs)
+            return prefix + dump_argstr(kwargs)
 
 
 def load_model(model_name: str, over_kwargs={}) -> torch.nn.Module:
@@ -149,7 +96,7 @@ def load_model(model_name: str, over_kwargs={}) -> torch.nn.Module:
             if not (argstr.startswith("(") and argstr.endswith(")")):
                 print("Argstr does not contain args in brackets. Continuing.")
                 continue
-            kwargs = _load_argstr(argstr)
+            kwargs = load_argstr(argstr)
             kwargs = add_dict(over_kwargs, kwargs)
 
             if not check_keys_are_in_order(kwargs):
@@ -173,22 +120,3 @@ def load_model(model_name: str, over_kwargs={}) -> torch.nn.Module:
                     kwargs[arg] = sub_models
             return MODEL_PREFIXES[prefix](**kwargs)
     raise Exception(f"Unknown model {model_name}")
-
-
-def load_factor(factor_name: str, over_kwargs={}) -> FactorModel:
-    for prefix in FACTOR_PREFIXES:
-        if factor_name.startswith(prefix):
-            argstr = factor_name[len(prefix) :]
-            if not (argstr.startswith("(") and argstr.endswith(")")):
-                print("Argstr does not contain args in brackets. Continuing.")
-                continue
-            kwargs = _load_argstr(argstr)
-            kwargs = add_dict(over_kwargs, kwargs)
-
-            if not check_keys_are_in_order(kwargs):
-                print("Keys not in order. Continuing.")
-                continue
-            if "tag" in kwargs:
-                kwargs.pop("tag")
-            return FACTOR_PREFIXES[prefix](**kwargs)
-    raise Exception(f"Unknown factor {factor_name}")

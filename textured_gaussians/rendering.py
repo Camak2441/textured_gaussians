@@ -14,7 +14,10 @@ from .cuda._wrapper import (
     isect_tiles,
     rasterize_to_pixels,
     rasterize_to_pixels_2dgs,
+    rasterize_to_pixels_2dss,
+    rasterize_to_pixels_2dgss,
     rasterize_to_pixels_textured_gaussians,
+    rasterize_to_pixels_textured_sigmoids,
     rasterize_to_pixels_dct_textured_gaussians,
     rasterize_to_pixels_implicit_textured_gaussians,
     spherical_harmonics,
@@ -1024,6 +1027,7 @@ def rasterization_2dgs(
     sparse_grad: bool = False,
     absgrad: bool = False,
     distloss: bool = False,
+    norm_rot_grad: bool = False,
     depth_mode: Literal["expected", "median"] = "expected",
     gs_contrib_threshold: float = 0.0,
 ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Dict]:
@@ -1172,6 +1176,7 @@ def rasterization_2dgs(
         radius_clip,
         packed,
         sparse_grad,
+        norm_rot_grad,
     )
 
     if packed:
@@ -1356,6 +1361,7 @@ def rasterization_textured_gaussians(
     sparse_grad: bool = False,
     absgrad: bool = False,
     distloss: bool = False,
+    norm_rot_grad: bool = False,
     depth_mode: Literal["expected", "median"] = "expected",
     gs_contrib_threshold: float = 0.0,
     filtering: Filtering = "bilinear",
@@ -1509,6 +1515,7 @@ def rasterization_textured_gaussians(
         radius_clip,
         packed,
         sparse_grad,
+        norm_rot_grad,
     )
 
     if packed:
@@ -1671,6 +1678,250 @@ def rasterization_textured_gaussians(
     )
 
 
+###### Textured Sigmoids ######
+def rasterization_textured_sigmoids(
+    means: Tensor,
+    quats: Tensor,
+    scales: Tensor,
+    opacities: Tensor,
+    steepnesses: Tensor,
+    colors: Tensor,
+    textures: Tensor,
+    viewmats: Tensor,
+    Ks: Tensor,
+    width: int,
+    height: int,
+    near_plane: float = 0.01,
+    far_plane: float = 1e10,
+    radius_clip: float = 0.0,
+    eps2d: float = 0.3,
+    sh_degree: Optional[int] = None,
+    packed: bool = False,
+    tile_size: int = 16,
+    backgrounds: Optional[Tensor] = None,
+    render_mode: Literal["RGB", "D", "ED", "RGB+D", "RGB+ED"] = "RGB",
+    sparse_grad: bool = False,
+    absgrad: bool = False,
+    distloss: bool = False,
+    norm_rot_grad: bool = False,
+    depth_mode: Literal["expected", "median"] = "expected",
+    gs_contrib_threshold: float = 0.0,
+    filtering: Filtering = "bilinear",
+) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Dict]:
+    """Rasterize a set of Textured Sigmoids (smooth-step 2DSS with bilinear texture) to pixels.
+
+    Args:
+        means: 3D Gaussian centres. [N, 3]
+        quats: Quaternions (wxyz). [N, 4]
+        scales: Scales. [N, 3]
+        opacities: Opacities. [N]
+        steepnesses: Per-Gaussian smooth-step steepness. [N]
+        colors: Colors or SH coefficients. [(C,) N, D] or [(C,) N, K, 3]
+        textures: 2D texture maps. [N, th, tw, 4]
+        viewmats: World-to-cam transforms. [C, 4, 4]
+        Ks: Camera intrinsics. [C, 3, 3]
+        width: Image width.
+        height: Image height.
+
+    Returns:
+        render_colors, render_alphas, render_normals, render_normals_from_depth,
+        render_distort, render_median, gs_contrib_sum, gs_contrib_count, meta
+    """
+    N = means.shape[0]
+    C = viewmats.shape[0]
+    assert means.shape == (N, 3), means.shape
+    assert quats.shape == (N, 4), quats.shape
+    assert scales.shape == (N, 3), scales.shape
+    assert opacities.shape == (N,), opacities.shape
+    assert steepnesses.shape == (N,), steepnesses.shape
+    assert viewmats.shape == (C, 4, 4), viewmats.shape
+    assert Ks.shape == (C, 3, 3), Ks.shape
+    assert (
+        textures.shape[0] == N and textures.shape[-1] == 4 and textures.dim() == 4
+    ), textures.shape
+    assert render_mode in ["RGB", "D", "ED", "RGB+D", "RGB+ED"], render_mode
+    if distloss:
+        assert render_mode in [
+            "D",
+            "ED",
+            "RGB+D",
+            "RGB+ED",
+        ], f"distloss requires depth rendering, got {render_mode}"
+
+    if sh_degree is None:
+        assert (colors.dim() == 2 and colors.shape[0] == N) or (
+            colors.dim() == 3 and colors.shape[:2] == (C, N)
+        ), colors.shape
+    else:
+        assert (
+            colors.dim() == 3 and colors.shape[0] == N and colors.shape[2] == 3
+        ), colors.shape
+        assert (sh_degree + 1) ** 2 <= colors.shape[1], colors.shape
+
+    proj_results = fully_fused_projection_2dgs(
+        means,
+        quats,
+        scales,
+        viewmats,
+        Ks,
+        width,
+        height,
+        eps2d,
+        near_plane,
+        far_plane,
+        radius_clip,
+        packed,
+        sparse_grad,
+        norm_rot_grad,
+    )
+
+    if packed:
+        (
+            camera_ids,
+            gaussian_ids,
+            radii,
+            means2d,
+            depths,
+            ray_transforms,
+            normals,
+        ) = proj_results
+        opacities = opacities[gaussian_ids]
+        steepnesses = steepnesses[gaussian_ids]
+    else:
+        radii, means2d, depths, ray_transforms, normals = proj_results
+        opacities = opacities.repeat(C, 1)
+        steepnesses = steepnesses.repeat(C, 1)
+        camera_ids, gaussian_ids = None, None
+
+    densify = torch.zeros_like(
+        means2d, dtype=means.dtype, requires_grad=True, device="cuda"
+    )
+    tile_width = math.ceil(width / float(tile_size))
+    tile_height = math.ceil(height / float(tile_size))
+    tiles_per_gauss, isect_ids, flatten_ids = isect_tiles(
+        means2d,
+        radii,
+        depths,
+        tile_size,
+        tile_width,
+        tile_height,
+        packed=packed,
+        n_cameras=C,
+        camera_ids=camera_ids,
+        gaussian_ids=gaussian_ids,
+    )
+    isect_offsets = isect_offset_encode(isect_ids, C, tile_width, tile_height)
+
+    if not (colors.dim() == 3 and sh_degree is None):
+        colors = (
+            colors[gaussian_ids] if packed else colors.expand(C, *([-1] * colors.dim()))
+        )
+    else:
+        if packed:
+            colors = colors[camera_ids, gaussian_ids, :]
+
+    if sh_degree is not None:
+        camtoworlds = torch.inverse(viewmats)
+        if packed:
+            dirs = means[gaussian_ids, :] - camtoworlds[camera_ids, :3, 3]
+        else:
+            dirs = means[None, :, :] - camtoworlds[:, None, :3, 3]
+        colors = spherical_harmonics(sh_degree, dirs, colors, masks=radii > 0)
+        colors = torch.clamp_min(colors + 0.5, 0.0)
+
+    if render_mode in ["RGB+D", "RGB+ED"]:
+        colors = torch.cat((colors, depths[..., None]), dim=-1)
+    elif render_mode in ["D", "ED"]:
+        colors = depths[..., None]
+
+    (
+        render_colors,
+        render_alphas,
+        render_normals,
+        render_distort,
+        render_median,
+        gs_contrib_sum,
+        gs_contrib_count,
+    ) = rasterize_to_pixels_textured_sigmoids(
+        means2d,
+        steepnesses,
+        ray_transforms,
+        colors,
+        opacities,
+        textures,
+        normals,
+        densify,
+        width,
+        height,
+        tile_size,
+        isect_offsets,
+        flatten_ids,
+        backgrounds=backgrounds,
+        packed=packed,
+        absgrad=absgrad,
+        distloss=distloss,
+        gs_contrib_threshold=gs_contrib_threshold,
+        filtering=filtering,
+    )
+
+    render_normals_from_depth = None
+    if render_mode in ["ED", "RGB+ED"]:
+        render_colors = torch.cat(
+            [
+                render_colors[..., :-1],
+                render_colors[..., -1:] / render_alphas.clamp(min=1e-10),
+            ],
+            dim=-1,
+        )
+    if render_mode in ["RGB+ED", "RGB+D"]:
+        if depth_mode == "expected":
+            depth_for_normal = render_colors[..., -1:]
+        elif depth_mode == "median":
+            depth_for_normal = render_median
+        render_normals_from_depth = depth_to_normal(
+            depth_for_normal, torch.linalg.inv(viewmats), Ks
+        ).squeeze(0)
+
+    meta = {
+        "camera_ids": camera_ids,
+        "gaussian_ids": gaussian_ids,
+        "radii": radii,
+        "means2d": means2d,
+        "depths": depths,
+        "ray_transforms": ray_transforms,
+        "opacities": opacities,
+        "normals": normals,
+        "tile_width": tile_width,
+        "tile_height": tile_height,
+        "tiles_per_gauss": tiles_per_gauss,
+        "isect_ids": isect_ids,
+        "flatten_ids": flatten_ids,
+        "isect_offsets": isect_offsets,
+        "width": width,
+        "height": height,
+        "tile_size": tile_size,
+        "n_cameras": C,
+        "render_distort": render_distort,
+        "gradient_2dgs": densify,
+    }
+
+    render_normals = torch.einsum(
+        "...ij,...hwj->...hwi", torch.linalg.inv(viewmats)[..., :3, :3], render_normals
+    )
+
+    return (
+        render_colors,
+        render_alphas,
+        render_normals,
+        render_normals_from_depth,
+        render_distort,
+        render_median,
+        gs_contrib_sum,
+        gs_contrib_count,
+        meta,
+    )
+
+
 ###### Implicit Textured Gaussians ######
 def rasterization_implicit_textured_gaussians(
     means: Tensor,
@@ -1695,6 +1946,7 @@ def rasterization_implicit_textured_gaussians(
     sparse_grad: bool = False,
     absgrad: bool = False,
     distloss: bool = False,
+    norm_rot_grad: bool = False,
     depth_mode: Literal["expected", "median"] = "expected",
     gs_contrib_threshold: float = 0.0,
     num_texture_samples: int = 10,
@@ -1852,6 +2104,7 @@ def rasterization_implicit_textured_gaussians(
         radius_clip,
         packed,
         sparse_grad,
+        norm_rot_grad,
     )
 
     if packed:
@@ -2047,6 +2300,7 @@ def rasterization_dct_textured_gaussians(
     sparse_grad: bool = False,
     absgrad: bool = False,
     distloss: bool = False,
+    norm_rot_grad: bool = False,
     depth_mode: Literal["expected", "median"] = "expected",
     gs_contrib_threshold: float = 0.0,
 ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Dict]:
@@ -2199,6 +2453,7 @@ def rasterization_dct_textured_gaussians(
         radius_clip,
         packed,
         sparse_grad,
+        norm_rot_grad,
     )
 
     if packed:
@@ -2504,4 +2759,521 @@ def rasterization_2dgs_inria_wrapper(
         "n_cameras": C,
         "gaussian_ids": None,
     }
+
+
+###### 2DSS ######
+def rasterization_2dss(
+    means: Tensor,
+    quats: Tensor,
+    scales: Tensor,
+    opacities: Tensor,
+    steepnesses: Tensor,
+    colors: Tensor,
+    viewmats: Tensor,
+    Ks: Tensor,
+    width: int,
+    height: int,
+    near_plane: float = 0.01,
+    far_plane: float = 1e10,
+    radius_clip: float = 0.0,
+    eps2d: float = 0.3,
+    sh_degree: Optional[int] = None,
+    packed: bool = False,
+    tile_size: int = 16,
+    backgrounds: Optional[Tensor] = None,
+    render_mode: Literal["RGB", "D", "ED", "RGB+D", "RGB+ED"] = "RGB",
+    sparse_grad: bool = False,
+    absgrad: bool = False,
+    distloss: bool = False,
+    norm_rot_grad: bool = False,
+    depth_mode: Literal["expected", "median"] = "expected",
+    gs_contrib_threshold: float = 0.0,
+) -> Tuple[
+    Tensor, Tensor, Tensor, Optional[Tensor], Tensor, Tensor, Tensor, Tensor, Dict
+]:
+    """Rasterize a set of 2D smooth-step Gaussians (N) to a batch of image planes (C).
+
+    Identical pipeline to :func:`rasterization_2dgs` but uses a smooth step function
+    (parameterised by ``steepnesses``) instead of a Gaussian exponential for the
+    per-pixel visibility weight.
+
+    Args:
+        means: 3D Gaussian centres. [N, 3]
+        quats: Unit quaternions (wxyz). [N, 4]
+        scales: Scales. [N, 3]
+        opacities: Opacities. [N]
+        steepnesses: Per-gaussian step steepness (k > 0). [N]
+        colors: Colors or SH coefficients. [(C,) N, D] or [(C,) N, K, 3]
+        viewmats: World-to-cam transforms. [C, 4, 4]
+        Ks: Camera intrinsics. [C, 3, 3]
+        width: Image width.
+        height: Image height.
+        near_plane: Near clipping plane. Default: 0.01.
+        far_plane: Far clipping plane. Default: 1e10.
+        radius_clip: Skip Gaussians with 2D radius <= this. Default: 0.0.
+        eps2d: Epsilon added to 2D covariance eigenvalues. Default: 0.3.
+        sh_degree: SH degree to evaluate. Default: None (colors are post-activation).
+        packed: Use packed representation. Default: False.
+        tile_size: Rasterization tile size. Default: 16.
+        backgrounds: Background colors. [C, D]. Default: None.
+        render_mode: One of "RGB", "D", "ED", "RGB+D", "RGB+ED". Default: "RGB".
+        sparse_grad: Store gradients in COO sparse layout. Default: False.
+        absgrad: Compute absolute gradients for means2d. Default: False.
+        distloss: Enable distortion regularization. Default: False.
+        depth_mode: "expected" or "median". Default: "expected".
+        gs_contrib_threshold: Minimum alpha to count as a contribution. Default: 0.0.
+
+    Returns:
+        - **render_colors**          [C, height, width, X]
+        - **render_alphas**          [C, height, width, 1]
+        - **render_normals**         [C, height, width, 3]
+        - **render_normals_from_depth** [C, height, width, 3] or None
+        - **render_distort**         [C, height, width, 1]
+        - **render_median**          [C, height, width, 1]
+        - **gs_contrib_sum**         [N]
+        - **gs_contrib_count**       [N]
+        - **meta**                   dict of intermediate tensors
+    """
+    N = means.shape[0]
+    C = viewmats.shape[0]
+    assert means.shape == (N, 3), means.shape
+    assert quats.shape == (N, 4), quats.shape
+    assert scales.shape == (N, 3), scales.shape
+    assert opacities.shape == (N,), opacities.shape
+    assert steepnesses.shape == (N,), steepnesses.shape
+    assert viewmats.shape == (C, 4, 4), viewmats.shape
+    assert Ks.shape == (C, 3, 3), Ks.shape
+    assert render_mode in ["RGB", "D", "ED", "RGB+D", "RGB+ED"], render_mode
+    if distloss:
+        assert render_mode in [
+            "D",
+            "ED",
+            "RGB+D",
+            "RGB+ED",
+        ], f"distloss requires depth rendering, got render_mode={render_mode}"
+
+    if sh_degree is None:
+        assert (colors.dim() == 2 and colors.shape[0] == N) or (
+            colors.dim() == 3 and colors.shape[:2] == (C, N)
+        ), colors.shape
+    else:
+        assert (
+            colors.dim() == 3 and colors.shape[0] == N and colors.shape[2] == 3
+        ), colors.shape
+        assert (sh_degree + 1) ** 2 <= colors.shape[1], colors.shape
+
+    proj_results = fully_fused_projection_2dgs(
+        means,
+        quats,
+        scales,
+        viewmats,
+        Ks,
+        width,
+        height,
+        eps2d,
+        near_plane,
+        far_plane,
+        radius_clip,
+        packed,
+        sparse_grad,
+        norm_rot_grad,
+    )
+
+    if packed:
+        camera_ids, gaussian_ids, radii, means2d, depths, ray_transforms, normals = (
+            proj_results
+        )
+        opacities = opacities[gaussian_ids]
+        steepnesses_per_view = steepnesses[gaussian_ids]
+    else:
+        radii, means2d, depths, ray_transforms, normals = proj_results
+        opacities = opacities.repeat(C, 1)
+        steepnesses_per_view = steepnesses[None].expand(C, -1)
+        camera_ids, gaussian_ids = None, None
+
+    densify = torch.zeros_like(
+        means2d, dtype=means.dtype, requires_grad=True, device="cuda"
+    )
+
+    tile_width = math.ceil(width / float(tile_size))
+    tile_height = math.ceil(height / float(tile_size))
+    tiles_per_gauss, isect_ids, flatten_ids = isect_tiles(
+        means2d,
+        radii,
+        depths,
+        tile_size,
+        tile_width,
+        tile_height,
+        packed=packed,
+        n_cameras=C,
+        camera_ids=camera_ids,
+        gaussian_ids=gaussian_ids,
+    )
+    isect_offsets = isect_offset_encode(isect_ids, C, tile_width, tile_height)
+
+    if not (colors.dim() == 3 and sh_degree is None):
+        colors = (
+            colors[gaussian_ids] if packed else colors.expand(C, *([-1] * colors.dim()))
+        )
+    else:
+        if packed:
+            colors = colors[camera_ids, gaussian_ids, :]
+
+    if sh_degree is not None:
+        camtoworlds = torch.inverse(viewmats)
+        if packed:
+            dirs = means[gaussian_ids, :] - camtoworlds[camera_ids, :3, 3]
+        else:
+            dirs = means[None, :, :] - camtoworlds[:, None, :3, 3]
+        colors = spherical_harmonics(sh_degree, dirs, colors, masks=radii > 0)
+        colors = torch.clamp_min(colors + 0.5, 0.0)
+
+    if render_mode in ["RGB+D", "RGB+ED"]:
+        colors = torch.cat((colors, depths[..., None]), dim=-1)
+    elif render_mode in ["D", "ED"]:
+        colors = depths[..., None]
+
+    (
+        render_colors,
+        render_alphas,
+        render_normals,
+        render_distort,
+        render_median,
+        gs_contrib_sum,
+        gs_contrib_count,
+    ) = rasterize_to_pixels_2dss(
+        means2d,
+        steepnesses_per_view,
+        ray_transforms,
+        colors,
+        opacities,
+        normals,
+        densify,
+        width,
+        height,
+        tile_size,
+        isect_offsets,
+        flatten_ids,
+        backgrounds=backgrounds,
+        packed=packed,
+        absgrad=absgrad,
+        distloss=distloss,
+        gs_contrib_threshold=gs_contrib_threshold,
+    )
+
+    render_normals_from_depth = None
+    if render_mode in ["ED", "RGB+ED"]:
+        render_colors = torch.cat(
+            [
+                render_colors[..., :-1],
+                render_colors[..., -1:] / render_alphas.clamp(min=1e-10),
+            ],
+            dim=-1,
+        )
+    if render_mode in ["RGB+ED", "RGB+D"]:
+        if depth_mode == "expected":
+            depth_for_normal = render_colors[..., -1:]
+        elif depth_mode == "median":
+            depth_for_normal = render_median
+        render_normals_from_depth = depth_to_normal(
+            depth_for_normal, torch.linalg.inv(viewmats), Ks
+        ).squeeze(0)
+
+    meta = {
+        "camera_ids": camera_ids,
+        "gaussian_ids": gaussian_ids,
+        "radii": radii,
+        "means2d": means2d,
+        "depths": depths,
+        "ray_transforms": ray_transforms,
+        "opacities": opacities,
+        "normals": normals,
+        "tile_width": tile_width,
+        "tile_height": tile_height,
+        "tiles_per_gauss": tiles_per_gauss,
+        "isect_ids": isect_ids,
+        "flatten_ids": flatten_ids,
+        "isect_offsets": isect_offsets,
+        "width": width,
+        "height": height,
+        "tile_size": tile_size,
+        "n_cameras": C,
+        "render_distort": render_distort,
+        "gradient_2dgs": densify,
+    }
+
+    render_normals = torch.einsum(
+        "...ij,...hwj->...hwi", torch.linalg.inv(viewmats)[..., :3, :3], render_normals
+    )
+
+    return (
+        render_colors,
+        render_alphas,
+        render_normals,
+        render_normals_from_depth,
+        render_distort,
+        render_median,
+        gs_contrib_sum,
+        gs_contrib_count,
+        meta,
+    )
     return (render_colors, render_alphas), meta
+
+
+def rasterization_2dgss(
+    means: Tensor,
+    quats: Tensor,
+    scales: Tensor,
+    opacities: Tensor,
+    steepnesses: Tensor,
+    colors: Tensor,
+    viewmats: Tensor,
+    Ks: Tensor,
+    width: int,
+    height: int,
+    near_plane: float = 0.01,
+    far_plane: float = 1e10,
+    radius_clip: float = 0.0,
+    eps2d: float = 0.3,
+    sh_degree: Optional[int] = None,
+    packed: bool = False,
+    tile_size: int = 16,
+    backgrounds: Optional[Tensor] = None,
+    render_mode: Literal["RGB", "D", "ED", "RGB+D", "RGB+ED"] = "RGB",
+    sparse_grad: bool = False,
+    absgrad: bool = False,
+    distloss: bool = False,
+    norm_rot_grad: bool = False,
+    depth_mode: Literal["expected", "median"] = "expected",
+    gs_contrib_threshold: float = 0.0,
+    s_weight: float = 0.5,
+) -> Tuple[
+    Tensor, Tensor, Tensor, Optional[Tensor], Tensor, Tensor, Tensor, Tensor, Dict
+]:
+    """Rasterize a set of 2D Gaussian-Smooth-Step splats (N) to a batch of image planes (C).
+
+    Identical pipeline to :func:`rasterization_2dss` but uses a blended
+    Gaussian+sigmoid visibility kernel parameterised by ``s_weight``.
+
+    Args:
+        means: 3D Gaussian centres. [N, 3]
+        quats: Unit quaternions (wxyz). [N, 4]
+        scales: Scales. [N, 3]
+        opacities: Opacities. [N]
+        steepnesses: Per-gaussian step steepness (k > 0). [N]
+        colors: Colors or SH coefficients. [(C,) N, D] or [(C,) N, K, 3]
+        viewmats: World-to-cam transforms. [C, 4, 4]
+        Ks: Camera intrinsics. [C, 3, 3]
+        width: Image width.
+        height: Image height.
+        near_plane: Near clipping plane. Default: 0.01.
+        far_plane: Far clipping plane. Default: 1e10.
+        radius_clip: Skip Gaussians with 2D radius <= this. Default: 0.0.
+        eps2d: Epsilon added to 2D covariance eigenvalues. Default: 0.3.
+        sh_degree: SH degree to evaluate. Default: None (colors are post-activation).
+        packed: Use packed representation. Default: False.
+        tile_size: Rasterization tile size. Default: 16.
+        backgrounds: Background colors. [C, D]. Default: None.
+        render_mode: One of "RGB", "D", "ED", "RGB+D", "RGB+ED". Default: "RGB".
+        sparse_grad: Store gradients in COO sparse layout. Default: False.
+        absgrad: Compute absolute gradients for means2d. Default: False.
+        distloss: Enable distortion regularization. Default: False.
+        depth_mode: "expected" or "median". Default: "expected".
+        gs_contrib_threshold: Minimum alpha to count as a contribution. Default: 0.0.
+        s_weight: Blend weight for sigmoid kernel (0=pure Gaussian, 1=pure sigmoid). Default: 0.5.
+
+    Returns:
+        - **render_colors**             [C, height, width, X]
+        - **render_alphas**             [C, height, width, 1]
+        - **render_normals**            [C, height, width, 3]
+        - **render_normals_from_depth** [C, height, width, 3] or None
+        - **render_distort**            [C, height, width, 1]
+        - **render_median**             [C, height, width, 1]
+        - **gs_contrib_sum**            [N]
+        - **gs_contrib_count**          [N]
+        - **meta**                      dict of intermediate tensors
+    """
+    N = means.shape[0]
+    C = viewmats.shape[0]
+    assert means.shape == (N, 3), means.shape
+    assert quats.shape == (N, 4), quats.shape
+    assert scales.shape == (N, 3), scales.shape
+    assert opacities.shape == (N,), opacities.shape
+    assert steepnesses.shape == (N,), steepnesses.shape
+    assert viewmats.shape == (C, 4, 4), viewmats.shape
+    assert Ks.shape == (C, 3, 3), Ks.shape
+    assert render_mode in ["RGB", "D", "ED", "RGB+D", "RGB+ED"], render_mode
+    if distloss:
+        assert render_mode in [
+            "D",
+            "ED",
+            "RGB+D",
+            "RGB+ED",
+        ], f"distloss requires depth rendering, got render_mode={render_mode}"
+
+    if sh_degree is None:
+        assert (colors.dim() == 2 and colors.shape[0] == N) or (
+            colors.dim() == 3 and colors.shape[:2] == (C, N)
+        ), colors.shape
+    else:
+        assert (
+            colors.dim() == 3 and colors.shape[0] == N and colors.shape[2] == 3
+        ), colors.shape
+        assert (sh_degree + 1) ** 2 <= colors.shape[1], colors.shape
+
+    proj_results = fully_fused_projection_2dgs(
+        means,
+        quats,
+        scales,
+        viewmats,
+        Ks,
+        width,
+        height,
+        eps2d,
+        near_plane,
+        far_plane,
+        radius_clip,
+        packed,
+        sparse_grad,
+        norm_rot_grad,
+    )
+
+    if packed:
+        camera_ids, gaussian_ids, radii, means2d, depths, ray_transforms, normals = (
+            proj_results
+        )
+        opacities = opacities[gaussian_ids]
+        steepnesses_per_view = steepnesses[gaussian_ids]
+    else:
+        radii, means2d, depths, ray_transforms, normals = proj_results
+        opacities = opacities.repeat(C, 1)
+        steepnesses_per_view = steepnesses[None].expand(C, -1)
+        camera_ids, gaussian_ids = None, None
+
+    densify = torch.zeros_like(
+        means2d, dtype=means.dtype, requires_grad=True, device="cuda"
+    )
+
+    tile_width = math.ceil(width / float(tile_size))
+    tile_height = math.ceil(height / float(tile_size))
+    tiles_per_gauss, isect_ids, flatten_ids = isect_tiles(
+        means2d,
+        radii,
+        depths,
+        tile_size,
+        tile_width,
+        tile_height,
+        packed=packed,
+        n_cameras=C,
+        camera_ids=camera_ids,
+        gaussian_ids=gaussian_ids,
+    )
+    isect_offsets = isect_offset_encode(isect_ids, C, tile_width, tile_height)
+
+    if not (colors.dim() == 3 and sh_degree is None):
+        colors = (
+            colors[gaussian_ids] if packed else colors.expand(C, *([-1] * colors.dim()))
+        )
+    else:
+        if packed:
+            colors = colors[camera_ids, gaussian_ids, :]
+
+    if sh_degree is not None:
+        camtoworlds = torch.inverse(viewmats)
+        if packed:
+            dirs = means[gaussian_ids, :] - camtoworlds[camera_ids, :3, 3]
+        else:
+            dirs = means[None, :, :] - camtoworlds[:, None, :3, 3]
+        colors = spherical_harmonics(sh_degree, dirs, colors, masks=radii > 0)
+        colors = torch.clamp_min(colors + 0.5, 0.0)
+
+    if render_mode in ["RGB+D", "RGB+ED"]:
+        colors = torch.cat((colors, depths[..., None]), dim=-1)
+    elif render_mode in ["D", "ED"]:
+        colors = depths[..., None]
+
+    (
+        render_colors,
+        render_alphas,
+        render_normals,
+        render_distort,
+        render_median,
+        gs_contrib_sum,
+        gs_contrib_count,
+    ) = rasterize_to_pixels_2dgss(
+        means2d,
+        steepnesses_per_view,
+        ray_transforms,
+        colors,
+        opacities,
+        normals,
+        densify,
+        width,
+        height,
+        tile_size,
+        isect_offsets,
+        flatten_ids,
+        backgrounds=backgrounds,
+        packed=packed,
+        absgrad=absgrad,
+        distloss=distloss,
+        gs_contrib_threshold=gs_contrib_threshold,
+        s_weight=s_weight,
+    )
+
+    render_normals_from_depth = None
+    if render_mode in ["ED", "RGB+ED"]:
+        render_colors = torch.cat(
+            [
+                render_colors[..., :-1],
+                render_colors[..., -1:] / render_alphas.clamp(min=1e-10),
+            ],
+            dim=-1,
+        )
+    if render_mode in ["RGB+ED", "RGB+D"]:
+        if depth_mode == "expected":
+            depth_for_normal = render_colors[..., -1:]
+        elif depth_mode == "median":
+            depth_for_normal = render_median
+        render_normals_from_depth = depth_to_normal(
+            depth_for_normal, torch.linalg.inv(viewmats), Ks
+        ).squeeze(0)
+
+    meta = {
+        "camera_ids": camera_ids,
+        "gaussian_ids": gaussian_ids,
+        "radii": radii,
+        "means2d": means2d,
+        "depths": depths,
+        "ray_transforms": ray_transforms,
+        "opacities": opacities,
+        "normals": normals,
+        "tile_width": tile_width,
+        "tile_height": tile_height,
+        "tiles_per_gauss": tiles_per_gauss,
+        "isect_ids": isect_ids,
+        "flatten_ids": flatten_ids,
+        "isect_offsets": isect_offsets,
+        "width": width,
+        "height": height,
+        "tile_size": tile_size,
+        "n_cameras": C,
+        "render_distort": render_distort,
+        "gradient_2dgs": densify,
+    }
+
+    render_normals = torch.einsum(
+        "...ij,...hwj->...hwi", torch.linalg.inv(viewmats)[..., :3, :3], render_normals
+    )
+
+    return (
+        render_colors,
+        render_alphas,
+        render_normals,
+        render_normals_from_depth,
+        render_distort,
+        render_median,
+        gs_contrib_sum,
+        gs_contrib_count,
+        meta,
+    )

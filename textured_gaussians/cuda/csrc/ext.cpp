@@ -56,6 +56,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     m.def(
         "fully_fused_projection_bwd_2dgs",
         &gsplat::fully_fused_projection_bwd_2dgs_tensor);
+    m.def(
+        "fully_fused_projection_bwd2_2dgs",
+        &gsplat::fully_fused_projection_bwd2_2dgs_tensor);
 
     m.def(
         "fully_fused_projection_packed_fwd_2dgs",
@@ -63,6 +66,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     m.def(
         "fully_fused_projection_packed_bwd_2dgs",
         &gsplat::fully_fused_projection_packed_bwd_2dgs_tensor);
+    m.def(
+        "fully_fused_projection_packed_bwd2_2dgs",
+        &gsplat::fully_fused_projection_packed_bwd2_2dgs_tensor);
 
     m.def("selective_adam_update", &gsplat::selective_adam_update);
 
@@ -83,6 +89,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     m.def(
         "rasterize_to_pixels_bwd_textured_gaussians",
         &gsplat::rasterize_to_pixels_bwd_textured_gaussians_tensor);
+    m.def(
+        "rasterize_to_pixels_bwd2_textured_gaussians",
+        &gsplat::rasterize_to_pixels_bwd2_textured_gaussians_tensor);
 
     // Mipmapped Textured Gaussians
     m.def(
@@ -162,4 +171,38 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     m.def(
         "rasterize_to_samples_world_and_view_fwd_textured_gaussians",
         &gsplat::rasterize_to_samples_world_and_view_fwd_textured_gaussians_tensor);
+
+    // 2DSS
+    m.def(
+        "rasterize_to_pixels_fwd_2dss",
+        &gsplat::rasterize_to_pixels_fwd_2dss_tensor);
+    m.def(
+        "rasterize_to_pixels_bwd_2dss",
+        &gsplat::rasterize_to_pixels_bwd_2dss_tensor);
+
+    // Textured Sigmoids 2DSS
+    m.def(
+        "rasterize_to_pixels_fwd_textured_sigmoids",
+        &gsplat::rasterize_to_pixels_fwd_textured_sigmoids_tensor);
+    m.def(
+        "rasterize_to_pixels_bwd2_textured_sigmoids",
+        &gsplat::rasterize_to_pixels_bwd2_textured_sigmoids_tensor);
+
+    // 2DGSS
+    m.def("rasterize_to_pixels_fwd_2dgss", &gsplat::rasterize_to_pixels_fwd_2dgss_tensor);
+    m.def("rasterize_to_pixels_bwd_2dgss", &gsplat::rasterize_to_pixels_bwd_2dgss_tensor);
+
+    // Anisotropic Bilinear Textured Sigmoids
+    m.def(
+        "rasterize_to_pixels_fwd_aniso_bilinear_textured_sigmoids",
+        &gsplat::rasterize_to_pixels_fwd_aniso_bilinear_textured_sigmoids_tensor);
+    m.def(
+        "rasterize_to_pixels_bwd_aniso_bilinear_textured_sigmoids",
+        &gsplat::rasterize_to_pixels_bwd_aniso_bilinear_textured_sigmoids_tensor);
+
+    // Frequency-guided pre-training kernels
+    m.def("freq_accumulate_fwd", &gsplat::freq_accumulate_fwd_tensor);
+    m.def("freq_accumulate_bwd", &gsplat::freq_accumulate_bwd_tensor);
+    m.def("freq_orient_fwd", &gsplat::freq_orient_fwd_tensor);
+    m.def("freq_orient_bwd", &gsplat::freq_orient_bwd_tensor);
 }

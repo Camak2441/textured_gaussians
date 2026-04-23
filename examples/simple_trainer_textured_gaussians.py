@@ -22,9 +22,10 @@ from torch.utils.tensorboard import SummaryWriter
 from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 from examples.config import Config
+from examples.loss_fs import load_loss_fn
 from examples.scene_args_loader import process_config
-from texture_models import canonical_model_name, load_factor, load_model
-from textured_gaussians.utils import Filtering, TextureGrads
+from examples.texture_models import canonical_model_name, load_model
+from examples.factor_fs import canonical_factor_name, load_factor_fn
 from examples.coordinate_normalization import (
     compute_camera_unit_sphere_normalization,
     compute_scene_bbox_from_cameras,
@@ -33,7 +34,6 @@ from examples.coordinate_normalization import (
 from utils import (
     AppearanceOptModule,
     CameraOptModule,
-    apply_depth_colormap,
     colormap,
     knn,
     rgb_to_sh,
@@ -43,7 +43,10 @@ from utils import (
 
 from textured_gaussians.rendering import (
     rasterization_2dgs,
+    rasterization_2dss,
+    rasterization_2dgss,
     rasterization_textured_gaussians,
+    rasterization_textured_sigmoids,
     rasterization_dct_textured_gaussians,
     rasterization_implicit_textured_gaussians,
 )
@@ -123,6 +126,19 @@ def create_splats_with_optimizers(
         ("opacities", torch.nn.Parameter(opacities), 5e-2),
     ]
 
+    if cfg.model_type in ("2dss", "2dgss", "tss"):
+        if init_type == "pretrained" and "steepnesses" in ckpt:
+            steepnesses = ckpt["steepnesses"][sampled_pts_idx]
+        else:
+            N = scales.shape[0]
+            steepnesses = torch.full((N,), 1.0)
+        params.append(("steepnesses", torch.nn.Parameter(steepnesses), 1e-3))
+
+    if getattr(cfg, "freq_guidance_orient", False):
+        freq_vec_init = torch.zeros(points.shape[0], 2)
+        freq_vec_init[:, 0] = 1.0  # start pointing in u-direction
+        params.append(("freq_vec", torch.nn.Parameter(freq_vec_init), 1e-3))
+
     # SH coefficients
     if feature_dim is None:
         # color is SH coefficients.
@@ -147,21 +163,27 @@ def create_splats_with_optimizers(
 
     texture_model = None
     match cfg.model_type:
-        case "tgs":
-            textures = torch.ones(
-                points.shape[0], cfg.texture_height, cfg.texture_width, 4
-            )
-            textures[:, :, :, :3] = 0.1  # init color to low value
-            textures[:, :, :, 3] = 1.0  # init alpha to 1.0
+        case "tgs" | "tss":
+            if init_type == "pretrained" and "textures" in ckpt:
+                textures = ckpt["textures"][sampled_pts_idx]
+            else:
+                textures = torch.ones(
+                    points.shape[0], cfg.texture_height, cfg.texture_width, 4
+                )
+                textures[:, :, :, :3] = 0.1  # init color to low value
+                textures[:, :, :, 3] = 1.0  # init alpha to 1.0
             params.append(("textures", torch.nn.Parameter(textures), 2.5e-3))
         case "dtgs":
-            textures = torch.ones(
-                points.shape[0], cfg.texture_height, cfg.texture_width, 4
-            )
-            textures[:, :, :, :] = 0.1  # init to having no frequencies
-            textures[:, 0, 0, 3] = (
-                cfg.texture_height * cfg.texture_width
-            )  # init alpha to flat opaque
+            if init_type == "pretrained" and "textures" in ckpt:
+                textures = ckpt["textures"][sampled_pts_idx]
+            else:
+                textures = torch.ones(
+                    points.shape[0], cfg.texture_height, cfg.texture_width, 4
+                )
+                textures[:, :, :, :] = 0.1  # init to having no frequencies
+                textures[:, 0, 0, 3] = (
+                    cfg.texture_height * cfg.texture_width
+                )  # init alpha to flat opaque
             params.append(("textures", torch.nn.Parameter(textures), 1.5e-3))
         case "itgs":
             texture_model_name = canonical_model_name(cfg.texture_model)
@@ -247,6 +269,50 @@ class Runner:
         else:
             raise ValueError(f"Dataset mode {cfg.dataset_type} not supported!")
 
+        if cfg.opac_loss:
+            self.opac_loss = load_loss_fn(cfg.opac_loss_fn)
+
+        if cfg.tex_opac_loss:
+            self.tex_opac_loss = load_loss_fn(cfg.tex_opac_loss_fn)
+
+        if cfg.steepness_loss:
+            self.steepness_loss = load_loss_fn(cfg.steepness_loss_fn)
+
+        # Frequency-guidance cache (Step 1 pre-computation)
+        if cfg.freq_guidance:
+            if cfg.dataset_type == "colmap" and self.parser is not None:
+                from freq_guidance import load_or_compute_freq_cache
+
+                self.freq_downsampled, _, self.freq_covariance = (
+                    load_or_compute_freq_cache(
+                        self.parser,
+                        downsample=cfg.freq_guidance_downsample,
+                        block_size=cfg.freq_guidance_block_size,
+                        device=self.device,
+                    )
+                )
+            elif cfg.dataset_type == "blender":
+                from freq_guidance import load_or_compute_freq_cache_from_images
+
+                self.freq_downsampled, _, self.freq_covariance = (
+                    load_or_compute_freq_cache_from_images(
+                        images=self.trainset.images,
+                        data_dir=self.trainset.data_dir,
+                        image_ids=self.trainset.image_ids,
+                        downsample=cfg.freq_guidance_downsample,
+                        block_size=cfg.freq_guidance_block_size,
+                        device=self.device,
+                    )
+                )
+            else:
+                self.freq_downsampled = None
+                self.freq_covariance = None
+            # freq_downsampled: [N_imgs, H_ds, W_ds, 3]  float32 in [0, 1]
+            # freq_covariance:  [N_imgs, H_ds, W_ds, 2, 2]
+        else:
+            self.freq_downsampled = None
+            self.freq_covariance = None
+
         # Model
         feature_dim = 32 if cfg.app_opt else None
         self.splats, self.optimizers, self.texture_model = (
@@ -267,15 +333,19 @@ class Runner:
             )
         )
         self.base_color_factor = None
+        self.sigmoid_factor = None
         print("Model initialized. Number of GS:", len(self.splats["means"]))
         self.model_type = cfg.model_type
         self.coord_center, self.coord_scale = self._compute_coord_normalisation(cfg)
 
         if self.model_type in [
             "2dgs",
+            "2dss",
+            "2dgss",
             "tgs",
             "dtgs",
             "itgs",
+            "tss",
         ]:
             key_for_gradient = "gradient_2dgs"
         else:
@@ -425,7 +495,7 @@ class Runner:
             if the model type has no textures.
         """
         match self.model_type:
-            case "tgs":
+            case "tgs" | "tss":
                 if self.cfg.app_opt:
                     colors = self.splats["colors"]
                     colors = torch.sigmoid(colors)
@@ -528,7 +598,7 @@ class Runner:
     @torch.no_grad()
     def resize_textures(self, width: int, height: int):
         match self.model_type:
-            case "tgs":
+            case "tgs" | "tss":
                 # textures: [N, L, L, 4]
                 textures = self.splats["textures"]
                 textures = textures.permute(0, 3, 1, 2)  # [N, 4, L, L]
@@ -557,6 +627,7 @@ class Runner:
         """
         if self.model_type not in (
             "tgs",
+            "tss",
             "dtgs",
             "itgs",
         ):
@@ -570,7 +641,7 @@ class Runner:
         video_path = f"{video_dir}/textures{width}x{height}_{step}.mp4"
         writer = imageio.get_writer(video_path, fps=30)
 
-        if self.model_type == "tgs":
+        if self.model_type in ("tgs", "tss"):
             all_textures = self.get_textures()  # [N, L, L, 4]
             batch_size = 4096
             for start in tqdm.trange(0, N, batch_size, desc="Rendering texture video"):
@@ -647,6 +718,7 @@ class Runner:
         """
         if self.model_type not in (
             "tgs",
+            "tss",
             "dtgs",
             "itgs",
         ):
@@ -750,6 +822,7 @@ class Runner:
                         "texture_input_type",
                         "coord_center",
                         "coord_scale",
+                        "s_weight",
                     },
                 )
                 (
@@ -775,6 +848,92 @@ class Runner:
                     packed=self.cfg.packed,
                     absgrad=self.cfg.absgrad,
                     sparse_grad=self.cfg.sparse_grad,
+                    norm_rot_grad=self.cfg.norm_rot_grad,
+                    **kwargs,
+                )
+            case "2dss":
+                remove_from_kwargs(
+                    kwargs,
+                    {
+                        "num_texture_samples",
+                        "filtering",
+                        "sample_alpha_threshold",
+                        "texture_batch_size",
+                        "texture_grad_method",
+                        "texture_input_type",
+                        "coord_center",
+                        "coord_scale",
+                        "s_weight",
+                    },
+                )
+                steepnesses = F.softplus(self.splats["steepnesses"])  # [N,]
+                (
+                    render_colors,
+                    render_alphas,
+                    render_normals,
+                    normals_from_depth,
+                    render_distort,
+                    render_median,
+                    _,
+                    _,
+                    info,
+                ) = rasterization_2dss(
+                    means=means,
+                    quats=quats,
+                    scales=scales,
+                    opacities=opacities,
+                    steepnesses=steepnesses,
+                    colors=colors,
+                    viewmats=torch.linalg.inv(camtoworlds),
+                    Ks=Ks,
+                    width=width,
+                    height=height,
+                    packed=self.cfg.packed,
+                    absgrad=self.cfg.absgrad,
+                    sparse_grad=self.cfg.sparse_grad,
+                    norm_rot_grad=self.cfg.norm_rot_grad,
+                    **kwargs,
+                )
+            case "2dgss":
+                remove_from_kwargs(
+                    kwargs,
+                    {
+                        "num_texture_samples",
+                        "filtering",
+                        "sample_alpha_threshold",
+                        "texture_batch_size",
+                        "texture_grad_method",
+                        "texture_input_type",
+                        "coord_center",
+                        "coord_scale",
+                    },
+                )
+                steepnesses = F.softplus(self.splats["steepnesses"])  # [N,]
+                (
+                    render_colors,
+                    render_alphas,
+                    render_normals,
+                    normals_from_depth,
+                    render_distort,
+                    render_median,
+                    _,
+                    _,
+                    info,
+                ) = rasterization_2dgss(
+                    means=means,
+                    quats=quats,
+                    scales=scales,
+                    opacities=opacities,
+                    steepnesses=steepnesses,
+                    colors=colors,
+                    viewmats=torch.linalg.inv(camtoworlds),
+                    Ks=Ks,
+                    width=width,
+                    height=height,
+                    packed=self.cfg.packed,
+                    absgrad=self.cfg.absgrad,
+                    sparse_grad=self.cfg.sparse_grad,
+                    norm_rot_grad=self.cfg.norm_rot_grad,
                     **kwargs,
                 )
             case "tgs":
@@ -788,6 +947,7 @@ class Runner:
                         "texture_input_type",
                         "coord_center",
                         "coord_scale",
+                        "s_weight",
                     },
                 )
                 textures = self.get_textures()
@@ -815,6 +975,51 @@ class Runner:
                     packed=self.cfg.packed,
                     absgrad=self.cfg.absgrad,
                     sparse_grad=self.cfg.sparse_grad,
+                    norm_rot_grad=self.cfg.norm_rot_grad,
+                    **kwargs,
+                )
+            case "tss":
+                remove_from_kwargs(
+                    kwargs,
+                    {
+                        "num_texture_samples",
+                        "sample_alpha_threshold",
+                        "texture_batch_size",
+                        "texture_grad_method",
+                        "texture_input_type",
+                        "coord_center",
+                        "coord_scale",
+                        "s_weight",
+                    },
+                )
+                steepnesses = F.softplus(self.splats["steepnesses"])  # [N,]
+                textures = self.get_textures()
+                (
+                    render_colors,
+                    render_alphas,
+                    render_normals,
+                    normals_from_depth,
+                    render_distort,
+                    render_median,
+                    _,
+                    _,
+                    info,
+                ) = rasterization_textured_sigmoids(
+                    means=means,
+                    quats=quats,
+                    scales=scales,
+                    opacities=opacities,
+                    steepnesses=steepnesses,
+                    colors=colors,
+                    textures=textures,
+                    viewmats=torch.linalg.inv(camtoworlds),
+                    Ks=Ks,
+                    width=width,
+                    height=height,
+                    packed=self.cfg.packed,
+                    absgrad=self.cfg.absgrad,
+                    sparse_grad=self.cfg.sparse_grad,
+                    norm_rot_grad=self.cfg.norm_rot_grad,
                     **kwargs,
                 )
             case "dtgs":
@@ -829,6 +1034,7 @@ class Runner:
                         "texture_input_type",
                         "coord_center",
                         "coord_scale",
+                        "s_weight",
                     },
                 )
                 textures = self.get_textures()
@@ -856,10 +1062,11 @@ class Runner:
                     packed=self.cfg.packed,
                     absgrad=self.cfg.absgrad,
                     sparse_grad=self.cfg.sparse_grad,
+                    norm_rot_grad=self.cfg.norm_rot_grad,
                     **kwargs,
                 )
             case "itgs":
-                remove_from_kwargs(kwargs, {"filtering"})
+                remove_from_kwargs(kwargs, {"filtering", "s_weight"})
                 (
                     render_colors,
                     render_alphas,
@@ -884,6 +1091,7 @@ class Runner:
                     packed=self.cfg.packed,
                     absgrad=self.cfg.absgrad,
                     sparse_grad=self.cfg.sparse_grad,
+                    norm_rot_grad=self.cfg.norm_rot_grad,
                     **kwargs,
                 )
         return (
@@ -914,14 +1122,39 @@ class Runner:
 
         base_color_factor = None
         if cfg.base_color_factor is not None and cfg.model_type == "itgs":
-            base_color_factor = load_factor(cfg.base_color_factor)
+            base_color_factor = load_factor_fn(
+                canonical_factor_name(cfg.base_color_factor)
+            )
+            base_color_factor.adjust_steps(cfg.steps_scaler)
 
-        schedulers = [
-            # means has a learning rate schedule, that end at 0.01 of the initial value
-            torch.optim.lr_scheduler.ExponentialLR(
-                self.optimizers["means"], gamma=0.01 ** (1.0 / max_steps)
-            ),
-        ]
+        sigmoid_factor = None
+        if cfg.sigmoid_factor is not None and cfg.model_type == "2dgss":
+            sigmoid_factor = load_factor_fn(canonical_factor_name(cfg.sigmoid_factor))
+            sigmoid_factor.adjust_steps(cfg.steps_scaler)
+
+        schedulers = []
+        if cfg.schedule_means_lr:
+            schedulers.append(
+                # means has a learning rate schedule, that end at 0.01 of the initial value
+                torch.optim.lr_scheduler.ExponentialLR(
+                    self.optimizers["means"], gamma=0.01 ** (1.0 / max_steps)
+                ),
+            )
+        if cfg.schedule_quats_lr:
+            schedulers.append(
+                # means has a learning rate schedule, that end at 0.01 of the initial value
+                torch.optim.lr_scheduler.ExponentialLR(
+                    self.optimizers["quats"], gamma=0.01 ** (1.0 / max_steps)
+                ),
+            )
+        if cfg.schedule_scales_lr:
+            schedulers.append(
+                # means has a learning rate schedule, that end at 0.01 of the initial value
+                torch.optim.lr_scheduler.ExponentialLR(
+                    self.optimizers["scales"], gamma=0.01 ** (1.0 / max_steps)
+                ),
+            )
+
         if cfg.pose_opt:
             # pose optimization has a learning rate schedule
             schedulers.append(
@@ -970,6 +1203,8 @@ class Runner:
             self.strategy_state = train_state["strategy"]
             if base_color_factor is not None:
                 base_color_factor.load_state_dict(train_state["base_color_factor"])
+            if sigmoid_factor is not None:
+                sigmoid_factor.load_state_dict(train_state["sigmoid_factor"])
             global_tic -= train_state["elapsed_time"]
             max_mem = train_state["max_mem"]
 
@@ -1004,6 +1239,28 @@ class Runner:
 
             height, width = pixels.shape[1:3]
 
+            # When freq guidance is configured, always render at downsampled resolution
+            # so that the covariance map (H/8 × W/8) matches the render resolution.
+            # The freq loss itself only activates after freq_guidance_steps.
+            use_downsampled = (
+                cfg.freq_guidance
+                and self.freq_downsampled is not None
+                and not cfg.packed
+            )
+            use_freq_guidance = use_downsampled and step >= cfg.freq_guidance_start_iter
+
+            if use_downsampled and not cfg.freq_guidance_use_upsampled:
+                ds = cfg.freq_guidance_downsample
+                pixels = self.freq_downsampled[image_ids].to(
+                    device
+                )  # [C, H_ds, W_ds, 3]
+                height, width = pixels.shape[1], pixels.shape[2]
+                Ks = Ks.clone()
+                Ks[..., :2, :] /= ds  # scale fx, fy, cx, cy
+                if cfg.alpha_loss:
+                    # avg_pool2d matches the downsampling used in compute_freq_map_full
+                    alphas_gt = F.avg_pool2d(alphas_gt.unsqueeze(1), ds).squeeze(1)
+
             if cfg.pose_noise:
                 camtoworlds = self.pose_perturb(camtoworlds, image_ids)
 
@@ -1020,6 +1277,9 @@ class Runner:
             if base_color_factor is not None:
                 self.base_color_factor = base_color_factor.get_value(step)
                 opt_kwargs["base_color_factor"] = self.base_color_factor
+            if sigmoid_factor is not None:
+                self.sigmoid_factor = sigmoid_factor.get_value(step)
+                opt_kwargs["s_weight"] = self.sigmoid_factor
 
             # forward
             (
@@ -1136,9 +1396,36 @@ class Runner:
                 loss += alpha_loss
 
             if cfg.scale_loss:
-                max_scale = torch.exp(self.splats["scales"]).amax(dim=-1)
+                max_scale = F.softplus(self.splats["scales"].amax(dim=-1) + 1)
                 scale_loss = cfg.scale_lambda * max_scale.mean()
                 loss += scale_loss
+
+            if cfg.opac_loss:
+                if step > cfg.opac_loss_start_iter:
+                    curr_opac_lambda = cfg.opac_lambda
+                else:
+                    curr_opac_lambda = 0.0
+                opac_loss = self.opac_loss(torch.sigmoid(self.splats["opacities"]))
+                loss += opac_loss * curr_opac_lambda
+
+            if cfg.tex_opac_loss and "textures" in self.splats:
+                if step > cfg.tex_opac_loss_start_iter:
+                    curr_tex_opac_lambda = cfg.tex_opac_lambda
+                else:
+                    curr_tex_opac_lambda = 0.0
+                tex_alpha = self.get_textures()[..., 3]  # [N, L_y, L_x], in [0, 1]
+                tex_opac_loss = self.tex_opac_loss(tex_alpha)
+                loss += tex_opac_loss * curr_tex_opac_lambda
+
+            if cfg.steepness_loss and "steepnesses" in self.splats:
+                if step > cfg.steepness_loss_start_iter:
+                    curr_steepness_lambda = cfg.steepness_loss_lambda
+                else:
+                    curr_steepness_lambda = 0.0
+                scales = self.splats["scales"]
+                steepnesses = self.splats["steepnesses"]
+                steepness_loss = self.steepness_loss(scales, steepnesses)
+                loss += steepness_loss * curr_steepness_lambda
 
             if cfg.freq_loss and cfg.model_type == "dtgs":
                 textures = self.splats["textures"]  # [N, L_y, L_x, 4]
@@ -1152,14 +1439,79 @@ class Runner:
                 freqloss = cfg.freq_lambda * (textures * freq_weight).pow(2).mean()
                 loss += freqloss
 
+            if use_freq_guidance:
+                from freq_guidance import compute_freq_loss
+
+                texture_size = cfg.texture_height or cfg.texture_resolution
+                freq_guidance_loss = compute_freq_loss(
+                    scales=torch.exp(self.splats["scales"]),
+                    quats=self.splats["quats"],
+                    means=self.splats["means"],
+                    viewmats=torch.linalg.inv(camtoworlds),
+                    Ks=Ks,
+                    means2d=info["means2d"],
+                    ray_transforms=info["ray_transforms"],
+                    opacities=info["opacities"],
+                    tile_offsets=info["isect_offsets"],
+                    flatten_ids=info["flatten_ids"],
+                    freq_covariance=self.freq_covariance,
+                    camera_indices=image_ids,
+                    image_width=width,
+                    image_height=height,
+                    tile_size=info["tile_size"],
+                    texture_size=texture_size,
+                    block_size=cfg.freq_guidance_block_size,
+                    downsample=cfg.freq_guidance_downsample,
+                    f_target=cfg.freq_guidance_f_target,
+                    freq_downsample=(
+                        1
+                        if (use_downsampled and not cfg.freq_guidance_use_upsampled)
+                        else cfg.freq_guidance_downsample
+                    ),
+                )
+                loss = loss + cfg.freq_guidance_lambda * freq_guidance_loss
+
+            if (
+                use_freq_guidance
+                and cfg.freq_guidance_orient
+                and step >= cfg.freq_guidance_orient_start_iter
+                and "freq_vec" in self.splats
+            ):
+                from freq_guidance import compute_freq_orient_loss
+
+                freq_orient_loss = compute_freq_orient_loss(
+                    freq_vec=self.splats["freq_vec"],
+                    scales=torch.exp(self.splats["scales"]),
+                    quats=self.splats["quats"],
+                    means=self.splats["means"],
+                    viewmats=torch.linalg.inv(camtoworlds),
+                    Ks=Ks,
+                    means2d=info["means2d"],
+                    ray_transforms=info["ray_transforms"],
+                    opacities=info["opacities"],
+                    tile_offsets=info["isect_offsets"],
+                    flatten_ids=info["flatten_ids"],
+                    freq_covariance=self.freq_covariance,
+                    camera_indices=image_ids,
+                    image_width=width,
+                    image_height=height,
+                    tile_size=info["tile_size"],
+                    freq_downsample=(
+                        1
+                        if (use_downsampled and not cfg.freq_guidance_use_upsampled)
+                        else cfg.freq_guidance_downsample
+                    ),
+                )
+                loss = loss + cfg.freq_guidance_orient_lambda * freq_orient_loss
+
             loss.backward()
 
             desc = f"loss={loss.item():.3f}| " f"sh degree={sh_degree_to_use}| "
             if cfg.depth_loss:
                 desc += f"depth loss={depthloss.item():.6f}| "
-            if cfg.dist_loss:
-                desc += f"dist loss={distloss.item():.6f}"
-            if cfg.normal_loss:
+            if cfg.dist_loss and step > cfg.dist_start_iter:
+                desc += f"dist loss={distloss.item():.6f}| "
+            if cfg.normal_loss and step > cfg.normal_start_iter:
                 desc += f"normal loss={normalloss.item():.6f}| "
             if cfg.pose_opt and cfg.pose_noise:
                 # monitor the pose error if we inject noise
@@ -1169,8 +1521,23 @@ class Runner:
                 desc += f"alpha loss={alpha_loss.item():.6f}| "
             if cfg.scale_loss:
                 desc += f"scale loss={scale_loss.item():.6f}| "
+            if cfg.opac_loss and step > cfg.opac_loss_start_iter:
+                desc += f"opac loss={opac_loss.item():.6f}| "
+            if cfg.tex_opac_loss and step > cfg.tex_opac_loss_start_iter:
+                desc += f"tex opac loss={tex_opac_loss.item():.6f}| "
+            if cfg.steepness_loss and step > cfg.steepness_loss_start_iter:
+                desc += f"steepness loss={steepness_loss.item():.6f}| "
             if cfg.freq_loss and cfg.model_type == "dtgs":
                 desc += f"freq loss={freqloss.item():.6f}| "
+            if use_freq_guidance:
+                desc += f"freq guidance={freq_guidance_loss.item():.6f}| "
+            if (
+                use_freq_guidance
+                and cfg.freq_guidance_orient
+                and step >= cfg.freq_guidance_orient_start_iter
+                and "freq_vec" in self.splats
+            ):
+                desc += f"freq orient={freq_orient_loss.item():.6f}| "
             pbar.set_description(desc)
 
             if cfg.tb_every > 0 and step % cfg.tb_every == 0:
@@ -1188,6 +1555,19 @@ class Runner:
                     self.writer.add_scalar("train/distloss", distloss.item(), step)
                 if cfg.freq_loss and cfg.model_type == "dtgs":
                     self.writer.add_scalar("train/freqloss", freqloss.item(), step)
+                if use_freq_guidance:
+                    self.writer.add_scalar(
+                        "train/freq_guidance_loss", freq_guidance_loss.item(), step
+                    )
+                if (
+                    use_freq_guidance
+                    and cfg.freq_guidance_orient
+                    and step >= cfg.freq_guidance_orient_start_iter
+                    and "freq_vec" in self.splats
+                ):
+                    self.writer.add_scalar(
+                        "train/freq_orient_loss", freq_orient_loss.item(), step
+                    )
                 if cfg.tb_save_image:
                     canvas = (
                         torch.cat([pixels, colors[..., :3]], dim=2)
@@ -1296,6 +1676,8 @@ class Runner:
                         ckpt_data["texture_model"] = self.texture_model.state_dict()
                     if base_color_factor is not None:
                         ckpt_data["base_color_factor"] = opt_kwargs["base_color_factor"]
+                    if sigmoid_factor is not None:
+                        ckpt_data["sigmoid_factor"] = opt_kwargs["s_weight"]
                     torch.save(ckpt_data, f"{self.ckpt_dir}/ckpt_{step}.pt")
                 train_state_data = {
                     "optimizers": {
@@ -1321,6 +1703,8 @@ class Runner:
                     train_state_data["base_color_factor"] = (
                         base_color_factor.state_dict()
                     )
+                if sigmoid_factor:
+                    train_state_data["sigmoid_factor"] = sigmoid_factor.state_dict()
                 torch.save(train_state_data, f"{self.ckpt_dir}/train_state_{step}.pt")
                 if prev_ckpt_step is not None:
                     for fname in (
@@ -1355,6 +1739,8 @@ class Runner:
                     ckpt_data["texture_model"] = self.texture_model.state_dict()
                 if base_color_factor is not None:
                     ckpt_data["base_color_factor"] = opt_kwargs["base_color_factor"]
+                if sigmoid_factor is not None:
+                    ckpt_data["sigmoid_factor"] = opt_kwargs["s_weight"]
                 torch.save(ckpt_data, f"{self.ckpt_dir}/ckpt_{step}.pt")
                 self.eval(step)
 
@@ -1411,6 +1797,8 @@ class Runner:
             opt_kwargs = {}
             if self.base_color_factor is not None:
                 opt_kwargs["base_color_factor"] = self.base_color_factor
+            if self.sigmoid_factor is not None:
+                opt_kwargs["s_weight"] = self.sigmoid_factor
 
             torch.cuda.synchronize()
             tic = time.time()
@@ -1600,6 +1988,8 @@ class Runner:
             opt_kwargs = {}
             if self.base_color_factor is not None:
                 opt_kwargs["base_color_factor"] = self.base_color_factor
+            if self.sigmoid_factor is not None:
+                opt_kwargs["s_weight"] = self.sigmoid_factor
 
             renders, _, _, surf_normals, _, _, _, _, _ = self.rasterize_splats(
                 camtoworlds=camtoworlds[i : i + 1],
@@ -1692,6 +2082,8 @@ class Runner:
             opt_kwargs = {}
             if self.base_color_factor is not None:
                 opt_kwargs["base_color_factor"] = self.base_color_factor
+            if self.sigmoid_factor is not None:
+                opt_kwargs["s_weight"] = self.sigmoid_factor
 
             renders, _, _, _, _, _, _, _, _ = self.rasterize_splats(
                 camtoworlds=camtoworld,
@@ -1739,6 +2131,8 @@ class Runner:
         opt_kwargs = {}
         if self.base_color_factor is not None:
             opt_kwargs["base_color_factor"] = self.base_color_factor
+        if self.sigmoid_factor is not None:
+            opt_kwargs["s_weight"] = self.sigmoid_factor
 
         render_colors, _, _, _, _, _, _, _, _ = self.rasterize_splats(
             camtoworlds=c2w[None],
@@ -1772,6 +2166,8 @@ def main(cfg: Config):
                 runner.texture_model.load_state_dict(ckpt["texture_model"])
             if "base_color_factor" in ckpt:
                 runner.base_color_factor = ckpt["base_color_factor"]
+            if "sigmoid_factor" in ckpt:
+                runner.sigmoid_factor = ckpt["sigmoid_factor"]
         input("Viewer running... Press enter to exit: ")
         exit(0)
     elif cfg.ckpt is not None and cfg.camera_path is not None:
@@ -1782,6 +2178,8 @@ def main(cfg: Config):
             runner.texture_model.load_state_dict(ckpt["texture_model"])
         if "base_color_factor" in ckpt:
             runner.base_color_factor = ckpt["base_color_factor"]
+        if "sigmoid_factor" in ckpt:
+            runner.sigmoid_factor = ckpt["sigmoid_factor"]
         for camera_path_file in cfg.camera_path:
             try:
                 runner.render_camera_path(
@@ -1799,6 +2197,8 @@ def main(cfg: Config):
             runner.texture_model.load_state_dict(ckpt["texture_model"])
         if "base_color_factor" in ckpt:
             runner.base_color_factor = ckpt["base_color_factor"]
+        if "sigmoid_factor" in ckpt:
+            runner.sigmoid_factor = ckpt["sigmoid_factor"]
         runner.eval(step=ckpt["step"])
         runner.render_traj(step=ckpt["step"])
         runner.render_textures_video(
@@ -1821,6 +2221,8 @@ def main(cfg: Config):
                 runner.texture_model.load_state_dict(ckpt["texture_model"])
             if "base_color_factor" in ckpt:
                 runner.base_color_factor = ckpt["base_color_factor"]
+            if "sigmoid_factor" in ckpt:
+                runner.sigmoid_factor = ckpt["sigmoid_factor"]
         runner.train()
 
     # if not cfg.disable_viewer:
@@ -1847,6 +2249,6 @@ if __name__ == "__main__":
     }
     # cfg = tyro.cli(Config)
     cfg = tyro.extras.overridable_config_cli(configs)
-    cfg.adjust_steps(cfg.steps_scaler)
     process_config(cfg)
+    cfg.adjust_steps(cfg.steps_scaler)
     main(cfg)

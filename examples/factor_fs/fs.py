@@ -1,11 +1,14 @@
 from abc import ABC, abstractmethod
 import math
-from typing import List
 
 
-class FactorModel(ABC):
+class FactorFn(ABC):
     @abstractmethod
     def get_value(self, step: int):
+        pass
+
+    @abstractmethod
+    def adjust_steps(self, factor: float):
         pass
 
     @abstractmethod
@@ -17,12 +20,15 @@ class FactorModel(ABC):
         pass
 
 
-class Constant(FactorModel):
+class Constant(FactorFn):
     def __init__(self, value: float):
         self.value = value
 
     def get_value(self, step: int):
         return self.value
+
+    def adjust_steps(self, factor: float):
+        pass
 
     def state_dict(self):
         return {}
@@ -31,8 +37,8 @@ class Constant(FactorModel):
         pass
 
 
-class LinearInterpolate(FactorModel):
-    def __init__(self, key_steps: List[int], key_values: List[int]):
+class LinearInterpolate(FactorFn):
+    def __init__(self, key_steps: list[int], key_values: list[int]):
         self.key_points: list[tuple[int, float]] = list(zip(key_steps, key_values))
         self.key_points.sort(key=lambda pair: pair[0])
 
@@ -55,6 +61,9 @@ class LinearInterpolate(FactorModel):
             self.key_points[i - 1][1] * (1.0 - weight) + self.key_points[i][1] * weight
         )
 
+    def adjust_steps(self, factor: float):
+        self.key_points = [(int(s * factor), v) for s, v in self.key_points]
+
     def state_dict(self):
         return {}
 
@@ -62,7 +71,49 @@ class LinearInterpolate(FactorModel):
         pass
 
 
-class Exponential(FactorModel):
+class Quadratic(FactorFn):
+    def __init__(self, one_step: int):
+        self.one_step = one_step
+
+    def get_value(self, step: int):
+        return (step / self.one_step) * (step / self.one_step)
+
+    def adjust_steps(self, factor: float):
+        self.one_step = int(self.one_step * factor)
+
+    def state_dict(self):
+        return {}
+
+    def load_state_dict(self, state):
+        pass
+
+
+class SquareRoot(FactorFn):
+    def __init__(self, one_step: int):
+        self.one_step = one_step
+
+    def get_value(self, step: int):
+        return math.sqrt(step / self.one_step)
+
+    def adjust_steps(self, factor: float):
+        self.one_step = int(self.one_step * factor)
+
+    def state_dict(self):
+        return {}
+
+    def load_state_dict(self, state):
+        pass
+
+
+class Exponential(FactorFn):
+    @staticmethod
+    def one_at_step_exponential(start_value: float, one_step: int):
+        return Exponential(
+            start_value=start_value,
+            limit_value=0,
+            half_life=one_step / math.log2(start_value),
+        )
+
     def __init__(self, start_value: float, limit_value: float, half_life: float):
         self.factor = start_value - limit_value
         self.offset = limit_value
@@ -70,6 +121,9 @@ class Exponential(FactorModel):
 
     def get_value(self, step: int):
         return self.offset + self.factor * math.exp(-self.alpha * step)
+
+    def adjust_steps(self, factor: float):
+        self.alpha /= factor
 
     def state_dict(self):
         return {}

@@ -41,6 +41,10 @@ class Config:
     # Port for the viewer server
     port: int = 8080
 
+    schedule_means_lr: bool = True
+    schedule_quats_lr: bool = False
+    schedule_scales_lr: bool = False
+
     # Batch size for training. Learning rates are scaled automatically
     batch_size: int = 1
     # A global factor to scale the number of training steps
@@ -130,6 +134,8 @@ class Config:
     sparse_grad: bool = False
     # Use absolute gradient for pruning. This typically requires larger --grow_grad2d, e.g., 0.0008 or 0.0006
     absgrad: bool = False
+    # Normalise rotation grad by the scale of the Gaussian
+    norm_rot_grad: bool = False
     # Anti-aliasing in rasterization. Might slightly hurt quantitative metrics.
     antialiased: bool = False
     # Whether to use revised opacity heuristic from arXiv:2404.06109 (experimental)
@@ -166,33 +172,68 @@ class Config:
     # Weight for normal loss
     normal_lambda: float = 5e-2
     # Iteration to start normal consistency regulerization
-    normal_start_iter: int = 7_000
+    normal_start_iter: int = 10_000
 
-    # Distortion loss. (experimental)
+    # Distortion loss (experimental)
     dist_loss: bool = False
     # Weight for distortion loss
     dist_lambda: float = 1e-2
     # Iteration to start distortion loss regulerization
-    dist_start_iter: int = 3_000
+    dist_start_iter: int = 7_000
 
     # Alpha loss
     alpha_loss: bool = False
     alpha_lambda: float = 1e-1
 
-    # scale_loss
+    # Scale loss
     scale_loss: bool = False
     scale_lambda: float = 1e-1
+
+    # Opac loss
+    opac_loss: bool = False
+    opac_lambda: float = 2e-2
+    opac_loss_fn: str = "t02"
+    opac_loss_start_iter: int = 15_000
+
+    # Texture opacity loss
+    tex_opac_loss: bool = False
+    tex_opac_lambda: float = 2e-2
+    tex_opac_loss_fn: str = "t04"
+    tex_opac_loss_start_iter: int = 15_000
+
+    # Steepness loss
+    steepness_loss: bool = False
+    steepness_loss_lambda: float = 2e-2
+    steepness_loss_fn: str = "stpns"
+    steepness_loss_start_iter: int = 0
 
     # Frequency regularization for DCT textures — penalises high-frequency coefficients
     freq_loss: bool = False
     freq_lambda: float = 1e-3
 
+    # Frequency-guided scale pre-training (Steps 1–5 of freq_guidance.py)
+    freq_guidance: bool = False
+    freq_guidance_lambda: float = 1e-2
+    freq_guidance_start_iter: int = 7_000
+    freq_guidance_f_target: float = 0.25
+    freq_guidance_downsample: int = 8
+    freq_guidance_block_size: int = 16
+    freq_guidance_use_upsampled: bool = False
+
+    # Frequency-guided orientation pre-training (UV wavelength vector alignment)
+    freq_guidance_orient: bool = False
+    freq_guidance_orient_lambda: float = 1e-3
+    freq_guidance_orient_start_iter: int = 7_000
+
     # Model for splatting.
     model_type: Literal[
         "2dgs",
+        "2dss",
+        "2dgss",
         "tgs",
         "dtgs",
         "itgs",
+        "tss",
     ] = "2dgs"
     texture_model: str | None = None
     num_texture_samples: int = 10
@@ -204,6 +245,7 @@ class Config:
         "none", "unit_sphere", "unit_sphere_strict", "bbox"
     ] = "none"
     base_color_factor: str | None = None
+    sigmoid_factor: str | None = None
 
     # Dump information to tensorboard every this steps
     tb_every: int = 100
@@ -235,6 +277,7 @@ class Config:
 
     filtering: Literal[
         "bilinear",
+        "bilinear_bwd2",
         "bilinear2",
         "mipmapped",
         "mipmapped2",
@@ -252,6 +295,15 @@ class Config:
         self.render_texture_steps = [int(i * factor) for i in self.render_texture_steps]
         self.max_steps = int(self.max_steps * factor)
         self.sh_degree_interval = int(self.sh_degree_interval * factor)
+        self.opac_loss_start_iter = int(self.opac_loss_start_iter * factor)
+        self.tex_opac_loss_start_iter = int(self.tex_opac_loss_start_iter * factor)
+        self.steepness_loss_start_iter = int(self.steepness_loss_start_iter * factor)
+        self.freq_guidance_start_iter = int(self.freq_guidance_start_iter * factor)
+        self.freq_guidance_orient_start_iter = int(
+            self.freq_guidance_orient_start_iter * factor
+        )
+        self.normal_start_iter = int(self.normal_start_iter * factor)
+        self.dist_start_iter = int(self.dist_start_iter * factor)
         if self.texture_resize_steps is not None:
             self.texture_resize_steps = [
                 int(i * factor) for i in self.texture_resize_steps

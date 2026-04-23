@@ -438,7 +438,12 @@ class BlenderDataset:
         self.alphas = []
         for frame_data in json_data["frames"]:
             image_id = frame_data["file_path"].split("/")[-1]
-            image_file_path = os.path.join(self.data_dir, self.split, f"{image_id}.png")
+            if image_id.endswith(".png"):
+                image_file_path = os.path.join(self.data_dir, self.split, image_id)
+            else:
+                image_file_path = os.path.join(
+                    self.data_dir, self.split, f"{image_id}.png"
+                )
             rgba = imageio.imread(image_file_path)
             if self.factor != 1:
                 rgba = np.array(

@@ -4,11 +4,12 @@ import yaml
 
 from examples.config import Config
 from examples.texture_models import (
-    canonical_factor_name,
     canonical_model_name,
     add_arg_to_model_name,
     pop_arg_from_model_name,
 )
+from examples.factor_fs import canonical_factor_name
+from examples.loss_fs import canonical_loss_name
 from textured_gaussians.utils import TEXTURE_INPUT_SIZES
 from utils import get_file_with_max_int
 
@@ -78,15 +79,42 @@ MODEL_BATCH_SIZE = {"mix2": 917504}
 FACTOR_SHORTHANDS = {
     "zero": """Constant(value=0.0)""",
     "half": """Constant(value=0.5)""",
+    "c06": """Constant(value=0.6)""",
+    "c07": """Constant(value=0.7)""",
+    "c08": """Constant(value=0.8)""",
+    "c09": """Constant(value=0.9)""",
     "one": """Constant(value=1.0)""",
     "exp": """Exponential(start_value=1.0,limit_value=0.0,half_life=1000)""",
     "exphalf": """Exponential(start_value=1.0,limit_value=0.5,half_life=1000)""",
+    "expos001": """ExpOneAtStep(start_value=0.01,one_step=30000)""",
+    "expos01": """ExpOneAtStep(start_value=0.1,one_step=30000)""",
+    "expos02": """ExpOneAtStep(start_value=0.2,one_step=30000)""",
+    "expos05": """ExpOneAtStep(start_value=0.5,one_step=30000)""",
     "lin": """LinearInterpolate(key_steps=[0, 15000],key_values=[1.0,0.0])""",
+    "lin2": """LinearInterpolate(key_steps=[0, 30000],key_values=[0.0,1.0])""",
     "linhalf": """LinearInterpolate(key_steps=[0, 15000],key_values=[1.0,0.5])""",
+    "quad": "Quadratic(one_step=30000)",
+    "sqrt": "SquareRoot(one_step=30000)",
+}
+
+LOSS_SHORTHANDS = {
+    "t02": """Triangle(peak=0.2)""",
+    "t03": """Triangle(peak=0.3)""",
+    "t04": """Triangle(peak=0.4)""",
+    "t05": """Triangle(peak=0.5)""",
+    "t06": """Triangle(peak=0.6)""",
+    "stpns": """Steepness""",
 }
 
 NERF_SYNTHETIC = {
     "data_dir": "nerf_synthetic/{path_name}",
+    "pretrained_dir": "2dgs/{name}/ckpts",
+    "result_dir": "{name}",
+    "dataset_type": "blender",
+    "alpha": True,
+}
+CUSTOM = {
+    "data_dir": "custom/{path_name}",
     "pretrained_dir": "2dgs/{name}/ckpts",
     "result_dir": "{name}",
     "dataset_type": "blender",
@@ -139,6 +167,12 @@ SCENES = {
             "treehill",
         }
     },
+    **{
+        name: make_args(CUSTOM, name)
+        for name in {
+            "dct_cube",
+        }
+    },
 }
 
 
@@ -167,6 +201,22 @@ def process_config(cfg: Config):
         if cfg.base_color_factor not in FACTOR_SHORTHANDS:
             cfg.base_color_factor = canonical_factor_name(cfg.base_color_factor)
 
+    if cfg.sigmoid_factor is not None:
+        if cfg.sigmoid_factor not in FACTOR_SHORTHANDS:
+            cfg.sigmoid_factor = canonical_factor_name(cfg.sigmoid_factor)
+
+    if cfg.opac_loss:
+        if cfg.opac_loss_fn not in LOSS_SHORTHANDS:
+            cfg.opac_loss_fn = canonical_loss_name(cfg.opac_loss_fn)
+
+    if cfg.tex_opac_loss:
+        if cfg.tex_opac_loss_fn not in LOSS_SHORTHANDS:
+            cfg.tex_opac_loss_fn = canonical_loss_name(cfg.tex_opac_loss_fn)
+
+    if cfg.steepness_loss:
+        if cfg.steepness_loss_fn not in LOSS_SHORTHANDS:
+            cfg.steepness_loss_fn = canonical_loss_name(cfg.steepness_loss_fn)
+
     # Configure information based on the selected scene
     if cfg.scene is not None:
         assert cfg.scene in SCENES
@@ -185,8 +235,27 @@ def process_config(cfg: Config):
                 args_suffix = "_" + args_suffix
             return args_suffix
 
+        if cfg.init_num_pts != 10_000:
+            args.append(f"g{cfg.init_num_pts}")
+
         if cfg.data_factor != 4:
             args.append(f"df{cfg.data_factor}")
+
+        if cfg.opac_loss:
+            args.append(f"o{cfg.opac_loss_fn}-{cfg.opac_loss_start_iter}")
+
+        if cfg.freq_guidance:
+            if cfg.freq_guidance_use_upsampled:
+                args.append(
+                    f"fg{cfg.freq_guidance_downsample}-{cfg.freq_guidance_start_iter}-fgu"
+                )
+            else:
+                args.append(
+                    f"fg{cfg.freq_guidance_downsample}-{cfg.freq_guidance_start_iter}"
+                )
+
+        if cfg.freq_guidance_orient:
+            args.append(f"fgo{cfg.freq_guidance_orient_start_iter}")
 
         match cfg.model_type:
             case "tgs":
@@ -206,6 +275,9 @@ def process_config(cfg: Config):
                     case "bilinear":
                         if cfg.result_dir is None:
                             cfg.result_dir = f"{_RESULTS_DIR}/tgs{args_suffix}/{scene_args["result_dir"]}"
+                    case "bilinear_bwd2":
+                        if cfg.result_dir is None:
+                            cfg.result_dir = f"{_RESULTS_DIR}/tgs_b2{args_suffix}/{scene_args["result_dir"]}"
                     case "bilinear2":
                         if cfg.result_dir is None:
                             cfg.result_dir = f"{_RESULTS_DIR}/tgs2{args_suffix}/{scene_args["result_dir"]}"
@@ -223,14 +295,14 @@ def process_config(cfg: Config):
                             cfg.result_dir = f"{_RESULTS_DIR}/aniso_bilinear_tgs{args_suffix}/{scene_args["result_dir"]}"
 
             case "itgs":
+                if cfg.base_color_factor is not None:
+                    args = [f"{cfg.base_color_factor}"] + args
+                args = [f"{cfg.texture_model}"] + args
                 args_suffix = create_args_suffix()
-                if cfg.base_color_factor is None:
-                    if cfg.result_dir is None:
-                        cfg.result_dir = f"{_RESULTS_DIR}/itgs_{cfg.texture_model}{args_suffix}/{scene_args["result_dir"]}"
-                    cfg.base_color_factor = "Constant(0)"
-                else:
-                    if cfg.result_dir is None:
-                        cfg.result_dir = f"{_RESULTS_DIR}/itgs_{cfg.texture_model}_{cfg.base_color_factor}{args_suffix}/{scene_args["result_dir"]}"
+                if cfg.result_dir is None:
+                    cfg.result_dir = (
+                        f"{_RESULTS_DIR}/itgs{args_suffix}/{scene_args["result_dir"]}"
+                    )
 
             case "dtgs":
                 if cfg.texture_width != 16 or cfg.texture_height != 16:
@@ -246,6 +318,12 @@ def process_config(cfg: Config):
                     cfg.result_dir = f"{_RESULTS_DIR}/{cfg.model_type}{args_suffix}/{scene_args["result_dir"]}"
                 cfg.textured_rgb_clamp = "none"
                 cfg.textured_alpha_clamp = "none"
+
+            case "2dgss":
+                args.append(f"sw{cfg.sigmoid_factor}")
+                args_suffix = create_args_suffix()
+                if cfg.result_dir is None:
+                    cfg.result_dir = f"{_RESULTS_DIR}/{cfg.model_type}{args_suffix}/{scene_args["result_dir"]}"
 
             case _:
                 args_suffix = create_args_suffix()
@@ -319,6 +397,28 @@ def process_config(cfg: Config):
         if cfg.base_color_factor in FACTOR_SHORTHANDS:
             cfg.base_color_factor = canonical_factor_name(
                 FACTOR_SHORTHANDS[cfg.base_color_factor]
+            )
+
+    if cfg.sigmoid_factor is not None:
+        if cfg.sigmoid_factor in FACTOR_SHORTHANDS:
+            cfg.sigmoid_factor = canonical_factor_name(
+                FACTOR_SHORTHANDS[cfg.sigmoid_factor]
+            )
+
+    if cfg.opac_loss is not None:
+        if cfg.opac_loss_fn in LOSS_SHORTHANDS:
+            cfg.opac_loss_fn = canonical_loss_name(LOSS_SHORTHANDS[cfg.opac_loss_fn])
+
+    if cfg.tex_opac_loss is not None:
+        if cfg.tex_opac_loss_fn in LOSS_SHORTHANDS:
+            cfg.tex_opac_loss_fn = canonical_loss_name(
+                LOSS_SHORTHANDS[cfg.tex_opac_loss_fn]
+            )
+
+    if cfg.steepness_loss is not None:
+        if cfg.steepness_loss_fn in LOSS_SHORTHANDS:
+            cfg.steepness_loss_fn = canonical_loss_name(
+                LOSS_SHORTHANDS[cfg.steepness_loss_fn]
             )
 
     cfg.texture_resize_points = {}
