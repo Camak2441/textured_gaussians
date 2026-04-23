@@ -301,7 +301,8 @@ namespace gsplat
                 int32_t ucoords[4];
                 int32_t vcoords[4];
                 S bilerp_weights[4];
-                int32_t valid_texture = bilinear3::precompute(s.x, s.y, texture_res_x, texture_res_y, ucoords, vcoords, bilerp_weights);
+                int32_t valid_texture = 1;
+                bilinear3::precompute(s.x, s.y, texture_res_x, texture_res_y, ucoords, vcoords, bilerp_weights);
 
                 // calculate alpha texture scaling factor
                 S alpha_scaling_factor = S(0);

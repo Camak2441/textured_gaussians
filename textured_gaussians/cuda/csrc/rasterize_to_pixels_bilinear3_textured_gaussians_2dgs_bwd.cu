@@ -320,7 +320,7 @@ namespace gsplat
                 int32_t ucoords[4];
                 int32_t vcoords[4];
                 S bilerp_weights[4];
-                int32_t valid_texture = -1;
+                int32_t valid_texture = 1;
 
                 // alpha scaling factor
                 S alpha_scaling_factor = S(0);
@@ -352,7 +352,7 @@ namespace gsplat
                     s = {ray_cross.x / ray_cross.z, ray_cross.y / ray_cross.z};
 
                     // compute texture coordinates and bilinear interpolation weights
-                    valid_texture = bilinear3::precompute(s.x, s.y, texture_res_x, texture_res_y, ucoords, vcoords, bilerp_weights);
+                    bilinear3::precompute(s.x, s.y, texture_res_x, texture_res_y, ucoords, vcoords, bilerp_weights);
 
                     // computer alpha scaling factor
                     if (valid_texture > 0)
