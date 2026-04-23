@@ -7,9 +7,9 @@ python simple_trainer_textured_gaussians.py mcmc \
     --init_extent 1 \
     --init_type=random \
     --background_mode "white" \
-    --model_type=2dgs \
-    --init_num_pts=10000 \
-    --strategy.cap-max=10000 \
+    --model_type=2dss \
+    --init_num_pts=100 \
+    --strategy.cap-max=100 \
     --alpha_loss \
     --dist_loss \
     --normal_loss \

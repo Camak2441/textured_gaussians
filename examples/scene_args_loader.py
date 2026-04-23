@@ -98,12 +98,20 @@ FACTOR_SHORTHANDS = {
 }
 
 LOSS_SHORTHANDS = {
+    "t00": """Triangle0""",
     "t02": """Triangle(peak=0.2)""",
     "t03": """Triangle(peak=0.3)""",
     "t04": """Triangle(peak=0.4)""",
     "t05": """Triangle(peak=0.5)""",
     "t06": """Triangle(peak=0.6)""",
+    "t10": """Triangle1""",
     "stpns": """Steepness""",
+    "quad1": """Quadratic1""",
+    "quad01": """Quadratic01""",
+    "hquad06": """HalfQuadratic(valley=0.6)""",
+    "hquad07": """HalfQuadratic(valley=0.7)""",
+    "hquad08": """HalfQuadratic(valley=0.8)""",
+    "hquad09": """HalfQuadratic(valley=0.9)""",
 }
 
 NERF_SYNTHETIC = {
@@ -171,6 +179,11 @@ SCENES = {
         name: make_args(CUSTOM, name)
         for name in {
             "dct_cube",
+            "6_color_cube",
+            "s_cube",
+            "s_cube2",
+            "s_cube3",
+            "f_cube",
         }
     },
 }
@@ -243,6 +256,9 @@ def process_config(cfg: Config):
 
         if cfg.opac_loss:
             args.append(f"o{cfg.opac_loss_fn}-{cfg.opac_loss_start_iter}")
+
+        if cfg.tex_opac_loss:
+            args.append(f"ot{cfg.tex_opac_loss_fn}-{cfg.tex_opac_loss_start_iter}")
 
         if cfg.freq_guidance:
             if cfg.freq_guidance_use_upsampled:

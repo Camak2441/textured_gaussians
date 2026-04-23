@@ -4,16 +4,19 @@ cd ../examples
 export CUDA_VISIBLE_DEVICES=${2:-0}
 python simple_trainer_textured_gaussians.py mcmc \
     --scene "$1" \
-    --ckpt "../results/2dgs_fg8-15000-fgu_fgo15000/$1/ckpts/ckpt_29999.pt" \
-    --viewer_only \
     --init_extent 1 \
     --init_type=random \
     --background_mode "white" \
-    --model_type=2dgs \
+    --model_type=2dgss \
+    --sigmoid_factor=c08 \
     --init_num_pts=10000 \
+    --strategy.cap-max=10000 \
     --alpha_loss \
-    --textured_rgb \
-    --textured_alpha \
-    --resume \
-    --camera_path "../examples/results/camera_paths/default.json" \
+    --normal_loss \
+    --opac_loss \
+    --opac_loss_fn="quad1" \
+    --opac_loss_start_iter 1000 \
+    --schedule_scales_lr \
+    --schedule_quats_lr \
+    --steps_scaler=1 \
     --port 6070

@@ -7,11 +7,14 @@ python simple_trainer_textured_gaussians.py mcmc \
     --init_extent 1 \
     --init_type=random \
     --background_mode "white" \
-    --model_type=2dgs \
-    --init_num_pts=10000 \
-    --strategy.cap-max=10000 \
+    --model_type=2dss \
+    --init_num_pts=500 \
+    --strategy.cap-max=500 \
     --alpha_loss \
     --dist_loss \
     --normal_loss \
     --steps_scaler=1 \
+    --opac_loss \
+    --opac_loss_fn="hquad06" \
+    --opac_loss_start_iter 1000 \
     --port 6070

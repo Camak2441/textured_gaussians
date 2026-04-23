@@ -11,8 +11,11 @@ python simple_trainer_textured_gaussians.py mcmc \
     --init_num_pts=10000 \
     --strategy.cap-max=10000 \
     --alpha_loss \
+    --dist_loss \
     --normal_loss \
-    --steepness_loss \
     --steps_scaler=1 \
-    --schedule_scales_lr \
+    --opac_loss \
+    --opac_loss_fn="quad1" \
+    --opac_loss_start_iter 1000 \
+    --steepness_loss \
     --port 6070

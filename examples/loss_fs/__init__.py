@@ -1,6 +1,12 @@
 import torch
 
-from examples.loss_fs.triangle import TriangleLoss
+from examples.loss_fs.quadratic import (
+    HalfQuadraticLoss,
+    Quadratic01Loss,
+    Quadratic1Loss,
+    TriangleQuadraticLoss,
+)
+from examples.loss_fs.triangle import TriangleLoss, Triangle0Loss, Triangle1Loss
 from examples.loss_fs.steepness import SteepnessLoss
 from examples.clsarg_utils import (
     add_dict,
@@ -12,7 +18,13 @@ from examples.clsarg_utils import (
 
 LOSS_PREFIXES = {
     "Triangle": TriangleLoss,
+    "Triangle0": Triangle0Loss,
+    "Triangle1": Triangle1Loss,
     "Steepness": SteepnessLoss,
+    "Quadratic01": Quadratic01Loss,
+    "Quadratic1": Quadratic1Loss,
+    "TriangleQuadratic": TriangleQuadraticLoss,
+    "HalfQuadratic": HalfQuadraticLoss,
 }
 
 

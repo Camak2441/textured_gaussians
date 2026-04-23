@@ -11,4 +11,6 @@ python simple_trainer_textured_gaussians.py mcmc \
     --init_num_pts=100 \
     --strategy.cap-max=100 \
     --alpha_loss \
+    --dist_loss \
+    --normal_loss \
     --port 6070
