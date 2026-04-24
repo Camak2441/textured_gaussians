@@ -1365,6 +1365,7 @@ def rasterization_textured_gaussians(
     depth_mode: Literal["expected", "median"] = "expected",
     gs_contrib_threshold: float = 0.0,
     filtering: Filtering = "bilinear",
+    g_weight: float = 1.0,
 ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Dict]:
     """Rasterize a set of 2D Gaussians (N) to a batch of image planes (C).
 
@@ -1616,6 +1617,7 @@ def rasterization_textured_gaussians(
         distloss=distloss,
         gs_contrib_threshold=gs_contrib_threshold,
         filtering=filtering,
+        g_weight=g_weight,
     )
     render_normals_from_depth = None
     if render_mode in ["ED", "RGB+ED"]:

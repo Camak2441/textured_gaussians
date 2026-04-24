@@ -92,6 +92,7 @@ FACTOR_SHORTHANDS = {
     "expos05": """ExpOneAtStep(start_value=0.5,one_step=30000)""",
     "lin": """LinearInterpolate(key_steps=[0, 15000],key_values=[1.0,0.0])""",
     "lin2": """LinearInterpolate(key_steps=[0, 30000],key_values=[0.0,1.0])""",
+    "lin3": """LinearInterpolate(key_steps=[0, 30000],key_values=[1.0,0.0])""",
     "linhalf": """LinearInterpolate(key_steps=[0, 15000],key_values=[1.0,0.5])""",
     "quad": "Quadratic(one_step=30000)",
     "sqrt": "SquareRoot(one_step=30000)",
@@ -218,6 +219,10 @@ def process_config(cfg: Config):
         if cfg.sigmoid_factor not in FACTOR_SHORTHANDS:
             cfg.sigmoid_factor = canonical_factor_name(cfg.sigmoid_factor)
 
+    if cfg.gaussian_factor is not None:
+        if cfg.gaussian_factor not in FACTOR_SHORTHANDS:
+            cfg.gaussian_factor = canonical_factor_name(cfg.gaussian_factor)
+
     if cfg.opac_loss:
         if cfg.opac_loss_fn not in LOSS_SHORTHANDS:
             cfg.opac_loss_fn = canonical_loss_name(cfg.opac_loss_fn)
@@ -286,35 +291,57 @@ def process_config(cfg: Config):
                     args.append(f"a{cfg.textured_alpha_clamp}")
                 if cfg.freeze_geometry != None:
                     args.append(f"to{cfg.freeze_geometry}")
-                args_suffix = create_args_suffix()
                 match cfg.filtering:
                     case "bilinear":
+                        args_suffix = create_args_suffix()
                         if cfg.result_dir is None:
                             cfg.result_dir = f"{_RESULTS_DIR}/tgs{args_suffix}/{scene_args["result_dir"]}"
                     case "bilinear_bwd2":
+                        args_suffix = create_args_suffix()
                         if cfg.result_dir is None:
                             cfg.result_dir = f"{_RESULTS_DIR}/tgs_b2{args_suffix}/{scene_args["result_dir"]}"
                     case "bilinear2":
+                        args_suffix = create_args_suffix()
                         if cfg.result_dir is None:
                             cfg.result_dir = f"{_RESULTS_DIR}/tgs2{args_suffix}/{scene_args["result_dir"]}"
                     case "bilinear3":
+                        args_suffix = create_args_suffix()
                         if cfg.result_dir is None:
                             cfg.result_dir = f"{_RESULTS_DIR}/tgs3{args_suffix}/{scene_args["result_dir"]}"
                     case "bilinear3_bwd2":
+                        args_suffix = create_args_suffix()
                         if cfg.result_dir is None:
                             cfg.result_dir = f"{_RESULTS_DIR}/tgs3_b2{args_suffix}/{scene_args["result_dir"]}"
+                    case "texture_splats":
+                        args.append(f"gw{cfg.gaussian_factor}")
+                        args_suffix = create_args_suffix()
+                        if cfg.result_dir is None:
+                            cfg.result_dir = f"{_RESULTS_DIR}/ts{args_suffix}/{scene_args["result_dir"]}"
+                    case "texture_splats_bwd2":
+                        args.append(f"gw{cfg.gaussian_factor}")
+                        args_suffix = create_args_suffix()
+                        if cfg.result_dir is None:
+                            cfg.result_dir = f"{_RESULTS_DIR}/ts_b2{args_suffix}/{scene_args["result_dir"]}"
                     case "mipmapped":
+                        args_suffix = create_args_suffix()
                         if cfg.result_dir is None:
                             cfg.result_dir = f"{_RESULTS_DIR}/mip_tgs{args_suffix}/{scene_args["result_dir"]}"
                     case "mipmapped2":
+                        args_suffix = create_args_suffix()
                         if cfg.result_dir is None:
                             cfg.result_dir = f"{_RESULTS_DIR}/mip2_tgs{args_suffix}/{scene_args["result_dir"]}"
                     case "anisotropic":
+                        args_suffix = create_args_suffix()
                         if cfg.result_dir is None:
                             cfg.result_dir = f"{_RESULTS_DIR}/aniso_tgs{args_suffix}/{scene_args["result_dir"]}"
                     case "anisotropic_bilinear":
+                        args_suffix = create_args_suffix()
                         if cfg.result_dir is None:
                             cfg.result_dir = f"{_RESULTS_DIR}/aniso_bilinear_tgs{args_suffix}/{scene_args["result_dir"]}"
+                    case _:
+                        raise Exception(
+                            f"Unrecognised filtering technique {cfg.filtering}"
+                        )
 
             case "itgs":
                 if cfg.base_color_factor is not None:
@@ -425,6 +452,12 @@ def process_config(cfg: Config):
         if cfg.sigmoid_factor in FACTOR_SHORTHANDS:
             cfg.sigmoid_factor = canonical_factor_name(
                 FACTOR_SHORTHANDS[cfg.sigmoid_factor]
+            )
+
+    if cfg.gaussian_factor is not None:
+        if cfg.gaussian_factor in FACTOR_SHORTHANDS:
+            cfg.gaussian_factor = canonical_factor_name(
+                FACTOR_SHORTHANDS[cfg.gaussian_factor]
             )
 
     if cfg.opac_loss is not None:

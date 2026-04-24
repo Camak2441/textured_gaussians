@@ -334,6 +334,7 @@ class Runner:
         )
         self.base_color_factor = None
         self.sigmoid_factor = None
+        self.gaussian_factor = None
         print("Model initialized. Number of GS:", len(self.splats["means"]))
         self.model_type = cfg.model_type
         self.coord_center, self.coord_scale = self._compute_coord_normalisation(cfg)
@@ -823,6 +824,7 @@ class Runner:
                         "coord_center",
                         "coord_scale",
                         "s_weight",
+                        "g_weight",
                     },
                 )
                 (
@@ -864,6 +866,7 @@ class Runner:
                         "coord_center",
                         "coord_scale",
                         "s_weight",
+                        "g_weight",
                     },
                 )
                 steepnesses = F.softplus(self.splats["steepnesses"])  # [N,]
@@ -906,6 +909,7 @@ class Runner:
                         "texture_input_type",
                         "coord_center",
                         "coord_scale",
+                        "g_weight",
                     },
                 )
                 steepnesses = F.softplus(self.splats["steepnesses"])  # [N,]
@@ -990,6 +994,7 @@ class Runner:
                         "coord_center",
                         "coord_scale",
                         "s_weight",
+                        "g_weight",
                     },
                 )
                 steepnesses = F.softplus(self.splats["steepnesses"])  # [N,]
@@ -1035,6 +1040,7 @@ class Runner:
                         "coord_center",
                         "coord_scale",
                         "s_weight",
+                        "g_weight",
                     },
                 )
                 textures = self.get_textures()
@@ -1066,7 +1072,7 @@ class Runner:
                     **kwargs,
                 )
             case "itgs":
-                remove_from_kwargs(kwargs, {"filtering", "s_weight"})
+                remove_from_kwargs(kwargs, {"filtering", "s_weight", "g_weight"})
                 (
                     render_colors,
                     render_alphas,
@@ -1131,6 +1137,15 @@ class Runner:
         if cfg.sigmoid_factor is not None and cfg.model_type == "2dgss":
             sigmoid_factor = load_factor_fn(canonical_factor_name(cfg.sigmoid_factor))
             sigmoid_factor.adjust_steps(cfg.steps_scaler)
+
+        gaussian_factor = None
+        if (
+            cfg.gaussian_factor is not None
+            and cfg.model_type == "tgs"
+            and cfg.filtering in ("texture_splats", "texture_splats_bwd")
+        ):
+            gaussian_factor = load_factor_fn(canonical_factor_name(cfg.gaussian_factor))
+            gaussian_factor.adjust_steps(cfg.steps_scaler)
 
         schedulers = []
         if cfg.schedule_means_lr:
@@ -1205,6 +1220,8 @@ class Runner:
                 base_color_factor.load_state_dict(train_state["base_color_factor"])
             if sigmoid_factor is not None:
                 sigmoid_factor.load_state_dict(train_state["sigmoid_factor"])
+            if gaussian_factor is not None:
+                gaussian_factor.load_state_dict(train_state["gaussian_factor"])
             global_tic -= train_state["elapsed_time"]
             max_mem = train_state["max_mem"]
 
@@ -1280,6 +1297,9 @@ class Runner:
             if sigmoid_factor is not None:
                 self.sigmoid_factor = sigmoid_factor.get_value(step)
                 opt_kwargs["s_weight"] = self.sigmoid_factor
+            if gaussian_factor is not None:
+                self.gaussian_factor = gaussian_factor.get_value(step)
+                opt_kwargs["g_weight"] = self.gaussian_factor
 
             # forward
             (
@@ -1678,6 +1698,8 @@ class Runner:
                         ckpt_data["base_color_factor"] = opt_kwargs["base_color_factor"]
                     if sigmoid_factor is not None:
                         ckpt_data["sigmoid_factor"] = opt_kwargs["s_weight"]
+                    if gaussian_factor is not None:
+                        ckpt_data["gaussian_factor"] = opt_kwargs["g_weight"]
                     torch.save(ckpt_data, f"{self.ckpt_dir}/ckpt_{step}.pt")
                 train_state_data = {
                     "optimizers": {
@@ -1705,6 +1727,8 @@ class Runner:
                     )
                 if sigmoid_factor:
                     train_state_data["sigmoid_factor"] = sigmoid_factor.state_dict()
+                if gaussian_factor:
+                    train_state_data["gaussian_factor"] = gaussian_factor.state_dict()
                 torch.save(train_state_data, f"{self.ckpt_dir}/train_state_{step}.pt")
                 if prev_ckpt_step is not None:
                     for fname in (
@@ -1741,6 +1765,8 @@ class Runner:
                     ckpt_data["base_color_factor"] = opt_kwargs["base_color_factor"]
                 if sigmoid_factor is not None:
                     ckpt_data["sigmoid_factor"] = opt_kwargs["s_weight"]
+                if gaussian_factor is not None:
+                    ckpt_data["gaussian_factor"] = opt_kwargs["g_weight"]
                 torch.save(ckpt_data, f"{self.ckpt_dir}/ckpt_{step}.pt")
                 self.eval(step)
 
@@ -1799,6 +1825,8 @@ class Runner:
                 opt_kwargs["base_color_factor"] = self.base_color_factor
             if self.sigmoid_factor is not None:
                 opt_kwargs["s_weight"] = self.sigmoid_factor
+            if self.gaussian_factor is not None:
+                opt_kwargs["g_weight"] = self.gaussian_factor
 
             torch.cuda.synchronize()
             tic = time.time()
@@ -1990,6 +2018,8 @@ class Runner:
                 opt_kwargs["base_color_factor"] = self.base_color_factor
             if self.sigmoid_factor is not None:
                 opt_kwargs["s_weight"] = self.sigmoid_factor
+            if self.gaussian_factor is not None:
+                opt_kwargs["g_weight"] = self.gaussian_factor
 
             renders, _, _, surf_normals, _, _, _, _, _ = self.rasterize_splats(
                 camtoworlds=camtoworlds[i : i + 1],
@@ -2084,6 +2114,8 @@ class Runner:
                 opt_kwargs["base_color_factor"] = self.base_color_factor
             if self.sigmoid_factor is not None:
                 opt_kwargs["s_weight"] = self.sigmoid_factor
+            if self.gaussian_factor is not None:
+                opt_kwargs["g_weight"] = self.gaussian_factor
 
             renders, _, _, _, _, _, _, _, _ = self.rasterize_splats(
                 camtoworlds=camtoworld,
@@ -2133,6 +2165,8 @@ class Runner:
             opt_kwargs["base_color_factor"] = self.base_color_factor
         if self.sigmoid_factor is not None:
             opt_kwargs["s_weight"] = self.sigmoid_factor
+        if self.gaussian_factor is not None:
+            opt_kwargs["g_weight"] = self.gaussian_factor
 
         render_colors, _, _, _, _, _, _, _, _ = self.rasterize_splats(
             camtoworlds=c2w[None],
@@ -2168,6 +2202,8 @@ def main(cfg: Config):
                 runner.base_color_factor = ckpt["base_color_factor"]
             if "sigmoid_factor" in ckpt:
                 runner.sigmoid_factor = ckpt["sigmoid_factor"]
+            if "gaussian_factor" in ckpt:
+                runner.gaussian_factor = ckpt["gaussian_factor"]
         input("Viewer running... Press enter to exit: ")
         exit(0)
     elif cfg.ckpt is not None and cfg.camera_path is not None:
@@ -2180,6 +2216,8 @@ def main(cfg: Config):
             runner.base_color_factor = ckpt["base_color_factor"]
         if "sigmoid_factor" in ckpt:
             runner.sigmoid_factor = ckpt["sigmoid_factor"]
+        if "gaussian_factor" in ckpt:
+            runner.gaussian_factor = ckpt["gaussian_factor"]
         for camera_path_file in cfg.camera_path:
             try:
                 runner.render_camera_path(
@@ -2199,6 +2237,8 @@ def main(cfg: Config):
             runner.base_color_factor = ckpt["base_color_factor"]
         if "sigmoid_factor" in ckpt:
             runner.sigmoid_factor = ckpt["sigmoid_factor"]
+        if "gaussian_factor" in ckpt:
+            runner.gaussian_factor = ckpt["gaussian_factor"]
         runner.eval(step=ckpt["step"])
         runner.render_traj(step=ckpt["step"])
         runner.render_textures_video(
@@ -2223,6 +2263,8 @@ def main(cfg: Config):
                 runner.base_color_factor = ckpt["base_color_factor"]
             if "sigmoid_factor" in ckpt:
                 runner.sigmoid_factor = ckpt["sigmoid_factor"]
+            if "gaussian_factor" in ckpt:
+                runner.gaussian_factor = ckpt["gaussian_factor"]
         runner.train()
 
     # if not cfg.disable_viewer:

@@ -144,6 +144,17 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
         "rasterize_to_pixels_bwd2_bilinear3_textured_gaussians",
         &gsplat::rasterize_to_pixels_bwd2_bilinear3_textured_gaussians_tensor);
 
+    // Textured Gaussians
+    m.def(
+        "rasterize_to_pixels_fwd_texture_splats",
+        &gsplat::rasterize_to_pixels_fwd_texture_splats_tensor);
+    m.def(
+        "rasterize_to_pixels_bwd_texture_splats",
+        &gsplat::rasterize_to_pixels_bwd_texture_splats_tensor);
+    m.def(
+        "rasterize_to_pixels_bwd2_texture_splats",
+        &gsplat::rasterize_to_pixels_bwd2_texture_splats_tensor);
+
     // Implicit Textured Gaussians
     m.def(
         "rasterize_to_samples_fwd_textured_gaussians",

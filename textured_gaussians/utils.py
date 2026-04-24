@@ -12,6 +12,8 @@ type Filtering = Literal[
     "bilinear2",
     "bilinear3",
     "bilinear3_bwd2",
+    "texture_splats",
+    "texture_splats_bwd2",
     "mipmapped",
     "mipmapped2",
     "anisotropic",

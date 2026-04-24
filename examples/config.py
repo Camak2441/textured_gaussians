@@ -246,6 +246,7 @@ class Config:
     ] = "none"
     base_color_factor: str | None = None
     sigmoid_factor: str | None = None
+    gaussian_factor: str | None = None
 
     # Dump information to tensorboard every this steps
     tb_every: int = 100
@@ -281,6 +282,8 @@ class Config:
         "bilinear2",
         "bilinear3",
         "bilinear3_bwd2",
+        "texture_splats",
+        "texture_splats_bwd2",
         "mipmapped",
         "mipmapped2",
         "anisotropic",
