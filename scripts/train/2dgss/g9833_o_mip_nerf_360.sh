@@ -1,0 +1,9 @@
+bash train/2dgss/g9833_o.sh bicycle
+bash train/2dgss/g9833_o.sh bonsai
+bash train/2dgss/g9833_o.sh counter
+bash train/2dgss/g9833_o.sh flowers
+bash train/2dgss/g9833_o.sh garden
+bash train/2dgss/g9833_o.sh kitchen
+bash train/2dgss/g9833_o.sh room
+bash train/2dgss/g9833_o.sh stump
+bash train/2dgss/g9833_o.sh treehill
