@@ -599,7 +599,7 @@ namespace gsplat
                         {
                             for (uint32_t i = 0; i < 4; ++i)
                             {
-                                gpuAtomicAdd(&v_textures[g][vcoords[i]][ucoords[i]][3], bilerp_weights[i] * vis * opac * v_alpha);
+                                bilinear3::update(v_textures, texture_res_x, texture_res_y, g, vcoords[i], ucoords[i], 3, bilerp_weights[i] * vis * opac * v_alpha);
                             }
                         }
                     }
