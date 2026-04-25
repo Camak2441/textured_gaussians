@@ -164,7 +164,7 @@ def create_splats_with_optimizers(
 
     texture_model = None
     match cfg.model_type:
-        case "tgs" | "tss":
+        case "tgs" | "tss" | "tgss":
             if init_type == "pretrained" and "textures" in ckpt:
                 textures = ckpt["textures"][sampled_pts_idx]
             else:
@@ -345,9 +345,10 @@ class Runner:
             "2dss",
             "2dgss",
             "tgs",
+            "tss",
+            "tgss",
             "dtgs",
             "itgs",
-            "tss",
         ]:
             key_for_gradient = "gradient_2dgs"
         else:
@@ -497,7 +498,7 @@ class Runner:
             if the model type has no textures.
         """
         match self.model_type:
-            case "tgs" | "tss":
+            case "tgs" | "tss" | "tgss":
                 if self.cfg.app_opt:
                     colors = self.splats["colors"]
                     colors = torch.sigmoid(colors)
@@ -600,7 +601,7 @@ class Runner:
     @torch.no_grad()
     def resize_textures(self, width: int, height: int):
         match self.model_type:
-            case "tgs" | "tss":
+            case "tgs" | "tss" | "tgss":
                 # textures: [N, L, L, 4]
                 textures = self.splats["textures"]
                 textures = textures.permute(0, 3, 1, 2)  # [N, 4, L, L]
@@ -630,6 +631,7 @@ class Runner:
         if self.model_type not in (
             "tgs",
             "tss",
+            "tgss",
             "dtgs",
             "itgs",
         ):
@@ -643,7 +645,7 @@ class Runner:
         video_path = f"{video_dir}/textures{width}x{height}_{step}.mp4"
         writer = imageio.get_writer(video_path, fps=30)
 
-        if self.model_type in ("tgs", "tss"):
+        if self.model_type in ("tgs", "tss", "tgss"):
             all_textures = self.get_textures()  # [N, L, L, 4]
             batch_size = 4096
             for start in tqdm.trange(0, N, batch_size, desc="Rendering texture video"):
@@ -721,6 +723,7 @@ class Runner:
         if self.model_type not in (
             "tgs",
             "tss",
+            "tgss",
             "dtgs",
             "itgs",
         ):
@@ -1190,16 +1193,16 @@ class Runner:
             base_color_factor.adjust_steps(cfg.steps_scaler)
 
         sigmoid_factor = None
-        if cfg.sigmoid_factor is not None and cfg.model_type == "2dgss":
+        if cfg.sigmoid_factor is not None and cfg.model_type in (
+            "2dgss",
+            "tss",
+            "tgss",
+        ):
             sigmoid_factor = load_factor_fn(canonical_factor_name(cfg.sigmoid_factor))
             sigmoid_factor.adjust_steps(cfg.steps_scaler)
 
         gaussian_factor = None
-        if (
-            cfg.gaussian_factor is not None
-            and cfg.model_type == "tgs"
-            and cfg.filtering in ("texture_splats", "texture_splats_bwd")
-        ):
+        if cfg.gaussian_factor is not None and cfg.model_type in ("tgs", "tgss"):
             gaussian_factor = load_factor_fn(canonical_factor_name(cfg.gaussian_factor))
             gaussian_factor.adjust_steps(cfg.steps_scaler)
 
