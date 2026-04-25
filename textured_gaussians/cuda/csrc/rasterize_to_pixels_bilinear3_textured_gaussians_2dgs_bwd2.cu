@@ -775,7 +775,7 @@ namespace gsplat
         torch::Tensor,
         torch::Tensor,
         torch::Tensor>
-    call_bwd2_t3_kernel_with_dim(
+    call_bwd2_tg3_kernel_with_dim(
         // Gaussian parameters
         const torch::Tensor &means2d,                   // [C, N, 2] or [nnz, 2]
         const torch::Tensor &ray_transforms,            // [C, N, 3, 3] or [nnz, 3, 3]
@@ -992,7 +992,7 @@ namespace gsplat
 
 #define __GS__CALL_(N)                                     \
     case N:                                                \
-        return call_bwd2_t3_kernel_with_dim<N>(            \
+        return call_bwd2_tg3_kernel_with_dim<N>(           \
             means2d,                                       \
             ray_transforms,                                \
             colors,                                        \

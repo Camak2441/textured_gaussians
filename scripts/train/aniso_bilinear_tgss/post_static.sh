@@ -9,7 +9,9 @@ python simple_trainer_textured_gaussians.py mcmc \
     --init_extent 1 \
     --init_type=pretrained \
     --background_mode "white" \
-    --model_type=tgs \
+    --model_type=tgss \
+    --gaussian_factor=lin02to0 \
+    --sigmoid_factor=lin08to0 \
     --init_num_pts=10000 \
     --strategy.cap-max=10000 \
     --strategy.refine-start-iter=1000000000000 \

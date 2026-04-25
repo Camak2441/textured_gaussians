@@ -18,7 +18,7 @@ namespace gsplat
      * Rasterization to Pixels Backward Pass Textured Gaussians
      ****************************************************************************/
     template <uint32_t COLOR_DIM, typename S>
-    __global__ void rasterize_to_pixels_bwd_aniso_bilinear_textured_sigmoids_kernel(
+    __global__ void rasterize_to_pixels_bwd_aniso_bilinear_textured_gausssigs_kernel(
         const uint32_t C,        // number of cameras
         const uint32_t N,        // number of sigmoids
         const uint32_t n_isects, // number of ray-primitive intersections.
@@ -43,6 +43,7 @@ namespace gsplat
         const uint32_t tile_height,
         const int32_t *__restrict__ tile_offsets, // [C, tile_height, tile_width]
         const int32_t *__restrict__ flatten_ids,  // [n_isects]
+        const S g_weight,                         //
         const S s_weight,                         //
 
         // fwd outputs
@@ -311,7 +312,9 @@ namespace gsplat
                  */
                 S alpha;           // for the currently processed gaussian, per pixel
                 S opac;            // opacity of the currently processed gaussian, per pixel
-                S vis;             // visibility of the currently processed gaussian (the pure gaussian weight, not multiplied by opacity), per pixel
+                S vis;             // blended kernel value (not multiplied by opacity), per pixel
+                S gaussian_kernel; // Gaussian kernel component, per pixel
+                S sigmoid_kernel;  // Sigmoid (smooth-step) kernel component, per pixel
                 S gauss_weight_3d; // 3D gaussian weight (using the proper intersection of UV space), per pixel
                 S gauss_weight_2d; // 2D gaussian weight (using the projected 2D mean), per pixel
                 S gauss_weight;    // minimum of 3D and 2D gaussian weights, per pixel
@@ -439,17 +442,21 @@ namespace gsplat
                     gauss_weight_2d = FILTER_INV_SQUARE * (d.x * d.x + d.y * d.y);
                     gauss_weight = min(gauss_weight_3d, gauss_weight_2d);
 
-                    // smooth step: vis = 1/(1+gw^k) = sigmoid(-k*log(gw))
+                    // blended Gaussian + smooth-step visibility
                     if (gauss_weight <= S(0))
                     {
+                        gaussian_kernel = S(1);
+                        sigmoid_kernel = S(1);
                         vis = S(1);
                     }
                     else
                     {
-                        vis = sigmoid(-(steepness * __logf(gauss_weight)));
+                        gaussian_kernel = exp(-S(0.5) * gauss_weight);
+                        sigmoid_kernel = sigmoid(-(steepness * __logf(gauss_weight)));
+                        vis = gaussian_kernel * g_weight + sigmoid_kernel * s_weight + (S(0.998) - g_weight - s_weight);
                     }
 
-                    alpha = min(S(0.999), opac * (S(0.998) - s_weight + s_weight * vis) * alpha_scaling_factor);
+                    alpha = min(S(0.999), opac * vis * alpha_scaling_factor);
 
                     // gaussian throw out
                     if (gauss_weight < S(0) || alpha < S(1) / S(255))
@@ -615,25 +622,28 @@ namespace gsplat
                      * 2DGS backward pass: compute gradients of d_out / d_G_i and d_G_i w.r.t geometry parameters
                      * ==================================================
                      */
-                    if (opac * (S(0.998) - s_weight + s_weight * vis) * alpha_scaling_factor <= S(0.999))
+                    if (opac * vis * alpha_scaling_factor <= S(0.999))
                     {
                         S v_depth = S(0);
-                        // d(a_i * G_i) / d(G_i) = a_i, scaled by s_weight since d(alpha)/d(vis) = opac * s_weight * alpha_scaling_factor
-                        const S v_G = opac * s_weight * v_alpha * alpha_scaling_factor;
+                        // d(loss)/d(vis): gradient of loss w.r.t. the blended kernel value
+                        const S v_G = opac * v_alpha * alpha_scaling_factor;
 
-                        // gw^(k-1) = (1-vis)/(vis*gw)  [from vis=1/(1+gw^k) => gw^k=(1-vis)/vis]
-                        // used in d(vis)/d(gw) = -vis^2 * k * gw^(k-1)
-                        const S gw_pow = (gauss_weight > S(0) && vis > S(0))
-                                             ? (S(1) - vis) / (vis * gauss_weight)
+                        // gw^(k-1) for sigmoid term: (1-sigmoid_kernel)/(sigmoid_kernel*gw)
+                        const S gw_pow = (gauss_weight > S(0) && sigmoid_kernel > S(0))
+                                             ? (S(1) - sigmoid_kernel) / (sigmoid_kernel * gauss_weight)
                                              : S(0);
 
                         // case 1: in the forward pass, the proper ray-primitive intersection is used
                         if (gauss_weight_3d <= gauss_weight_2d)
                         {
-                            // 3D case: gw = s.x^2 + s.y^2
-                            const vec2<S> v_s = {
-                                v_G * -vis * vis * S(2) * steepness * s.x * gw_pow + v_depth * w_M.x,
-                                v_G * -vis * vis * S(2) * steepness * s.y * gw_pow + v_depth * w_M.y};
+                            // 3D case: gw = s.x^2 + s.y^2, blend Gaussian and sigmoid gradients
+                            const vec2<S> v_gs = {
+                                v_G * -gaussian_kernel * s.x + v_depth * w_M.x,
+                                v_G * -gaussian_kernel * s.y + v_depth * w_M.y};
+                            const vec2<S> v_ss = {
+                                v_G * -sigmoid_kernel * sigmoid_kernel * S(2) * steepness * s.x * gw_pow + v_depth * w_M.x,
+                                v_G * -sigmoid_kernel * sigmoid_kernel * S(2) * steepness * s.y * gw_pow + v_depth * w_M.y};
+                            const vec2<S> v_s = v_gs * g_weight + v_ss * s_weight;
 
                             // backward through the projective transform
                             // @see rasterize_to_pixels_2dgs_fwd.cu to understand what is going on here
@@ -657,11 +667,13 @@ namespace gsplat
                         }
                         else
                         {
-                            // 2D case: gw = FILTER_INV_SQUARE * (d.x^2 + d.y^2)
-                            const S v_G_ddelx =
-                                -vis * vis * S(2) * steepness * FILTER_INV_SQUARE * d.x * gw_pow;
-                            const S v_G_ddely =
-                                -vis * vis * S(2) * steepness * FILTER_INV_SQUARE * d.y * gw_pow;
+                            // 2D case: gw = FILTER_INV_SQUARE * (d.x^2 + d.y^2), blend Gaussian and sigmoid gradients
+                            const S v_Gg_ddelx = -gaussian_kernel * FILTER_INV_SQUARE * d.x;
+                            const S v_Gg_ddely = -gaussian_kernel * FILTER_INV_SQUARE * d.y;
+                            const S v_Gs_ddelx = -sigmoid_kernel * sigmoid_kernel * S(2) * steepness * FILTER_INV_SQUARE * d.x * gw_pow;
+                            const S v_Gs_ddely = -sigmoid_kernel * sigmoid_kernel * S(2) * steepness * FILTER_INV_SQUARE * d.y * gw_pow;
+                            const S v_G_ddelx = v_Gg_ddelx * g_weight + v_Gs_ddelx * s_weight;
+                            const S v_G_ddely = v_Gg_ddely * g_weight + v_Gs_ddely * s_weight;
                             v_xy_local = {v_G * v_G_ddelx, v_G * v_G_ddely};
                             if (v_means2d_abs != nullptr)
                             {
@@ -669,14 +681,14 @@ namespace gsplat
                                     abs(v_xy_local.x), abs(v_xy_local.y)};
                             }
                         }
-                        v_opacity_local = (S(0.998) - s_weight + s_weight * vis) * v_alpha * alpha_scaling_factor;
+                        v_opacity_local = vis * v_alpha * alpha_scaling_factor;
 
-                        // steepness gradient: d(vis)/d(k) = -vis*(1-vis)*log(gw)
-                        // [from d(vis)/d(k) = -vis^2*gw^k*log(gw) and gw^k=(1-vis)/vis]
+                        // steepness gradient: only sigmoid term depends on steepness
+                        // d(sigmoid_kernel)/d(k) = -sigmoid_kernel*(1-sigmoid_kernel)*log(gw)
                         if (gauss_weight > S(0))
                         {
                             const S log_gw = __logf(gauss_weight);
-                            v_steepness_local = v_G * (-vis * (S(1) - vis) * log_gw);
+                            v_steepness_local = v_G * s_weight * (-sigmoid_kernel * (S(1) - sigmoid_kernel) * log_gw);
                         }
 
                         // update alpha scaling factor gradients
@@ -797,7 +809,7 @@ namespace gsplat
         torch::Tensor,
         torch::Tensor,
         torch::Tensor>
-    call_bwd_aniso_bilinear_s_kernel_with_dim(
+    call_bwd_aniso_bilinear_gs_kernel_with_dim(
         // Gaussian parameters
         const torch::Tensor &means2d,                   // [C, N, 2] or [nnz, 2]
         const torch::Tensor &steepnesses,               // [C, N] or [nnz]
@@ -816,8 +828,9 @@ namespace gsplat
         const uint32_t tile_size,
         // ray_crossions
         const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
-        const torch::Tensor &flatten_ids,  //
-        float s_weight,                    // [n_isects]
+        const torch::Tensor &flatten_ids,  // [n_isects]
+        float g_weight,
+        float s_weight,
         // forward outputs
         const torch::Tensor
             &render_colors,                 // [C, image_height, image_width, COLOR_DIM]
@@ -901,7 +914,7 @@ namespace gsplat
             at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
 
             if (cudaFuncSetAttribute(
-                    rasterize_to_pixels_bwd_aniso_bilinear_textured_sigmoids_kernel<CDIM, float>,
+                    rasterize_to_pixels_bwd_aniso_bilinear_textured_gausssigs_kernel<CDIM, float>,
                     cudaFuncAttributeMaxDynamicSharedMemorySize,
                     shared_mem) != cudaSuccess)
             {
@@ -910,7 +923,7 @@ namespace gsplat
                     shared_mem,
                     " bytes), try lowering tile_size.");
             }
-            rasterize_to_pixels_bwd_aniso_bilinear_textured_sigmoids_kernel<CDIM, float>
+            rasterize_to_pixels_bwd_aniso_bilinear_textured_gausssigs_kernel<CDIM, float>
                 <<<blocks, threads, shared_mem, stream>>>(
                     C,
                     N,
@@ -934,6 +947,7 @@ namespace gsplat
                     tile_height,
                     tile_offsets.data_ptr<int32_t>(),
                     flatten_ids.data_ptr<int32_t>(),
+                    g_weight,
                     s_weight,
                     render_colors.data_ptr<float>(),
                     render_alphas.data_ptr<float>(),
@@ -979,7 +993,7 @@ namespace gsplat
         torch::Tensor,
         torch::Tensor,
         torch::Tensor>
-    rasterize_to_pixels_bwd_aniso_bilinear_textured_sigmoids_tensor(
+    rasterize_to_pixels_bwd_aniso_bilinear_textured_gausssigs_tensor(
         // Gaussian parameters
         const torch::Tensor &means2d, // [C, N, 2] or [nnz, 2]
         const torch::Tensor &steepnesses,
@@ -1000,6 +1014,7 @@ namespace gsplat
         // ray_crossions
         const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
         const torch::Tensor &flatten_ids,  // [n_isects]
+        float g_weight,
         float s_weight,
         // forward outputs
         const torch::Tensor
@@ -1019,35 +1034,36 @@ namespace gsplat
         GSPLAT_CHECK_INPUT(colors);
         uint32_t COLOR_DIM = colors.size(-1);
 
-#define __GS__CALL_(N)                                       \
-    case N:                                                  \
-        return call_bwd_aniso_bilinear_s_kernel_with_dim<N>( \
-            means2d,                                         \
-            steepnesses,                                     \
-            ray_transforms,                                  \
-            colors,                                          \
-            opacities,                                       \
-            textures,                                        \
-            vec2<float>(texture_range_x, texture_range_y),   \
-            normals,                                         \
-            densify,                                         \
-            backgrounds,                                     \
-            masks,                                           \
-            image_width,                                     \
-            image_height,                                    \
-            tile_size,                                       \
-            tile_offsets,                                    \
-            flatten_ids,                                     \
-            s_weight,                                        \
-            render_colors,                                   \
-            render_alphas,                                   \
-            last_ids,                                        \
-            median_ids,                                      \
-            v_render_colors,                                 \
-            v_render_alphas,                                 \
-            v_render_normals,                                \
-            v_render_distort,                                \
-            v_render_median,                                 \
+#define __GS__CALL_(N)                                        \
+    case N:                                                   \
+        return call_bwd_aniso_bilinear_gs_kernel_with_dim<N>( \
+            means2d,                                          \
+            steepnesses,                                      \
+            ray_transforms,                                   \
+            colors,                                           \
+            opacities,                                        \
+            textures,                                         \
+            vec2<float>(texture_range_x, texture_range_y),    \
+            normals,                                          \
+            densify,                                          \
+            backgrounds,                                      \
+            masks,                                            \
+            image_width,                                      \
+            image_height,                                     \
+            tile_size,                                        \
+            tile_offsets,                                     \
+            flatten_ids,                                      \
+            g_weight,                                         \
+            s_weight,                                         \
+            render_colors,                                    \
+            render_alphas,                                    \
+            last_ids,                                         \
+            median_ids,                                       \
+            v_render_colors,                                  \
+            v_render_alphas,                                  \
+            v_render_normals,                                 \
+            v_render_distort,                                 \
+            v_render_median,                                  \
             absgrad);
 
         switch (COLOR_DIM)

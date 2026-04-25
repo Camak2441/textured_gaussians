@@ -877,7 +877,7 @@ class Runner:
                         "g_weight",
                     },
                 )
-                steepnesses = F.softplus(self.splats["steepnesses"])  # [N,]
+                steepnesses = F.softplus(self.splats["steepnesses"]) + 1  # [N,]
                 (
                     render_colors,
                     render_alphas,
@@ -922,7 +922,7 @@ class Runner:
                         "g_weight",
                     },
                 )
-                steepnesses = F.softplus(self.splats["steepnesses"])  # [N,]
+                steepnesses = F.softplus(self.splats["steepnesses"]) + 1  # [N,]
                 (
                     render_colors,
                     render_alphas,
@@ -1006,7 +1006,7 @@ class Runner:
                         "g_weight",
                     },
                 )
-                steepnesses = F.softplus(self.splats["steepnesses"])  # [N,]
+                steepnesses = F.softplus(self.splats["steepnesses"]) + 1  # [N,]
                 textures = self.get_textures()
                 (
                     render_colors,
@@ -1049,7 +1049,7 @@ class Runner:
                         "coord_scale",
                     },
                 )
-                steepnesses = F.softplus(self.splats["steepnesses"])  # [N,]
+                steepnesses = F.softplus(self.splats["steepnesses"]) + 1  # [N,]
                 textures = self.get_textures()
                 (
                     render_colors,

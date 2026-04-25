@@ -614,6 +614,8 @@ namespace gsplat
         const uint32_t tile_size,
         const torch::Tensor &tile_offsets,
         const torch::Tensor &flatten_ids,
+        const float g_weight,
+        const float s_weight,
         const torch::Tensor &render_colors,
         const torch::Tensor &render_alphas,
         const torch::Tensor &last_ids,
@@ -623,9 +625,7 @@ namespace gsplat
         const torch::Tensor &v_render_normals,
         const torch::Tensor &v_render_distort,
         const torch::Tensor &v_render_median,
-        bool absgrad,
-        const float g_weight,
-        const float s_weight)
+        bool absgrad)
     {
         GSPLAT_DEVICE_GUARD(means2d);
         GSPLAT_CHECK_INPUT(means2d);
@@ -784,6 +784,8 @@ namespace gsplat
         const uint32_t tile_size,
         const torch::Tensor &tile_offsets,
         const torch::Tensor &flatten_ids,
+        const float g_weight,
+        const float s_weight,
         const torch::Tensor &render_colors,
         const torch::Tensor &render_alphas,
         const torch::Tensor &last_ids,
@@ -793,9 +795,7 @@ namespace gsplat
         const torch::Tensor &v_render_normals,
         const torch::Tensor &v_render_distort,
         const torch::Tensor &v_render_median,
-        bool absgrad,
-        const float g_weight,
-        const float s_weight)
+        bool absgrad)
     {
         GSPLAT_CHECK_INPUT(colors);
         uint32_t COLOR_DIM = colors.size(-1);
@@ -819,6 +819,8 @@ namespace gsplat
             tile_size,                                     \
             tile_offsets,                                  \
             flatten_ids,                                   \
+            g_weight,                                      \
+            s_weight,                                      \
             render_colors,                                 \
             render_alphas,                                 \
             last_ids,                                      \
@@ -828,9 +830,7 @@ namespace gsplat
             v_render_normals,                              \
             v_render_distort,                              \
             v_render_median,                               \
-            absgrad,                                       \
-            g_weight,                                      \
-            s_weight);
+            absgrad);
 
         switch (COLOR_DIM)
         {

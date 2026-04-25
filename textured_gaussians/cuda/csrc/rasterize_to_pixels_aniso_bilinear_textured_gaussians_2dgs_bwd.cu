@@ -752,7 +752,7 @@ namespace gsplat
         torch::Tensor,
         torch::Tensor,
         torch::Tensor>
-    call_bwd_aniso_bilinear_kernel_with_dim(
+    call_bwd_aniso_bilinear_g_kernel_with_dim(
         // Gaussian parameters
         const torch::Tensor &means2d,                   // [C, N, 2] or [nnz, 2]
         const torch::Tensor &ray_transforms,            // [C, N, 3, 3] or [nnz, 3, 3]
@@ -966,34 +966,34 @@ namespace gsplat
         GSPLAT_CHECK_INPUT(colors);
         uint32_t COLOR_DIM = colors.size(-1);
 
-#define __GS__CALL_(N)                                     \
-    case N:                                                \
-        return call_bwd_aniso_bilinear_kernel_with_dim<N>( \
-            means2d,                                       \
-            ray_transforms,                                \
-            colors,                                        \
-            opacities,                                     \
-            textures,                                      \
-            vec2<float>(texture_range_x, texture_range_y), \
-            normals,                                       \
-            densify,                                       \
-            backgrounds,                                   \
-            masks,                                         \
-            image_width,                                   \
-            image_height,                                  \
-            tile_size,                                     \
-            tile_offsets,                                  \
-            flatten_ids,                                   \
-            g_weight,                                      \
-            render_colors,                                 \
-            render_alphas,                                 \
-            last_ids,                                      \
-            median_ids,                                    \
-            v_render_colors,                               \
-            v_render_alphas,                               \
-            v_render_normals,                              \
-            v_render_distort,                              \
-            v_render_median,                               \
+#define __GS__CALL_(N)                                       \
+    case N:                                                  \
+        return call_bwd_aniso_bilinear_g_kernel_with_dim<N>( \
+            means2d,                                         \
+            ray_transforms,                                  \
+            colors,                                          \
+            opacities,                                       \
+            textures,                                        \
+            vec2<float>(texture_range_x, texture_range_y),   \
+            normals,                                         \
+            densify,                                         \
+            backgrounds,                                     \
+            masks,                                           \
+            image_width,                                     \
+            image_height,                                    \
+            tile_size,                                       \
+            tile_offsets,                                    \
+            flatten_ids,                                     \
+            g_weight,                                        \
+            render_colors,                                   \
+            render_alphas,                                   \
+            last_ids,                                        \
+            median_ids,                                      \
+            v_render_colors,                                 \
+            v_render_alphas,                                 \
+            v_render_normals,                                \
+            v_render_distort,                                \
+            v_render_median,                                 \
             absgrad);
 
         switch (COLOR_DIM)

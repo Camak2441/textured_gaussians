@@ -21,6 +21,9 @@ python simple_trainer_textured_gaussians.py mcmc \
     --opac_loss \
     --opac_loss_fn="t01" \
     --opac_loss_start_iter 0 \
+    --tex_opac_loss \
+    --tex_opac_loss_fn="t03" \
+    --tex_opac_loss_start_iter 0 \
     --steps_scaler=1 \
     --textured_rgb \
     --textured_alpha \

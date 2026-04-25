@@ -4886,6 +4886,8 @@ class _RasterizeToPixelsTexturedGaussSigs(torch.autograd.Function):
             tile_size,
             isect_offsets,
             flatten_ids,
+            g_weight,
+            s_weight,
             render_colors,
             render_alphas,
             last_ids,
@@ -4896,8 +4898,6 @@ class _RasterizeToPixelsTexturedGaussSigs(torch.autograd.Function):
             v_render_distort.contiguous(),
             v_render_median.contiguous(),
             absgrad,
-            g_weight,
-            s_weight,
         )
         torch.cuda.synchronize()
         if absgrad:
@@ -4939,7 +4939,10 @@ class _RasterizeToPixelsTexturedGaussSigs(torch.autograd.Function):
 
 
 GSPOST = "_textured_gausssigs"
-tgss_fns = {"bilinear_bwd2": (f"{PRE}fwd{GSPOST}", f"{PRE}bwd2{GSPOST}")}
+tgss_fns = {
+    "bilinear_bwd2": (f"{PRE}fwd{GSPOST}", f"{PRE}bwd2{GSPOST}"),
+    "aniso_bilinear": (f"{PRE}fwd_aniso_bilinear{GSPOST}", f"{PRE}bwd_aniso_bilinear{GSPOST}"),
+}
 
 
 def rasterize_to_pixels_textured_gausssigs(

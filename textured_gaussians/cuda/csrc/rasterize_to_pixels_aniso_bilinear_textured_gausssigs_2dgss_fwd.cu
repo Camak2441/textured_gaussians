@@ -1,7 +1,8 @@
 #include "bindings.h"
 #include "helpers.cuh"
 #include "types.cuh"
-#include "filters/anisotropic.cuh"
+#include "utils.cuh"
+#include "filters/anisotropic_bilinear.cuh"
 #include <cooperative_groups.h>
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
@@ -21,12 +22,13 @@ namespace gsplat
      *
      */
     template <uint32_t COLOR_DIM, typename S>
-    __global__ void rasterize_to_pixels_fwd_aniso_textured_gaussians_kernel(
+    __global__ void rasterize_to_pixels_fwd_aniso_bilinear_textured_gausssigs_kernel(
         const uint32_t C,                                                       // number of cameras
-        const uint32_t N,                                                       // number of gaussians
+        const uint32_t N,                                                       // number of sigmoids
         const uint32_t n_isects,                                                // number of ray-primitive intersections.
         const bool packed,                                                      // whether the input tensors are packed
         const vec2<S> *__restrict__ means2d,                                    // Projected Gaussian means. [C, N, 2] if packed is False, [nnz, 2] if packed is True.
+        const S *__restrict__ steepnesses,                                      // [C, N] or [nnz]
         const S *__restrict__ ray_transforms,                                   // transformation matrices that transforms xy-planes in pixel spaces into splat coordinates. [C, N, 3, 3] if packed is False, [nnz, channels] if packed is True.
                                                                                 // This is (KWH)^{-1} in the paper (takes screen [x,y] and map to [u,v])
         const S *__restrict__ colors,                                           // [C, N, COLOR_DIM] or [nnz, COLOR_DIM]  // Gaussian colors or ND features.
@@ -42,10 +44,11 @@ namespace gsplat
         const uint32_t tile_width,
         const uint32_t tile_height,
         const int32_t *__restrict__ tile_offsets, // [C, tile_height, tile_width]    // Intersection offsets outputs from `isect_offset_encode()`, this is the result of a prefix sum, and
-                                                  // gives the interval that our gaussians are gonna use.
+                                                  // gives the interval that our sigmoids are gonna use.
         const int32_t *__restrict__ flatten_ids,  // [n_isects]                      // The global flatten indices in [C * N] or [nnz] from  `isect_tiles()`.
         const S gs_contrib_threshold,             // The threshold for gaussian opacity contribution.
         const S g_weight,
+        const S s_weight,
 
         // outputs
         S *__restrict__ render_colors,    // [C, image_height, image_width, COLOR_DIM]
@@ -58,7 +61,7 @@ namespace gsplat
         S *__restrict__ gs_contrib_sum,
         S *__restrict__ gs_contrib_count)
     {
-        // each thread draws one pixel, but also timeshares caching gaussians in a
+        // each thread draws one pixel, but also timeshares caching sigmoids in a
         // shared tile
 
         /**
@@ -123,9 +126,9 @@ namespace gsplat
             return;
         }
 
-        // have all threads in tile process the same gaussians in batches
-        // first collect gaussians between range.x and range.y in batches
-        // which gaussians to look through in this tile
+        // have all threads in tile process the same sigmoids in batches
+        // first collect sigmoids between range.x and range.y in batches
+        // which sigmoids to look through in this tile
 
         // print
         int32_t range_start = tile_offsets[tile_id];
@@ -155,10 +158,10 @@ namespace gsplat
         vec3<S> *xy_opacity_batch =
             reinterpret_cast<vec3<S> *>(&id_batch[block_size]); // [block_size]
 
-        // these are row vectors of the ray transformation matrices for the current batch of gaussians
-        vec3<S> *u_Ms_batch = reinterpret_cast<vec3<S> *>(&xy_opacity_batch[block_size]); // [block_size]
-        vec3<S> *v_Ms_batch = reinterpret_cast<vec3<S> *>(&u_Ms_batch[block_size]);       // [block_size]
-        vec3<S> *w_Ms_batch = reinterpret_cast<vec3<S> *>(&v_Ms_batch[block_size]);       // [block_size]
+        S *steepnesses_batch = (S *)(&xy_opacity_batch[block_size]);
+        vec3<S> *u_Ms_batch = reinterpret_cast<vec3<S> *>(&steepnesses_batch[block_size]);
+        vec3<S> *v_Ms_batch = reinterpret_cast<vec3<S> *>(&u_Ms_batch[block_size]); // [block_size]
+        vec3<S> *w_Ms_batch = reinterpret_cast<vec3<S> *>(&v_Ms_batch[block_size]); // [block_size]
 
         // current visibility left to render
         // transmittance is gonna be used in the backward pass which requires a high
@@ -169,7 +172,7 @@ namespace gsplat
         // index of most recent gaussian to write to this thread's pixel
         uint32_t cur_idx = 0;
 
-        // collect and process batches of gaussians
+        // collect and process batches of sigmoids
         // each thread loads one gaussian at a time before rasterizing its
         // designated pixel
         uint32_t tr = block.thread_rank();
@@ -188,7 +191,7 @@ namespace gsplat
          * ==============================
          * Per-pixel rendering: (2DGS Differntiable Rasterizer Forward Pass)
          * This section is responsible for rendering a single pixel.
-         * It processes batches of gaussians and accumulates the pixel color and normal.
+         * It processes batches of sigmoids and accumulates the pixel color and normal.
          * ==============================
          */
 
@@ -210,7 +213,7 @@ namespace gsplat
             uint32_t batch_start = range_start + block_size * b;
             uint32_t idx = batch_start + tr;
 
-            // only threads within the range of the tile will fetch gaussians
+            // only threads within the range of the tile will fetch sigmoids
             /**
              * Launch this block with each thread responsible for one gaussian.
              */
@@ -221,6 +224,7 @@ namespace gsplat
                 const vec2<S> xy = means2d[g];
                 const S opac = opacities[g];
                 xy_opacity_batch[tr] = {xy.x, xy.y, opac};
+                steepnesses_batch[tr] = steepnesses[g];
                 u_Ms_batch[tr] = {
                     ray_transforms[g * 9], ray_transforms[g * 9 + 1], ray_transforms[g * 9 + 2]};
                 v_Ms_batch[tr] = {
@@ -229,7 +233,7 @@ namespace gsplat
                     ray_transforms[g * 9 + 6], ray_transforms[g * 9 + 7], ray_transforms[g * 9 + 8]};
             }
 
-            // wait for other threads to collect the gaussians in batch
+            // wait for other threads to collect the sigmoids in batch
             block.sync();
 
             /**
@@ -276,7 +280,7 @@ namespace gsplat
              * evaluates the gaussian kernel in UV space.
              * Note: in some cases, we use the minimum of ray-intersection kernels and 2D projected gaussian kernels
              */
-            // process gaussians in the current batch for this pixel
+            // process sigmoids in the current batch for this pixel
             uint32_t batch_size = min(block_size, range_end - batch_start);
             for (uint32_t t = 0; (t < batch_size) && !done; ++t)
             {
@@ -284,6 +288,7 @@ namespace gsplat
 
                 const vec3<S> xy_opac = xy_opacity_batch[t];
                 const S opac = xy_opac.z;
+                const S steepness = steepnesses_batch[t];
 
                 const vec3<S> u_M = u_Ms_batch[t];
                 const vec3<S> v_M = v_Ms_batch[t];
@@ -294,7 +299,7 @@ namespace gsplat
                 const vec3<S> h_y = py * w_M - v_M;
 
                 const vec3<S> ray_cross = glm::cross(h_x, h_y);
-                if (ray_cross.z == S(0))
+                if (fabsf(ray_cross.z) < S(1e-6f))
                     continue;
 
                 const vec3<S> dxw = glm::cross(h_x, w_M);
@@ -303,34 +308,32 @@ namespace gsplat
                 const vec3<S> s1ray_cross = ray_cross + S(0.5) * dxw - S(0.5) * dyw;
                 const vec3<S> s2ray_cross = ray_cross + S(0.5) * dxw + S(0.5) * dyw;
                 const vec3<S> s3ray_cross = ray_cross - S(0.5) * dxw + S(0.5) * dyw;
-                if (s0ray_cross.z == S(0) || s1ray_cross.z == S(0) || s2ray_cross.z == S(0) || s3ray_cross.z == S(0))
+                if (fabsf(s0ray_cross.z) < S(1e-6f) || fabsf(s1ray_cross.z) < S(1e-6f) || fabsf(s2ray_cross.z) < S(1e-6f) || fabsf(s3ray_cross.z) < S(1e-6f))
                     continue;
 
                 const vec2<S> s = vec2<S>(ray_cross.x / ray_cross.z, ray_cross.y / ray_cross.z);
-                vec2<S> s0 = anisotropic::s_to_uv(
+                vec2<S> s0 = anisotropic_bilinear::s_to_uv(
                     vec2<S>(s0ray_cross.x / s0ray_cross.z, s0ray_cross.y / s0ray_cross.z),
                     texture_res_x, texture_res_y, texture_range.x, texture_range.y);
-                vec2<S> s1 = anisotropic::s_to_uv(
+                vec2<S> s1 = anisotropic_bilinear::s_to_uv(
                     vec2<S>(s1ray_cross.x / s1ray_cross.z, s1ray_cross.y / s1ray_cross.z),
                     texture_res_x, texture_res_y, texture_range.x, texture_range.y);
-                vec2<S> s2 = anisotropic::s_to_uv(
+                vec2<S> s2 = anisotropic_bilinear::s_to_uv(
                     vec2<S>(s2ray_cross.x / s2ray_cross.z, s2ray_cross.y / s2ray_cross.z),
                     texture_res_x, texture_res_y, texture_range.x, texture_range.y);
-                vec2<S> s3 = anisotropic::s_to_uv(
+                vec2<S> s3 = anisotropic_bilinear::s_to_uv(
                     vec2<S>(s3ray_cross.x / s3ray_cross.z, s3ray_cross.y / s3ray_cross.z),
                     texture_res_x, texture_res_y, texture_range.x, texture_range.y);
 
                 vec2<S> n01, n12, n23, n30;
-                S n01min, n01max, n12min, n12max, n23min, n23max, n30min, n30max;
+                S n01max, n12max, n23max, n30max;
                 int32_t minu, maxu, minv, maxv;
-                vec2<int> s0texel, s1texel, s2texel, s3texel;
                 S iarea;
 
-                const S area = anisotropic::precompute(
+                const S area = anisotropic_bilinear::precompute(
                     &s0, &s1, &s2, &s3, &n01, &n12, &n23, &n30,
-                    &n01min, &n01max, &n12min, &n12max, &n23min, &n23max, &n30min, &n30max,
-                    &minu, &minv, &maxu, &maxv, &s0texel, &s1texel, &s2texel, &s3texel,
-                    texture_res_x, texture_res_y);
+                    &n01max, &n12max, &n23max, &n30max,
+                    &minu, &minv, &maxu, &maxv, texture_res_x, texture_res_y);
 
                 int32_t valid_texture = 1;
                 if (area == 0 || minu == maxu || minv == maxv)
@@ -357,35 +360,40 @@ namespace gsplat
                 // merge ray-intersection kernel and 2d gaussian kernel
                 const S gauss_weight = min(gauss_weight_3d, gauss_weight_2d);
 
-                const S sigma = S(0.5) * gauss_weight;
-                // evaluation of the gaussian exponential term
-                S alpha = opac * (S(0.998) - g_weight + g_weight * exp(-sigma));
-
-                // ignore transparent gaussians
-                if (sigma < S(0) || alpha < S(1) / S(255))
+                // blended Gaussian + smooth-step visibility
+                S kernel;
+                if (gauss_weight <= S(0))
                 {
-                    continue;
+                    kernel = S(1);
+                }
+                else
+                {
+                    const S gaussian_kernel = exp(-S(0.5) * gauss_weight);
+                    const S sigmoid_kernel = sigmoid(-(steepness * log(gauss_weight)));
+                    kernel = gaussian_kernel * g_weight + sigmoid_kernel * s_weight + (S(0.998) - g_weight - s_weight);
                 }
 
+                S alpha_scaling_factor = S(0);
                 if (valid_texture > 0)
                 {
-                    S alpha_scaling_factor = S(0);
-                    anisotropic::alpha_color_sample<COLOR_DIM, 3, S>(
+                    anisotropic_bilinear::alpha_color_sample<COLOR_DIM, 3, S>(
                         textures, g, s0, s1, s2, s3,
                         n01, n12, n23, n30,
-                        n01min, n01max, n12min, n12max, n23min, n23max, n30min, n30max,
+                        n01max, n12max, n23max, n30max,
                         minu, maxu, minv, maxv,
-                        s0texel, s1texel, s2texel, s3texel,
                         area, iarea,
                         texture_res_x, texture_res_y,
                         &alpha_scaling_factor,
                         tex_color);
-                    alpha *= alpha_scaling_factor;
                 }
-                alpha = min(S(0.999), alpha);
+                else
+                {
+                    alpha_scaling_factor = S(1);
+                }
+                const S alpha = min(S(0.999), opac * kernel * alpha_scaling_factor);
 
-                // ignore transparent gaussians
-                if (sigma < S(0) || alpha < S(1) / S(255))
+                // ignore transparent sigmoids
+                if (gauss_weight < S(0) || alpha < S(1) / S(255))
                 {
                     continue;
                 }
@@ -492,9 +500,10 @@ namespace gsplat
         torch::Tensor,
         torch::Tensor,
         torch::Tensor>
-    call_fwd_aniso_g_kernel_with_dim(
+    call_fwd_aniso_bilinear_gs_kernel_with_dim(
         // Gaussian parameters
         const torch::Tensor &means2d,                   // [C, N, 2] or [nnz, 2]
+        const torch::Tensor &steepnesses,               // [C, N] or [nnz]
         const torch::Tensor &ray_transforms,            // [C, N, 3, 3] or [nnz, 3, 3]
         const torch::Tensor &colors,                    // [C, N, channels] or [nnz, channels]
         const torch::Tensor &opacities,                 // [C, N]  or [nnz]
@@ -512,10 +521,11 @@ namespace gsplat
         const torch::Tensor &flatten_ids,  // [n_isects]
         // additional parameters
         const float gs_contrib_threshold,
-        const float g_weight)
+        const float s_weight)
     {
         GSPLAT_DEVICE_GUARD(means2d);
         GSPLAT_CHECK_INPUT(means2d);
+        GSPLAT_CHECK_INPUT(steepnesses);
         GSPLAT_CHECK_INPUT(ray_transforms);
         GSPLAT_CHECK_INPUT(colors);
         GSPLAT_CHECK_INPUT(opacities);
@@ -534,7 +544,7 @@ namespace gsplat
         bool packed = means2d.dim() == 2;
 
         uint32_t C = tile_offsets.size(0);         // number of cameras
-        uint32_t N = packed ? 0 : means2d.size(1); // number of gaussians
+        uint32_t N = packed ? 0 : means2d.size(1); // number of sigmoids
         uint32_t channels = colors.size(-1);
         uint32_t tile_height = tile_offsets.size(1);
         uint32_t tile_width = tile_offsets.size(2);
@@ -578,14 +588,14 @@ namespace gsplat
         at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
         const uint32_t shared_mem =
             tile_size * tile_size *
-            (sizeof(int32_t) + sizeof(vec3<float>) + sizeof(vec3<float>) +
+            (sizeof(int32_t) + sizeof(vec3<float>) + sizeof(float) + sizeof(vec3<float>) +
              sizeof(vec3<float>) + sizeof(vec3<float>));
 
         // TODO: an optimization can be done by passing the actual number of
         // channels into the kernel functions and avoid necessary global memory
         // writes. This requires moving the channel padding from python to C side.
         if (cudaFuncSetAttribute(
-                rasterize_to_pixels_fwd_aniso_textured_gaussians_kernel<CDIM, float>,
+                rasterize_to_pixels_fwd_aniso_bilinear_textured_gausssigs_kernel<CDIM, float>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
                 shared_mem) != cudaSuccess)
         {
@@ -594,13 +604,14 @@ namespace gsplat
                 shared_mem,
                 " bytes), try lowering tile_size.");
         }
-        rasterize_to_pixels_fwd_aniso_textured_gaussians_kernel<CDIM, float>
+        rasterize_to_pixels_fwd_aniso_bilinear_textured_gausssigs_kernel<CDIM, float>
             <<<blocks, threads, shared_mem, stream>>>(
                 C,
                 N,
                 n_isects,
                 packed,
                 reinterpret_cast<vec2<float> *>(means2d.data_ptr<float>()),
+                steepnesses.data_ptr<float>(),
                 ray_transforms.data_ptr<float>(),
                 colors.data_ptr<float>(),
                 opacities.data_ptr<float>(),
@@ -618,7 +629,7 @@ namespace gsplat
                 tile_offsets.data_ptr<int32_t>(),
                 flatten_ids.data_ptr<int32_t>(),
                 gs_contrib_threshold, // added
-                g_weight,
+                s_weight,
                 renders.data_ptr<float>(),
                 alphas.data_ptr<float>(),
                 render_normals.data_ptr<float>(),
@@ -651,9 +662,10 @@ namespace gsplat
         torch::Tensor,
         torch::Tensor,
         torch::Tensor>
-    rasterize_to_pixels_fwd_aniso_textured_gaussians_tensor(
+    rasterize_to_pixels_fwd_aniso_bilinear_textured_gausssigs_tensor(
         // Gaussian parameters
-        const torch::Tensor &means2d,                   // [C, N, 2] or [nnz, 2]
+        const torch::Tensor &means2d, // [C, N, 2] or [nnz, 2]
+        const torch::Tensor &steepnesses,
         const torch::Tensor &ray_transforms,            // [C, N, 3, 3] or [nnz, 3, 3]
         const torch::Tensor &colors,                    // [C, N, channels] or [nnz, channels]
         const torch::Tensor &opacities,                 // [C, N]  or [nnz]
@@ -672,15 +684,16 @@ namespace gsplat
         const torch::Tensor &flatten_ids,  // [n_isects]
         // additional parameters
         const float gs_contrib_threshold,
-        const float g_weight)
+        const float s_weight)
     {
         GSPLAT_CHECK_INPUT(colors);
         uint32_t channels = colors.size(-1);
 
 #define __GS__CALL_(N)                                     \
     case N:                                                \
-        return call_fwd_aniso_g_kernel_with_dim<N>(        \
+        return call_fwd_aniso_bilinear_gs_kernel_with_dim<N>( \
             means2d,                                       \
+            steepnesses,                                   \
             ray_transforms,                                \
             colors,                                        \
             opacities,                                     \
@@ -695,7 +708,7 @@ namespace gsplat
             tile_offsets,                                  \
             flatten_ids,                                   \
             gs_contrib_threshold,                          \
-            g_weight);
+            s_weight);
         // TODO: an optimization can be done by passing the actual number of
         // channels into the kernel functions and avoid necessary global memory
         // writes. This requires moving the channel padding from python to C side.

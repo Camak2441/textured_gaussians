@@ -97,6 +97,8 @@ FACTOR_SHORTHANDS = {
     "lin": """LinearInterpolate(key_steps=[0, 15000],key_values=[1.0,0.0])""",
     "lin2": """LinearInterpolate(key_steps=[0, 30000],key_values=[0.0,1.0])""",
     "lin3": """LinearInterpolate(key_steps=[0, 30000],key_values=[1.0,0.0])""",
+    "lin02to0": """LinearInterpolate(key_steps=[0, 30000],key_values=[0.2,0.0])""",
+    "lin08to0": """LinearInterpolate(key_steps=[0, 30000],key_values=[0.8,0.0])""",
     "linhalf": """LinearInterpolate(key_steps=[0, 15000],key_values=[1.0,0.5])""",
     "quad": "Quadratic(one_step=30000)",
     "sqrt": "SquareRoot(one_step=30000)",
@@ -104,6 +106,7 @@ FACTOR_SHORTHANDS = {
 
 LOSS_SHORTHANDS = {
     "t00": """Triangle0""",
+    "t01": """Triangle(peak=0.1)""",
     "t02": """Triangle(peak=0.2)""",
     "t03": """Triangle(peak=0.3)""",
     "t04": """Triangle(peak=0.4)""",
