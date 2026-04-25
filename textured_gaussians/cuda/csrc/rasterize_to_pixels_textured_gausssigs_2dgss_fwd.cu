@@ -205,19 +205,19 @@ namespace gsplat
                 const S gauss_weight = min(gauss_weight_3d, gauss_weight_2d);
 
                 // blended Gaussian + smooth-step visibility
-                S vis;
+                S kernel;
                 if (gauss_weight <= S(0))
                 {
-                    vis = S(1);
+                    kernel = S(1);
                 }
                 else
                 {
                     const S gaussian_kernel = exp(-S(0.5) * gauss_weight);
                     const S sigmoid_kernel = sigmoid(-(steepness * log(gauss_weight)));
-                    vis = gaussian_kernel * g_weight + sigmoid_kernel * s_weight + (S(0.998) - g_weight - s_weight);
+                    kernel = gaussian_kernel * g_weight + sigmoid_kernel * s_weight + (S(0.998) - g_weight - s_weight);
                 }
 
-                const S alpha = min(S(0.999), opac * vis * alpha_scaling_factor);
+                const S alpha = min(S(0.999), opac * kernel * alpha_scaling_factor);
 
                 if (gauss_weight < S(0) || alpha < S(1) / S(255))
                     continue;
