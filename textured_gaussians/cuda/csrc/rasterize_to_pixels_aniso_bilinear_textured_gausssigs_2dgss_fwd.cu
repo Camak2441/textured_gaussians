@@ -521,6 +521,7 @@ namespace gsplat
         const torch::Tensor &flatten_ids,  // [n_isects]
         // additional parameters
         const float gs_contrib_threshold,
+        const float g_weight,
         const float s_weight)
     {
         GSPLAT_DEVICE_GUARD(means2d);
@@ -629,6 +630,7 @@ namespace gsplat
                 tile_offsets.data_ptr<int32_t>(),
                 flatten_ids.data_ptr<int32_t>(),
                 gs_contrib_threshold, // added
+                g_weight,
                 s_weight,
                 renders.data_ptr<float>(),
                 alphas.data_ptr<float>(),
@@ -684,30 +686,32 @@ namespace gsplat
         const torch::Tensor &flatten_ids,  // [n_isects]
         // additional parameters
         const float gs_contrib_threshold,
+        const float g_weight,
         const float s_weight)
     {
         GSPLAT_CHECK_INPUT(colors);
         uint32_t channels = colors.size(-1);
 
-#define __GS__CALL_(N)                                     \
-    case N:                                                \
+#define __GS__CALL_(N)                                        \
+    case N:                                                   \
         return call_fwd_aniso_bilinear_gs_kernel_with_dim<N>( \
-            means2d,                                       \
-            steepnesses,                                   \
-            ray_transforms,                                \
-            colors,                                        \
-            opacities,                                     \
-            textures,                                      \
-            vec2<float>(texture_range_x, texture_range_y), \
-            normals,                                       \
-            backgrounds,                                   \
-            masks,                                         \
-            image_width,                                   \
-            image_height,                                  \
-            tile_size,                                     \
-            tile_offsets,                                  \
-            flatten_ids,                                   \
-            gs_contrib_threshold,                          \
+            means2d,                                          \
+            steepnesses,                                      \
+            ray_transforms,                                   \
+            colors,                                           \
+            opacities,                                        \
+            textures,                                         \
+            vec2<float>(texture_range_x, texture_range_y),    \
+            normals,                                          \
+            backgrounds,                                      \
+            masks,                                            \
+            image_width,                                      \
+            image_height,                                     \
+            tile_size,                                        \
+            tile_offsets,                                     \
+            flatten_ids,                                      \
+            gs_contrib_threshold,                             \
+            g_weight,                                         \
             s_weight);
         // TODO: an optimization can be done by passing the actual number of
         // channels into the kernel functions and avoid necessary global memory

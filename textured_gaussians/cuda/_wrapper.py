@@ -4941,7 +4941,10 @@ class _RasterizeToPixelsTexturedGaussSigs(torch.autograd.Function):
 GSPOST = "_textured_gausssigs"
 tgss_fns = {
     "bilinear_bwd2": (f"{PRE}fwd{GSPOST}", f"{PRE}bwd2{GSPOST}"),
-    "aniso_bilinear": (f"{PRE}fwd_aniso_bilinear{GSPOST}", f"{PRE}bwd_aniso_bilinear{GSPOST}"),
+    "anisotropic_bilinear": (
+        f"{PRE}fwd_aniso_bilinear{GSPOST}",
+        f"{PRE}bwd_aniso_bilinear{GSPOST}",
+    ),
 }
 
 
