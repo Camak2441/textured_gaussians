@@ -2,7 +2,7 @@
 #include "helpers.cuh"
 #include "types.cuh"
 #include "utils.cuh"
-#include "filters/bilinear_s.cuh"
+#include "filters/bilinear.cuh"
 #include <cooperative_groups.h>
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
@@ -179,7 +179,7 @@ namespace gsplat
                 int32_t ucoords[4];
                 int32_t vcoords[4];
                 S bilerp_weights[4];
-                int32_t valid_texture = bilinear_s::precompute(
+                int32_t valid_texture = bilinear::precompute(
                     s.x, s.y, texture_res_x, texture_res_y,
                     texture_range.x, texture_range.y,
                     ucoords, vcoords, bilerp_weights);
