@@ -127,7 +127,7 @@ def create_splats_with_optimizers(
         ("opacities", torch.nn.Parameter(opacities), 5e-2),
     ]
 
-    if cfg.model_type in ("2dss", "2dgss", "tss"):
+    if cfg.model_type in ("2dss", "2dgss", "tss", "tgss"):
         if init_type == "pretrained" and "steepnesses" in ckpt:
             steepnesses = ckpt["steepnesses"][sampled_pts_idx]
         else:
@@ -1049,6 +1049,7 @@ class Runner:
                         "coord_scale",
                     },
                 )
+                steepnesses = F.softplus(self.splats["steepnesses"])  # [N,]
                 textures = self.get_textures()
                 (
                     render_colors,
@@ -1065,6 +1066,7 @@ class Runner:
                     quats=quats,
                     scales=scales,
                     opacities=opacities,
+                    steepnesses=steepnesses,
                     colors=colors,
                     textures=textures,
                     viewmats=torch.linalg.inv(camtoworlds),  # [C, 4, 4]
