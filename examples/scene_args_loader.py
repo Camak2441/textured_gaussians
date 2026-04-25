@@ -290,6 +290,16 @@ def process_config(cfg: Config):
 
         match cfg.model_type:
             case "tgs" | "tss" | "tgss":
+                if (
+                    cfg.model_type == "tgs" and cfg.gaussian_factor != "one"
+                ) or cfg.model_type == "tgss":
+                    args.append(f"sg{cfg.gaussian_factor}")
+                if (
+                    cfg.model_type == "tss"
+                    and cfg.gaussian_factor != "one"
+                    or cfg.model_type == "tgss"
+                ):
+                    args.append(f"sw{cfg.sigmoid_factor}")
                 if cfg.texture_width != 64 or cfg.texture_height != 64:
                     if cfg.texture_width == cfg.texture_height:
                         args.append(f"t{cfg.texture_width}")
