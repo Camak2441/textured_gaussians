@@ -78,6 +78,10 @@ MODEL_BATCH_SIZE = {"mix2": 917504}
 
 FACTOR_SHORTHANDS = {
     "zero": """Constant(value=0.0)""",
+    "c01": """Constant(value=0.1)""",
+    "c02": """Constant(value=0.2)""",
+    "c03": """Constant(value=0.3)""",
+    "c04": """Constant(value=0.4)""",
     "half": """Constant(value=0.5)""",
     "c06": """Constant(value=0.6)""",
     "c07": """Constant(value=0.7)""",

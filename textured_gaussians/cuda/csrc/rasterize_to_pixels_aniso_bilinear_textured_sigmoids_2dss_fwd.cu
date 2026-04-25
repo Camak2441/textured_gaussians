@@ -47,6 +47,7 @@ namespace gsplat
                                                   // gives the interval that our sigmoids are gonna use.
         const int32_t *__restrict__ flatten_ids,  // [n_isects]                      // The global flatten indices in [C * N] or [nnz] from  `isect_tiles()`.
         const S gs_contrib_threshold,             // The threshold for gaussian opacity contribution.
+        const S s_weight,
 
         // outputs
         S *__restrict__ render_colors,    // [C, image_height, image_width, COLOR_DIM]
@@ -386,7 +387,7 @@ namespace gsplat
                 {
                     alpha_scaling_factor = S(1);
                 }
-                const S alpha = min(S(0.999), opac * step_vis * alpha_scaling_factor);
+                const S alpha = min(S(0.999), opac * (S(0.998) - s_weight + s_weight * step_vis) * alpha_scaling_factor);
 
                 // ignore transparent sigmoids
                 if (gauss_weight < S(0) || alpha < S(1) / S(255))
@@ -516,7 +517,8 @@ namespace gsplat
         const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
         const torch::Tensor &flatten_ids,  // [n_isects]
         // additional parameters
-        const float gs_contrib_threshold)
+        const float gs_contrib_threshold,
+        const float s_weight)
     {
         GSPLAT_DEVICE_GUARD(means2d);
         GSPLAT_CHECK_INPUT(means2d);
@@ -624,6 +626,7 @@ namespace gsplat
                 tile_offsets.data_ptr<int32_t>(),
                 flatten_ids.data_ptr<int32_t>(),
                 gs_contrib_threshold, // added
+                s_weight,
                 renders.data_ptr<float>(),
                 alphas.data_ptr<float>(),
                 render_normals.data_ptr<float>(),
@@ -677,7 +680,8 @@ namespace gsplat
         const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
         const torch::Tensor &flatten_ids,  // [n_isects]
         // additional parameters
-        const float gs_contrib_threshold)
+        const float gs_contrib_threshold,
+        const float s_weight)
     {
         GSPLAT_CHECK_INPUT(colors);
         uint32_t channels = colors.size(-1);
@@ -700,7 +704,8 @@ namespace gsplat
             tile_size,                                     \
             tile_offsets,                                  \
             flatten_ids,                                   \
-            gs_contrib_threshold);
+            gs_contrib_threshold,                          \
+            s_weight);
         // TODO: an optimization can be done by passing the actual number of
         // channels into the kernel functions and avoid necessary global memory
         // writes. This requires moving the channel padding from python to C side.

@@ -43,6 +43,7 @@ namespace gsplat
         const uint32_t tile_height,
         const int32_t *__restrict__ tile_offsets, // [C, tile_height, tile_width]
         const int32_t *__restrict__ flatten_ids,  // [n_isects]
+        const S s_weight,                         //
 
         // fwd outputs
         const S *__restrict__ render_colors,    // [C, image_height, image_width,
@@ -448,7 +449,7 @@ namespace gsplat
                         vis = sigmoid(-(steepness * __logf(gauss_weight)));
                     }
 
-                    alpha = min(S(0.999), opac * vis * alpha_scaling_factor);
+                    alpha = min(S(0.999), opac * (S(0.998) - s_weight + s_weight * vis) * alpha_scaling_factor);
 
                     // gaussian throw out
                     if (gauss_weight < S(0) || alpha < S(1) / S(255))
@@ -614,11 +615,11 @@ namespace gsplat
                      * 2DGS backward pass: compute gradients of d_out / d_G_i and d_G_i w.r.t geometry parameters
                      * ==================================================
                      */
-                    if (opac * vis * alpha_scaling_factor <= S(0.999))
+                    if (opac * (S(0.998) - s_weight + s_weight * vis) * alpha_scaling_factor <= S(0.999))
                     {
                         S v_depth = S(0);
-                        // d(a_i * G_i) / d(G_i) = a_i
-                        const S v_G = opac * v_alpha * alpha_scaling_factor;
+                        // d(a_i * G_i) / d(G_i) = a_i, scaled by s_weight since d(alpha)/d(vis) = opac * s_weight * alpha_scaling_factor
+                        const S v_G = opac * s_weight * v_alpha * alpha_scaling_factor;
 
                         // gw^(k-1) = (1-vis)/(vis*gw)  [from vis=1/(1+gw^k) => gw^k=(1-vis)/vis]
                         // used in d(vis)/d(gw) = -vis^2 * k * gw^(k-1)
@@ -668,7 +669,7 @@ namespace gsplat
                                     abs(v_xy_local.x), abs(v_xy_local.y)};
                             }
                         }
-                        v_opacity_local = vis * v_alpha * alpha_scaling_factor;
+                        v_opacity_local = (S(0.998) - s_weight + s_weight * vis) * v_alpha * alpha_scaling_factor;
 
                         // steepness gradient: d(vis)/d(k) = -vis*(1-vis)*log(gw)
                         // [from d(vis)/d(k) = -vis^2*gw^k*log(gw) and gw^k=(1-vis)/vis]
@@ -815,7 +816,8 @@ namespace gsplat
         const uint32_t tile_size,
         // ray_crossions
         const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
-        const torch::Tensor &flatten_ids,  // [n_isects]
+        const torch::Tensor &flatten_ids,  //
+        float s_weight,                    // [n_isects]
         // forward outputs
         const torch::Tensor
             &render_colors,                 // [C, image_height, image_width, COLOR_DIM]
@@ -932,6 +934,7 @@ namespace gsplat
                     tile_height,
                     tile_offsets.data_ptr<int32_t>(),
                     flatten_ids.data_ptr<int32_t>(),
+                    s_weight,
                     render_colors.data_ptr<float>(),
                     render_alphas.data_ptr<float>(),
                     last_ids.data_ptr<int32_t>(),
@@ -997,6 +1000,7 @@ namespace gsplat
         // ray_crossions
         const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
         const torch::Tensor &flatten_ids,  // [n_isects]
+        float s_weight,
         // forward outputs
         const torch::Tensor
             &render_colors,                 // [C, image_height, image_width, COLOR_DIM]
@@ -1034,6 +1038,7 @@ namespace gsplat
             tile_size,                                     \
             tile_offsets,                                  \
             flatten_ids,                                   \
+            s_weight,                                      \
             render_colors,                                 \
             render_alphas,                                 \
             last_ids,                                      \

@@ -1655,7 +1655,8 @@ namespace gsplat
         const uint32_t tile_size,
         const torch::Tensor &tile_offsets,
         const torch::Tensor &flatten_ids,
-        const float gs_contrib_threshold);
+        const float gs_contrib_threshold,
+        const float s_weight);
 
     std::tuple<
         torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
@@ -1678,6 +1679,7 @@ namespace gsplat
         const uint32_t tile_size,
         const torch::Tensor &tile_offsets,
         const torch::Tensor &flatten_ids,
+        float s_weight,
         const torch::Tensor &render_colors,
         const torch::Tensor &render_alphas,
         const torch::Tensor &last_ids,

@@ -46,6 +46,7 @@ namespace gsplat
         const uint32_t tile_height,
         const int32_t *__restrict__ tile_offsets,
         const int32_t *__restrict__ flatten_ids,
+        const S s_weight,
 
         // fwd outputs
         const S *__restrict__ render_colors,
@@ -69,8 +70,7 @@ namespace gsplat
         S *__restrict__ v_opacities,
         at::PackedTensorAccessor32<S, 4, at::RestrictPtrTraits> v_textures,
         S *__restrict__ v_normals,
-        S *__restrict__ v_densify,
-        const S s_weight)
+        S *__restrict__ v_densify)
     {
         auto block = cg::this_thread_block();
         uint32_t camera_id = block.group_index().x;
@@ -603,6 +603,7 @@ namespace gsplat
         const uint32_t tile_size,
         const torch::Tensor &tile_offsets,
         const torch::Tensor &flatten_ids,
+        float s_weight,
         const torch::Tensor &render_colors,
         const torch::Tensor &render_alphas,
         const torch::Tensor &last_ids,
@@ -612,8 +613,7 @@ namespace gsplat
         const torch::Tensor &v_render_normals,
         const torch::Tensor &v_render_distort,
         const torch::Tensor &v_render_median,
-        bool absgrad,
-        float s_weight)
+        bool absgrad)
     {
         GSPLAT_DEVICE_GUARD(means2d);
         GSPLAT_CHECK_INPUT(means2d);
@@ -709,6 +709,7 @@ namespace gsplat
                     tile_height,
                     tile_offsets.data_ptr<int32_t>(),
                     flatten_ids.data_ptr<int32_t>(),
+                    s_weight,
                     render_colors.data_ptr<float>(),
                     render_alphas.data_ptr<float>(),
                     last_ids.data_ptr<int32_t>(),
@@ -727,8 +728,7 @@ namespace gsplat
                     v_opacities.data_ptr<float>(),
                     v_textures.packed_accessor32<float, 4, at::RestrictPtrTraits>(),
                     v_normals.data_ptr<float>(),
-                    v_densify.data_ptr<float>(),
-                    s_weight);
+                    v_densify.data_ptr<float>());
         }
 
         return std::make_tuple(
@@ -805,6 +805,7 @@ namespace gsplat
             tile_size,                                     \
             tile_offsets,                                  \
             flatten_ids,                                   \
+            s_weight,                                      \
             render_colors,                                 \
             render_alphas,                                 \
             last_ids,                                      \
@@ -814,8 +815,7 @@ namespace gsplat
             v_render_normals,                              \
             v_render_distort,                              \
             v_render_median,                               \
-            absgrad,                                       \
-            s_weight);
+            absgrad);
 
         switch (COLOR_DIM)
         {
