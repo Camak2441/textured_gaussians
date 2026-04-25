@@ -30,6 +30,7 @@ namespace gsplat
         const S *__restrict__ normals,                                          // [C, N, 3] or [nnz, 3]                  // The normals in camera space.
         const S *__restrict__ opacities,                                        // [C, N] or [nnz]                        // Gaussian opacities that support per-view values.
         at::PackedTensorAccessor32<const S, 4, at::RestrictPtrTraits> textures, // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM] // Gaussian textures or ND features.
+        const vec2<S> texture_range,                                            //
         const S *__restrict__ backgrounds,                                      // [C, COLOR_DIM]                         // Background colors on camera basis
         const bool *__restrict__ masks,                                         // [C, tile_height, tile_width]           // Optional tile mask to skip rendering GS to masked tiles.
 
@@ -303,9 +304,9 @@ namespace gsplat
                  * Forward pass variables
                  * ==================================================
                  */
-                S alpha;           // for the currently processed gaussian, per pixel
-                S opac;            // opacity of the currently processed gaussian, per pixel
-                S vis;             // visibility of the currently processed gaussian (the pure gaussian weight, not multiplied by opacity), per pixel
+                S alpha; // for the currently processed gaussian, per pixel
+                S opac;  // opacity of the currently processed gaussian, per pixel
+                S vis;   // visibility of the currently processed gaussian (the pure gaussian weight, not multiplied by opacity), per pixel
                 S gaussian_kernel;
                 S gauss_weight_3d; // 3D gaussian weight (using the proper intersection of UV space), per pixel
                 S gauss_weight_2d; // 2D gaussian weight (using the projected 2D mean), per pixel
@@ -367,10 +368,18 @@ namespace gsplat
                         valid = false;
 
                     s = {ray_cross.x / ray_cross.z, ray_cross.y / ray_cross.z};
-                    s0 = anisotropic_bilinear::s_to_uv(vec2<S>(s0ray_cross.x / s0ray_cross.z, s0ray_cross.y / s0ray_cross.z), texture_res_x, texture_res_y);
-                    s1 = anisotropic_bilinear::s_to_uv(vec2<S>(s1ray_cross.x / s1ray_cross.z, s1ray_cross.y / s1ray_cross.z), texture_res_x, texture_res_y);
-                    s2 = anisotropic_bilinear::s_to_uv(vec2<S>(s2ray_cross.x / s2ray_cross.z, s2ray_cross.y / s2ray_cross.z), texture_res_x, texture_res_y);
-                    s3 = anisotropic_bilinear::s_to_uv(vec2<S>(s3ray_cross.x / s3ray_cross.z, s3ray_cross.y / s3ray_cross.z), texture_res_x, texture_res_y);
+                    s0 = anisotropic_bilinear::s_to_uv(
+                        vec2<S>(s0ray_cross.x / s0ray_cross.z, s0ray_cross.y / s0ray_cross.z),
+                        texture_res_x, texture_res_y, texture_range.x, texture_range.y);
+                    s1 = anisotropic_bilinear::s_to_uv(
+                        vec2<S>(s1ray_cross.x / s1ray_cross.z, s1ray_cross.y / s1ray_cross.z),
+                        texture_res_x, texture_res_y, texture_range.x, texture_range.y);
+                    s2 = anisotropic_bilinear::s_to_uv(
+                        vec2<S>(s2ray_cross.x / s2ray_cross.z, s2ray_cross.y / s2ray_cross.z),
+                        texture_res_x, texture_res_y, texture_range.x, texture_range.y);
+                    s3 = anisotropic_bilinear::s_to_uv(
+                        vec2<S>(s3ray_cross.x / s3ray_cross.z, s3ray_cross.y / s3ray_cross.z),
+                        texture_res_x, texture_res_y, texture_range.x, texture_range.y);
 
                     area = anisotropic_bilinear::precompute(
                         &s0, &s1, &s2, &s3, &n01, &n12, &n23, &n30,
@@ -745,13 +754,14 @@ namespace gsplat
         torch::Tensor>
     call_bwd_aniso_bilinear_kernel_with_dim(
         // Gaussian parameters
-        const torch::Tensor &means2d,        // [C, N, 2] or [nnz, 2]
-        const torch::Tensor &ray_transforms, // [C, N, 3, 3] or [nnz, 3, 3]
-        const torch::Tensor &colors,         // [C, N, 3] or [nnz, 3]
-        const torch::Tensor &opacities,      // [C, N] or [nnz]
-        const torch::Tensor &textures,       //
-        const torch::Tensor &normals,        // [C, N, 3] or [nnz, 3]
-        const torch::Tensor &densify,
+        const torch::Tensor &means2d,                   // [C, N, 2] or [nnz, 2]
+        const torch::Tensor &ray_transforms,            // [C, N, 3, 3] or [nnz, 3, 3]
+        const torch::Tensor &colors,                    // [C, N, 3] or [nnz, 3]
+        const torch::Tensor &opacities,                 // [C, N] or [nnz]
+        const torch::Tensor &textures,                  //
+        const vec2<float> texture_range,                //
+        const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
+        const torch::Tensor &densify,                   //
         const at::optional<torch::Tensor> &backgrounds, // [C, 3]
         const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
         // image size
@@ -864,6 +874,7 @@ namespace gsplat
                     normals.data_ptr<float>(),
                     opacities.data_ptr<float>(),
                     textures.packed_accessor32<const float, 4, at::RestrictPtrTraits>(),
+                    texture_range,
                     backgrounds.has_value() ? backgrounds.value().data_ptr<float>()
                                             : nullptr,
                     masks.has_value() ? masks.value().data_ptr<bool>() : nullptr,
@@ -918,13 +929,15 @@ namespace gsplat
         torch::Tensor>
     rasterize_to_pixels_bwd_aniso_bilinear_textured_gaussians_tensor(
         // Gaussian parameters
-        const torch::Tensor &means2d,        // [C, N, 2] or [nnz, 2]
-        const torch::Tensor &ray_transforms, // [C, N, 3, 3] or [nnz, 3, 3]
-        const torch::Tensor &colors,         // [C, N, 3] or [nnz, 3]
-        const torch::Tensor &opacities,      // [C, N] or [nnz]
-        const torch::Tensor &textures,       //
-        const torch::Tensor &normals,        // [C, N, 3] or [nnz, 3]
-        const torch::Tensor &densify,
+        const torch::Tensor &means2d,                   // [C, N, 2] or [nnz, 2]
+        const torch::Tensor &ray_transforms,            // [C, N, 3, 3] or [nnz, 3, 3]
+        const torch::Tensor &colors,                    // [C, N, 3] or [nnz, 3]
+        const torch::Tensor &opacities,                 // [C, N] or [nnz]
+        const torch::Tensor &textures,                  //
+        const float texture_range_x,                    //
+        const float texture_range_y,                    //
+        const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
+        const torch::Tensor &densify,                   //
         const at::optional<torch::Tensor> &backgrounds, // [C, 3]
         const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
         // image size
@@ -953,33 +966,34 @@ namespace gsplat
         GSPLAT_CHECK_INPUT(colors);
         uint32_t COLOR_DIM = colors.size(-1);
 
-#define __GS__CALL_(N)                            \
-    case N:                                       \
+#define __GS__CALL_(N)                                     \
+    case N:                                                \
         return call_bwd_aniso_bilinear_kernel_with_dim<N>( \
-            means2d,                              \
-            ray_transforms,                       \
-            colors,                               \
-            opacities,                            \
-            textures,                             \
-            normals,                              \
-            densify,                              \
-            backgrounds,                          \
-            masks,                                \
-            image_width,                          \
-            image_height,                         \
-            tile_size,                            \
-            tile_offsets,                         \
-            flatten_ids,                          \
-            g_weight,                             \
-            render_colors,                        \
-            render_alphas,                        \
-            last_ids,                             \
-            median_ids,                           \
-            v_render_colors,                      \
-            v_render_alphas,                      \
-            v_render_normals,                     \
-            v_render_distort,                     \
-            v_render_median,                      \
+            means2d,                                       \
+            ray_transforms,                                \
+            colors,                                        \
+            opacities,                                     \
+            textures,                                      \
+            vec2<float>(texture_range_x, texture_range_y), \
+            normals,                                       \
+            densify,                                       \
+            backgrounds,                                   \
+            masks,                                         \
+            image_width,                                   \
+            image_height,                                  \
+            tile_size,                                     \
+            tile_offsets,                                  \
+            flatten_ids,                                   \
+            g_weight,                                      \
+            render_colors,                                 \
+            render_alphas,                                 \
+            last_ids,                                      \
+            median_ids,                                    \
+            v_render_colors,                               \
+            v_render_alphas,                               \
+            v_render_normals,                              \
+            v_render_distort,                              \
+            v_render_median,                               \
             absgrad);
 
         switch (COLOR_DIM)

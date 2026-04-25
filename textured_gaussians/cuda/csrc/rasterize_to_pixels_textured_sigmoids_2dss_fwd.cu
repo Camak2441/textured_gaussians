@@ -34,6 +34,7 @@ namespace gsplat
         const S *__restrict__ colors,                                           // [C, N, COLOR_DIM] or [nnz, COLOR_DIM]
         const S *__restrict__ opacities,                                        // [C, N] or [nnz]
         at::PackedTensorAccessor32<const S, 4, at::RestrictPtrTraits> textures, // [N, res, res, 4]
+        const vec2<S> texture_range,                                            //
         const S *__restrict__ normals,                                          // [C, N, 3] or [nnz, 3]
         const S *__restrict__ backgrounds,                                      // [C, COLOR_DIM]
         const bool *__restrict__ masks,                                         // [C, tile_height, tile_width]
@@ -45,6 +46,7 @@ namespace gsplat
         const int32_t *__restrict__ tile_offsets, // [C, tile_height, tile_width]
         const int32_t *__restrict__ flatten_ids,  // [n_isects]
         const S gs_contrib_threshold,
+        const S s_weight,
 
         // outputs
         S *__restrict__ render_colors,
@@ -178,7 +180,9 @@ namespace gsplat
                 int32_t vcoords[4];
                 S bilerp_weights[4];
                 int32_t valid_texture = bilinear_s::precompute(
-                    s.x, s.y, texture_res_x, texture_res_y, ucoords, vcoords, bilerp_weights);
+                    s.x, s.y, texture_res_x, texture_res_y,
+                    texture_range.x, texture_range.y,
+                    ucoords, vcoords, bilerp_weights);
 
                 S alpha_scaling_factor = S(0);
                 if (valid_texture > 0)
@@ -210,7 +214,7 @@ namespace gsplat
                     step_vis = sigmoid(-(steepness * log(gauss_weight)));
                 }
 
-                const S alpha = min(S(0.999), opac * step_vis * alpha_scaling_factor);
+                const S alpha = min(S(0.999), opac * (S(0.998) - s_weight + s_weight * step_vis) * alpha_scaling_factor);
 
                 if (gauss_weight < S(0) || alpha < S(1) / S(255))
                     continue;
@@ -305,6 +309,7 @@ namespace gsplat
         const torch::Tensor &colors,
         const torch::Tensor &opacities,
         const torch::Tensor &textures,
+        const vec2<float> texture_range,
         const torch::Tensor &normals,
         const at::optional<torch::Tensor> &backgrounds,
         const at::optional<torch::Tensor> &masks,
@@ -313,7 +318,8 @@ namespace gsplat
         const uint32_t tile_size,
         const torch::Tensor &tile_offsets,
         const torch::Tensor &flatten_ids,
-        const float gs_contrib_threshold)
+        const float gs_contrib_threshold,
+        const float s_weight)
     {
         GSPLAT_DEVICE_GUARD(means2d);
         GSPLAT_CHECK_INPUT(means2d);
@@ -399,6 +405,7 @@ namespace gsplat
                 colors.data_ptr<float>(),
                 opacities.data_ptr<float>(),
                 textures.packed_accessor32<const float, 4, at::RestrictPtrTraits>(),
+                texture_range,
                 normals.data_ptr<float>(),
                 backgrounds.has_value() ? backgrounds.value().data_ptr<float>() : nullptr,
                 masks.has_value() ? masks.value().data_ptr<bool>() : nullptr,
@@ -410,6 +417,7 @@ namespace gsplat
                 tile_offsets.data_ptr<int32_t>(),
                 flatten_ids.data_ptr<int32_t>(),
                 gs_contrib_threshold,
+                s_weight,
                 renders.data_ptr<float>(),
                 alphas.data_ptr<float>(),
                 render_normals.data_ptr<float>(),
@@ -449,6 +457,8 @@ namespace gsplat
         const torch::Tensor &colors,
         const torch::Tensor &opacities,
         const torch::Tensor &textures,
+        const float texture_range_x,
+        const float texture_range_y,
         const torch::Tensor &normals,
         const at::optional<torch::Tensor> &backgrounds,
         const at::optional<torch::Tensor> &masks,
@@ -457,29 +467,32 @@ namespace gsplat
         const uint32_t tile_size,
         const torch::Tensor &tile_offsets,
         const torch::Tensor &flatten_ids,
-        const float gs_contrib_threshold)
+        const float gs_contrib_threshold,
+        const float s_weight)
     {
         GSPLAT_CHECK_INPUT(colors);
         uint32_t channels = colors.size(-1);
 
-#define __GS__CALL_(N)                         \
-    case N:                                    \
-        return call_fwd_ts_kernel_with_dim<N>( \
-            means2d,                           \
-            steepnesses,                       \
-            ray_transforms,                    \
-            colors,                            \
-            opacities,                         \
-            textures,                          \
-            normals,                           \
-            backgrounds,                       \
-            masks,                             \
-            image_width,                       \
-            image_height,                      \
-            tile_size,                         \
-            tile_offsets,                      \
-            flatten_ids,                       \
-            gs_contrib_threshold);
+#define __GS__CALL_(N)                                     \
+    case N:                                                \
+        return call_fwd_ts_kernel_with_dim<N>(             \
+            means2d,                                       \
+            steepnesses,                                   \
+            ray_transforms,                                \
+            colors,                                        \
+            opacities,                                     \
+            textures,                                      \
+            vec2<float>(texture_range_x, texture_range_y), \
+            normals,                                       \
+            backgrounds,                                   \
+            masks,                                         \
+            image_width,                                   \
+            image_height,                                  \
+            tile_size,                                     \
+            tile_offsets,                                  \
+            flatten_ids,                                   \
+            gs_contrib_threshold,                          \
+            s_weight);
 
         switch (channels)
         {

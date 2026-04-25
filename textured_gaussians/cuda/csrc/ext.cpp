@@ -93,6 +93,25 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
         "rasterize_to_pixels_bwd2_textured_gaussians",
         &gsplat::rasterize_to_pixels_bwd2_textured_gaussians_tensor);
 
+    // Bilinear2 Textured Gaussians
+    m.def(
+        "rasterize_to_pixels_fwd_bilinear2_textured_gaussians",
+        &gsplat::rasterize_to_pixels_fwd_bilinear2_textured_gaussians_tensor);
+    m.def(
+        "rasterize_to_pixels_bwd_bilinear2_textured_gaussians",
+        &gsplat::rasterize_to_pixels_bwd_bilinear2_textured_gaussians_tensor);
+
+    // Bilinear3 Textured Gaussians
+    m.def(
+        "rasterize_to_pixels_fwd_bilinear3_textured_gaussians",
+        &gsplat::rasterize_to_pixels_fwd_bilinear3_textured_gaussians_tensor);
+    m.def(
+        "rasterize_to_pixels_bwd_bilinear3_textured_gaussians",
+        &gsplat::rasterize_to_pixels_bwd_bilinear3_textured_gaussians_tensor);
+    m.def(
+        "rasterize_to_pixels_bwd2_bilinear3_textured_gaussians",
+        &gsplat::rasterize_to_pixels_bwd2_bilinear3_textured_gaussians_tensor);
+
     // Mipmapped Textured Gaussians
     m.def(
         "rasterize_to_pixels_fwd_mip_textured_gaussians",
@@ -125,29 +144,16 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
         "rasterize_to_pixels_bwd_aniso_bilinear_textured_gaussians",
         &gsplat::rasterize_to_pixels_bwd_aniso_bilinear_textured_gaussians_tensor);
 
-    // Bilinear2 Textured Gaussians
-    m.def(
-        "rasterize_to_pixels_fwd_bilinear2_textured_gaussians",
-        &gsplat::rasterize_to_pixels_fwd_bilinear2_textured_gaussians_tensor);
-    m.def(
-        "rasterize_to_pixels_bwd_bilinear2_textured_gaussians",
-        &gsplat::rasterize_to_pixels_bwd_bilinear2_textured_gaussians_tensor);
-
-    // Bilinear3 Textured Gaussians
-    m.def(
-        "rasterize_to_pixels_fwd_bilinear3_textured_gaussians",
-        &gsplat::rasterize_to_pixels_fwd_bilinear3_textured_gaussians_tensor);
-    m.def(
-        "rasterize_to_pixels_bwd_bilinear3_textured_gaussians",
-        &gsplat::rasterize_to_pixels_bwd_bilinear3_textured_gaussians_tensor);
-    m.def(
-        "rasterize_to_pixels_bwd2_bilinear3_textured_gaussians",
-        &gsplat::rasterize_to_pixels_bwd2_bilinear3_textured_gaussians_tensor);
-
     // Implicit Textured Gaussians
     m.def(
         "rasterize_to_samples_fwd_textured_gaussians",
         &gsplat::rasterize_to_samples_fwd_textured_gaussians_tensor);
+    m.def(
+        "rasterize_to_samples_world_fwd_textured_gaussians",
+        &gsplat::rasterize_to_samples_world_fwd_textured_gaussians_tensor);
+    m.def(
+        "rasterize_to_samples_world_and_view_fwd_textured_gaussians",
+        &gsplat::rasterize_to_samples_world_and_view_fwd_textured_gaussians_tensor);
     m.def(
         "rasterize_to_pixels_fwd_implicit_textured_gaussians",
         &gsplat::rasterize_to_pixels_fwd_implicit_textured_gaussians_tensor);
@@ -175,14 +181,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
         "generate_mipmap_bwd",
         &gsplat::generate_mipmap_bwd_tensor);
 
-    // World-space sample rasterization
-    m.def(
-        "rasterize_to_samples_world_fwd_textured_gaussians",
-        &gsplat::rasterize_to_samples_world_fwd_textured_gaussians_tensor);
-    m.def(
-        "rasterize_to_samples_world_and_view_fwd_textured_gaussians",
-        &gsplat::rasterize_to_samples_world_and_view_fwd_textured_gaussians_tensor);
-
     // 2DSS
     m.def(
         "rasterize_to_pixels_fwd_2dss",
@@ -198,6 +196,15 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     m.def(
         "rasterize_to_pixels_bwd2_textured_sigmoids",
         &gsplat::rasterize_to_pixels_bwd2_textured_sigmoids_tensor);
+
+    // Anisotropic Bilinear Textured Sigmoids
+    m.def(
+        "rasterize_to_pixels_fwd_aniso_bilinear_textured_sigmoids",
+        &gsplat::rasterize_to_pixels_fwd_aniso_bilinear_textured_sigmoids_tensor);
+    m.def(
+        "rasterize_to_pixels_bwd_aniso_bilinear_textured_sigmoids",
+        &gsplat::rasterize_to_pixels_bwd_aniso_bilinear_textured_sigmoids_tensor);
+
     // Textured GaussSig 2DGSS
     m.def("rasterize_to_pixels_fwd_textured_gausssigs",
           &gsplat::rasterize_to_pixels_fwd_textured_gausssigs_tensor);
@@ -207,14 +214,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     // 2DGSS
     m.def("rasterize_to_pixels_fwd_2dgss", &gsplat::rasterize_to_pixels_fwd_2dgss_tensor);
     m.def("rasterize_to_pixels_bwd_2dgss", &gsplat::rasterize_to_pixels_bwd_2dgss_tensor);
-
-    // Anisotropic Bilinear Textured Sigmoids
-    m.def(
-        "rasterize_to_pixels_fwd_aniso_bilinear_textured_sigmoids",
-        &gsplat::rasterize_to_pixels_fwd_aniso_bilinear_textured_sigmoids_tensor);
-    m.def(
-        "rasterize_to_pixels_bwd_aniso_bilinear_textured_sigmoids",
-        &gsplat::rasterize_to_pixels_bwd_aniso_bilinear_textured_sigmoids_tensor);
 
     // Frequency-guided pre-training kernels
     m.def("freq_accumulate_fwd", &gsplat::freq_accumulate_fwd_tensor);

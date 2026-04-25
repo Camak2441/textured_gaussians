@@ -733,12 +733,12 @@ namespace gsplat
         torch::Tensor>
     call_bwd_implicit_kernel_with_dim(
         // Gaussian parameters
-        const torch::Tensor &means2d,        // [C, N, 2] or [nnz, 2]
-        const torch::Tensor &ray_transforms, // [C, N, 3, 3] or [nnz, 3, 3]
-        const torch::Tensor &colors,         // [C, N, 3] or [nnz, 3]
-        const torch::Tensor &opacities,      // [C, N] or [nnz]
-        const torch::Tensor &normals,        // [C, N, 3] or [nnz, 3]
-        const torch::Tensor &densify,
+        const torch::Tensor &means2d,                   // [C, N, 2] or [nnz, 2]
+        const torch::Tensor &ray_transforms,            // [C, N, 3, 3] or [nnz, 3, 3]
+        const torch::Tensor &colors,                    // [C, N, 3] or [nnz, 3]
+        const torch::Tensor &opacities,                 // [C, N] or [nnz]
+        const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
+        const torch::Tensor &densify,                   //
         const at::optional<torch::Tensor> &backgrounds, // [C, 3]
         const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
         // image size

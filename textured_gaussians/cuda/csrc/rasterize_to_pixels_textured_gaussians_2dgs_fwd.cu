@@ -32,6 +32,7 @@ namespace gsplat
         const S *__restrict__ colors,                                           // [C, N, COLOR_DIM] or [nnz, COLOR_DIM]  // Gaussian colors or ND features.
         const S *__restrict__ opacities,                                        // [C, N] or [nnz]                        // Gaussian opacities that support per-view values.
         at::PackedTensorAccessor32<const S, 4, at::RestrictPtrTraits> textures, // [N, Texture_Resolution, Texture_Resolution, 4]
+        const vec2<S> texture_range,                                            //
         const S *__restrict__ normals,                                          // [C, N, 3] or [nnz, 3]                  // The normals in camera space.
         const S *__restrict__ backgrounds,                                      // [C, COLOR_DIM]                         // Background colors on camera basis
         const bool *__restrict__ masks,                                         // [C, tile_height, tile_width]            // Optional tile mask to skip rendering GS to masked tiles.
@@ -302,7 +303,10 @@ namespace gsplat
                 int32_t ucoords[4];
                 int32_t vcoords[4];
                 S bilerp_weights[4];
-                int32_t valid_texture = bilinear::precompute(s.x, s.y, texture_res_x, texture_res_y, ucoords, vcoords, bilerp_weights);
+                int32_t valid_texture = bilinear::precompute(
+                    s.x, s.y, texture_res_x, texture_res_y,
+                    texture_range.x, texture_range.y,
+                    ucoords, vcoords, bilerp_weights);
 
                 // calculate alpha texture scaling factor
                 S alpha_scaling_factor = S(0);
@@ -459,6 +463,7 @@ namespace gsplat
         const torch::Tensor &colors,                    // [C, N, channels] or [nnz, channels]
         const torch::Tensor &opacities,                 // [C, N]  or [nnz]
         const torch::Tensor &textures,                  //
+        const vec2<float> texture_range,                //
         const torch::Tensor &normals,                   // [C, N, 3]
         const at::optional<torch::Tensor> &backgrounds, // [C, channels]
         const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
@@ -564,6 +569,7 @@ namespace gsplat
                 colors.data_ptr<float>(),
                 opacities.data_ptr<float>(),
                 textures.packed_accessor32<const float, 4, at::RestrictPtrTraits>(),
+                texture_range,
                 normals.data_ptr<float>(),
                 backgrounds.has_value() ? backgrounds.value().data_ptr<float>()
                                         : nullptr,
@@ -616,6 +622,8 @@ namespace gsplat
         const torch::Tensor &colors,                    // [C, N, channels] or [nnz, channels]
         const torch::Tensor &opacities,                 // [C, N]  or [nnz]
         const torch::Tensor &textures,                  //
+        const float texture_range_x,                    //
+        const float texture_range_y,                    //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
         const at::optional<torch::Tensor> &backgrounds, // [C, channels]
         const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
@@ -633,23 +641,24 @@ namespace gsplat
         GSPLAT_CHECK_INPUT(colors);
         uint32_t channels = colors.size(-1);
 
-#define __GS__CALL_(N)                        \
-    case N:                                   \
-        return call_fwd_t_kernel_with_dim<N>( \
-            means2d,                          \
-            ray_transforms,                   \
-            colors,                           \
-            opacities,                        \
-            textures,                         \
-            normals,                          \
-            backgrounds,                      \
-            masks,                            \
-            image_width,                      \
-            image_height,                     \
-            tile_size,                        \
-            tile_offsets,                     \
-            flatten_ids,                      \
-            gs_contrib_threshold,             \
+#define __GS__CALL_(N)                                     \
+    case N:                                                \
+        return call_fwd_t_kernel_with_dim<N>(              \
+            means2d,                                       \
+            ray_transforms,                                \
+            colors,                                        \
+            opacities,                                     \
+            textures,                                      \
+            vec2<float>(texture_range_x, texture_range_y), \
+            normals,                                       \
+            backgrounds,                                   \
+            masks,                                         \
+            image_width,                                   \
+            image_height,                                  \
+            tile_size,                                     \
+            tile_offsets,                                  \
+            flatten_ids,                                   \
+            gs_contrib_threshold,                          \
             g_weight);
         // TODO: an optimization can be done by passing the actual number of
         // channels into the kernel functions and avoid necessary global memory

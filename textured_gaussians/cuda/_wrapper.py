@@ -1784,12 +1784,31 @@ def rasterize_to_pixels_2dgs(
     )
 
 
+PRE = "rasterize_to_pixels_"
+TGSPOST = "_textured_gaussians"
+tgs_fns = {
+    "bilinear": (f"{PRE}fwd{TGSPOST}", f"{PRE}bwd{TGSPOST}"),
+    "bilinear_bwd2": (f"{PRE}fwd{TGSPOST}", f"{PRE}bwd2{TGSPOST}"),
+    "bilinear2": (f"{PRE}fwd_bilinear2{TGSPOST}", f"{PRE}bwd_bilinear2{TGSPOST}"),
+    "bilinear3": (f"{PRE}fwd_bilinear3{TGSPOST}", f"{PRE}bwd_bilinear3{TGSPOST}"),
+    "bilinear3_bwd2": (f"{PRE}fwd_bilinear3{TGSPOST}", f"{PRE}bwd2_bilinear3{TGSPOST}"),
+    "mipmapped": (f"{PRE}fwd_mip{TGSPOST}", f"{PRE}bwd_mip{TGSPOST}"),
+    "anisotropic": (f"{PRE}fwd_aniso{TGSPOST}", f"{PRE}bwd_aniso{TGSPOST}"),
+    "anisotropic_bilinear": (
+        f"{PRE}fwd_aniso_bilinear{TGSPOST}",
+        f"{PRE}bwd_aniso_bilinear{TGSPOST}",
+    ),
+}
+
+
 def rasterize_to_pixels_textured_gaussians(
     means2d: Tensor,
     ray_transforms: Tensor,
     colors: Tensor,
     opacities: Tensor,
     textures: Tensor,
+    texture_range_x: float,
+    texture_range_y: float,
     normals: Tensor,
     densify: Tensor,
     image_width: int,
@@ -1887,225 +1906,85 @@ def rasterize_to_pixels_textured_gaussians(
         tile_width * tile_size >= image_width
     ), f"Assert Failed: {tile_width} * {tile_size} >= {image_width}"
 
-    match filtering:
-        case "bilinear" | "bilinear_bwd2":
-            (
-                render_colors,
-                render_alphas,
-                render_normals,
-                render_distort,
-                render_median,
-                gs_contrib_sum,  # added
-                gs_contrib_count,  # added
-            ) = _RasterizeToPixelsTexturedGaussians.apply(
-                means2d.contiguous(),
-                ray_transforms.contiguous(),
-                colors.contiguous(),
-                opacities.contiguous(),
-                textures.contiguous(),
-                normals.contiguous(),
-                densify.contiguous(),
-                backgrounds,
-                masks,
-                image_width,
-                image_height,
-                tile_size,
-                isect_offsets.contiguous(),
-                flatten_ids.contiguous(),
-                absgrad,
-                distloss,
-                filtering == "bilinear_bwd2",
-                gs_contrib_threshold,  # added
-                g_weight,
-            )
-        case "mipmapped":
-            (
-                render_colors,
-                render_alphas,
-                render_normals,
-                render_distort,
-                render_median,
-                gs_contrib_sum,  # added
-                gs_contrib_count,  # added
-            ) = _RasterizeToPixelsMipTexturedGaussians.apply(
-                means2d.contiguous(),
-                ray_transforms.contiguous(),
-                colors.contiguous(),
-                opacities.contiguous(),
-                textures.contiguous(),
-                normals.contiguous(),
-                densify.contiguous(),
-                backgrounds,
-                masks,
-                image_width,
-                image_height,
-                tile_size,
-                isect_offsets.contiguous(),
-                flatten_ids.contiguous(),
-                absgrad,
-                distloss,
-                gs_contrib_threshold,  # added
-                g_weight,
-            )
-        case "mipmapped2":
-            assert textures.size(1) == textures.size(2)
-            log_texture_res = textures.size(1).bit_length() - 1
-            assert textures.size(1) == 1 << log_texture_res
+    if filtering in tgs_fns:
+        (
+            render_colors,
+            render_alphas,
+            render_normals,
+            render_distort,
+            render_median,
+            gs_contrib_sum,  # added
+            gs_contrib_count,  # added
+        ) = _RasterizeToPixelsTexturedGaussians.apply(
+            tgs_fns[filtering][0],
+            tgs_fns[filtering][1],
+            means2d.contiguous(),
+            ray_transforms.contiguous(),
+            colors.contiguous(),
+            opacities.contiguous(),
+            textures.contiguous(),
+            texture_range_x,
+            texture_range_y,
+            normals.contiguous(),
+            densify.contiguous(),
+            backgrounds,
+            masks,
+            image_width,
+            image_height,
+            tile_size,
+            isect_offsets.contiguous(),
+            flatten_ids.contiguous(),
+            absgrad,
+            distloss,
+            gs_contrib_threshold,  # added
+            g_weight,
+        )
+    else:
+        match filtering:
+            case "mipmapped2":
+                assert textures.size(1) == textures.size(2)
+                log_texture_res = textures.size(1).bit_length() - 1
+                assert textures.size(1) == 1 << log_texture_res
 
-            log_reduce = 4
+                log_reduce = 4
 
-            mip_textures = generate_mipmap(
-                textures, log_texture_res, log_reduce, tile_size
-            )
+                mip_textures = generate_mipmap(
+                    textures, log_texture_res, log_reduce, tile_size
+                )
 
-            (
-                render_colors,
-                render_alphas,
-                render_normals,
-                render_distort,
-                render_median,
-                gs_contrib_sum,
-                gs_contrib_count,
-            ) = _RasterizeToPixelsMip2TexturedGaussians.apply(
-                means2d.contiguous(),
-                ray_transforms.contiguous(),
-                colors.contiguous(),
-                opacities.contiguous(),
-                mip_textures.contiguous(),
-                log_texture_res,
-                normals.contiguous(),
-                densify.contiguous(),
-                backgrounds,
-                masks,
-                image_width,
-                image_height,
-                tile_size,
-                isect_offsets.contiguous(),
-                flatten_ids.contiguous(),
-                absgrad,
-                distloss,
-                gs_contrib_threshold,
-                g_weight,
-            )
-        case "bilinear2":
-            (
-                render_colors,
-                render_alphas,
-                render_normals,
-                render_distort,
-                render_median,
-                gs_contrib_sum,
-                gs_contrib_count,
-            ) = _RasterizeToPixelsBilinear2TexturedGaussians.apply(
-                means2d.contiguous(),
-                ray_transforms.contiguous(),
-                colors.contiguous(),
-                opacities.contiguous(),
-                textures.contiguous(),
-                normals.contiguous(),
-                densify.contiguous(),
-                backgrounds,
-                masks,
-                image_width,
-                image_height,
-                tile_size,
-                isect_offsets.contiguous(),
-                flatten_ids.contiguous(),
-                absgrad,
-                distloss,
-                gs_contrib_threshold,
-                g_weight,
-            )
-        case "bilinear3" | "bilinear3_bwd2":
-            (
-                render_colors,
-                render_alphas,
-                render_normals,
-                render_distort,
-                render_median,
-                gs_contrib_sum,
-                gs_contrib_count,
-            ) = _RasterizeToPixelsBilinear3TexturedGaussians.apply(
-                means2d.contiguous(),
-                ray_transforms.contiguous(),
-                colors.contiguous(),
-                opacities.contiguous(),
-                textures.contiguous(),
-                normals.contiguous(),
-                densify.contiguous(),
-                backgrounds,
-                masks,
-                image_width,
-                image_height,
-                tile_size,
-                isect_offsets.contiguous(),
-                flatten_ids.contiguous(),
-                absgrad,
-                distloss,
-                filtering == "bilinear3_bwd2",
-                gs_contrib_threshold,
-                g_weight,
-            )
-        case "anisotropic":
-            (
-                render_colors,
-                render_alphas,
-                render_normals,
-                render_distort,
-                render_median,
-                gs_contrib_sum,  # added
-                gs_contrib_count,  # added
-            ) = _RasterizeToPixelsAnisoTexturedGaussians.apply(
-                means2d.contiguous(),
-                ray_transforms.contiguous(),
-                colors.contiguous(),
-                opacities.contiguous(),
-                textures.contiguous(),
-                normals.contiguous(),
-                densify.contiguous(),
-                backgrounds,
-                masks,
-                image_width,
-                image_height,
-                tile_size,
-                isect_offsets.contiguous(),
-                flatten_ids.contiguous(),
-                absgrad,
-                distloss,
-                gs_contrib_threshold,  # added
-                g_weight,
-            )
-        case "anisotropic_bilinear":
-            (
-                render_colors,
-                render_alphas,
-                render_normals,
-                render_distort,
-                render_median,
-                gs_contrib_sum,
-                gs_contrib_count,
-            ) = _RasterizeToPixelsAnisoBilinearTexturedGaussians.apply(
-                means2d.contiguous(),
-                ray_transforms.contiguous(),
-                colors.contiguous(),
-                opacities.contiguous(),
-                textures.contiguous(),
-                normals.contiguous(),
-                densify.contiguous(),
-                backgrounds,
-                masks,
-                image_width,
-                image_height,
-                tile_size,
-                isect_offsets.contiguous(),
-                flatten_ids.contiguous(),
-                absgrad,
-                distloss,
-                gs_contrib_threshold,
-                g_weight,
-            )
-        case _:
-            raise Exception(f"Unsupported filter type {filtering}")
+                (
+                    render_colors,
+                    render_alphas,
+                    render_normals,
+                    render_distort,
+                    render_median,
+                    gs_contrib_sum,
+                    gs_contrib_count,
+                ) = _RasterizeToPixelsMip2TexturedGaussians.apply(
+                    means2d.contiguous(),
+                    ray_transforms.contiguous(),
+                    colors.contiguous(),
+                    opacities.contiguous(),
+                    mip_textures.contiguous(),
+                    log_texture_res,
+                    texture_range_x,
+                    texture_range_y,
+                    normals.contiguous(),
+                    densify.contiguous(),
+                    backgrounds,
+                    masks,
+                    image_width,
+                    image_height,
+                    tile_size,
+                    isect_offsets.contiguous(),
+                    flatten_ids.contiguous(),
+                    absgrad,
+                    distloss,
+                    gs_contrib_threshold,
+                    g_weight,
+                )
+            case _:
+                raise Exception(f"Unsupported filter type {filtering}")
 
     if padded_channels > 0:
         render_colors = render_colors[..., :-padded_channels]
@@ -2121,6 +2000,16 @@ def rasterize_to_pixels_textured_gaussians(
     )
 
 
+SPOST = "_textured_sigmoids"
+tss_fns = {
+    "bilinear_bwd2": (f"{PRE}fwd{SPOST}", f"{PRE}bwd{SPOST}"),
+    "anisotropic_bilinear": (
+        f"{PRE}fwd_aniso_bilinear{SPOST}",
+        f"{PRE}bwd_aniso_bilinear{SPOST}",
+    ),
+}
+
+
 def rasterize_to_pixels_textured_sigmoids(
     means2d: Tensor,
     steepnesses: Tensor,
@@ -2128,6 +2017,8 @@ def rasterize_to_pixels_textured_sigmoids(
     colors: Tensor,
     opacities: Tensor,
     textures: Tensor,
+    texture_range_x: float,
+    texture_range_y: float,
     normals: Tensor,
     densify: Tensor,
     image_width: int,
@@ -2142,6 +2033,7 @@ def rasterize_to_pixels_textured_sigmoids(
     distloss: bool = False,
     gs_contrib_threshold: float = 0.0,
     filtering: Filtering = "bilinear",
+    s_weight: float = 1.0,
 ) -> Tuple[Tensor, ...]:
     """Rasterize Textured Sigmoids (smooth-step 2DSS with bilinear texture) to pixels.
 
@@ -2224,65 +2116,42 @@ def rasterize_to_pixels_textured_sigmoids(
         tile_width * tile_size >= image_width
     ), f"Assert Failed: {tile_width} * {tile_size} >= {image_width}"
 
-    match filtering:
-        case "bilinear_bwd2":
-            (
-                render_colors,
-                render_alphas,
-                render_normals,
-                render_distort,
-                render_median,
-                gs_contrib_sum,
-                gs_contrib_count,
-            ) = _RasterizeToPixelsTexturedSigmoids.apply(
-                means2d.contiguous(),
-                steepnesses.contiguous(),
-                ray_transforms.contiguous(),
-                colors.contiguous(),
-                opacities.contiguous(),
-                textures.contiguous(),
-                normals.contiguous(),
-                densify.contiguous(),
-                backgrounds,
-                masks,
-                image_width,
-                image_height,
-                tile_size,
-                isect_offsets.contiguous(),
-                flatten_ids.contiguous(),
-                absgrad,
-                distloss,
-                gs_contrib_threshold,
-            )
-        case "anisotropic_bilinear":
-            (
-                render_colors,
-                render_alphas,
-                render_normals,
-                render_distort,
-                render_median,
-                gs_contrib_sum,
-                gs_contrib_count,
-            ) = _RasterizeToPixelsAnisoBilinearTexturedSigmoids.apply(
-                means2d.contiguous(),
-                steepnesses.contiguous(),
-                ray_transforms.contiguous(),
-                colors.contiguous(),
-                opacities.contiguous(),
-                textures.contiguous(),
-                normals.contiguous(),
-                densify.contiguous(),
-                backgrounds,
-                masks,
-                image_width,
-                image_height,
-                tile_size,
-                isect_offsets.contiguous(),
-                flatten_ids.contiguous(),
-                absgrad,
-                distloss,
-                gs_contrib_threshold,
-            )
+    if filtering in tss_fns:
+        (
+            render_colors,
+            render_alphas,
+            render_normals,
+            render_distort,
+            render_median,
+            gs_contrib_sum,
+            gs_contrib_count,
+        ) = _RasterizeToPixelsTexturedSigmoids.apply(
+            tss_fns[filtering][0],
+            tss_fns[filtering][1],
+            means2d.contiguous(),
+            steepnesses.contiguous(),
+            ray_transforms.contiguous(),
+            colors.contiguous(),
+            opacities.contiguous(),
+            textures.contiguous(),
+            texture_range_x,
+            texture_range_y,
+            normals.contiguous(),
+            densify.contiguous(),
+            backgrounds,
+            masks,
+            image_width,
+            image_height,
+            tile_size,
+            isect_offsets.contiguous(),
+            flatten_ids.contiguous(),
+            absgrad,
+            distloss,
+            gs_contrib_threshold,
+            s_weight,
+        )
+    else:
+        raise Exception(f"Unsupported filter type {filtering}")
 
     if padded_channels > 0:
         render_colors = render_colors[..., :-padded_channels]
@@ -3075,11 +2944,15 @@ class _RasterizeToPixelsTexturedGaussians(torch.autograd.Function):
     @staticmethod
     def forward(
         ctx,
+        fwd_fn: str,
+        bwd_fn: str,
         means2d: Tensor,
         ray_transforms: Tensor,
         colors: Tensor,
         opacities: Tensor,
         textures: Tensor,
+        texture_range_x: float,
+        texture_range_y: float,
         normals: Tensor,
         densify: Tensor,
         backgrounds: Tensor,
@@ -3091,7 +2964,6 @@ class _RasterizeToPixelsTexturedGaussians(torch.autograd.Function):
         flatten_ids: Tensor,
         absgrad: bool,
         distloss: bool,
-        texgrad: bool,
         gs_contrib_threshold: float,  # added
         g_weight: float,
     ) -> Tuple[Tensor, Tensor]:
@@ -3105,12 +2977,14 @@ class _RasterizeToPixelsTexturedGaussians(torch.autograd.Function):
             median_ids,
             gs_contrib_sum,  # added
             gs_contrib_count,  # added
-        ) = _make_lazy_cuda_func("rasterize_to_pixels_fwd_textured_gaussians")(
+        ) = _make_lazy_cuda_func(fwd_fn)(
             means2d,
             ray_transforms,
             colors,
             opacities,
             textures,
+            texture_range_x,
+            texture_range_y,
             normals,
             backgrounds,
             masks,
@@ -3140,12 +3014,14 @@ class _RasterizeToPixelsTexturedGaussians(torch.autograd.Function):
             last_ids,
             median_ids,
         )
+        ctx.bwd_fn = bwd_fn
+        ctx.texture_range_x = texture_range_x
+        ctx.texture_range_y = texture_range_y
         ctx.width = width
         ctx.height = height
         ctx.tile_size = tile_size
         ctx.absgrad = absgrad
         ctx.distloss = distloss
-        ctx.texgrad = texgrad
         ctx.g_weight = g_weight
 
         # double to float
@@ -3189,6 +3065,9 @@ class _RasterizeToPixelsTexturedGaussians(torch.autograd.Function):
             last_ids,
             median_ids,
         ) = ctx.saved_tensors
+        bwd_fn = ctx.bwd_fn
+        texture_range_x = ctx.texture_range_x
+        texture_range_y = ctx.texture_range_y
         width = ctx.width
         height = ctx.height
         tile_size = ctx.tile_size
@@ -3204,16 +3083,14 @@ class _RasterizeToPixelsTexturedGaussians(torch.autograd.Function):
             v_textures,
             v_normals,
             v_densify,
-        ) = _make_lazy_cuda_func(
-            "rasterize_to_pixels_bwd2_textured_gaussians"
-            if ctx.texgrad
-            else "rasterize_to_pixels_bwd_textured_gaussians"
-        )(
+        ) = _make_lazy_cuda_func(bwd_fn)(
             means2d,
             ray_transforms,
             colors,
             opacities,
             textures,
+            texture_range_x,
+            texture_range_y,
             normals,
             densify,
             backgrounds,
@@ -3247,15 +3124,18 @@ class _RasterizeToPixelsTexturedGaussians(torch.autograd.Function):
             v_backgrounds = None
 
         return (
+            None,
+            None,
             v_means2d,
             v_ray_transforms,
             v_colors,
             v_opacities,
             v_textures,
+            None,
+            None,
             v_normals,
             v_densify,
             v_backgrounds,
-            None,
             None,
             None,
             None,
@@ -3275,12 +3155,16 @@ class _RasterizeToPixelsTexturedSigmoids(torch.autograd.Function):
     @staticmethod
     def forward(
         ctx,
+        fwd_fn: str,
+        bwd_fn: str,
         means2d: Tensor,
         steepnesses: Tensor,
         ray_transforms: Tensor,
         colors: Tensor,
         opacities: Tensor,
         textures: Tensor,
+        texture_range_x: float,
+        texture_range_y: float,
         normals: Tensor,
         densify: Tensor,
         backgrounds: Tensor,
@@ -3293,6 +3177,7 @@ class _RasterizeToPixelsTexturedSigmoids(torch.autograd.Function):
         absgrad: bool,
         distloss: bool,
         gs_contrib_threshold: float,
+        s_weight: float,
     ) -> Tuple[Tensor, Tensor]:
 
         (
@@ -3305,13 +3190,15 @@ class _RasterizeToPixelsTexturedSigmoids(torch.autograd.Function):
             median_ids,
             gs_contrib_sum,
             gs_contrib_count,
-        ) = _make_lazy_cuda_func("rasterize_to_pixels_fwd_textured_sigmoids")(
+        ) = _make_lazy_cuda_func(fwd_fn)(
             means2d,
             steepnesses,
             ray_transforms,
             colors,
             opacities,
             textures,
+            texture_range_x,
+            texture_range_y,
             normals,
             backgrounds,
             masks,
@@ -3321,6 +3208,7 @@ class _RasterizeToPixelsTexturedSigmoids(torch.autograd.Function):
             isect_offsets,
             flatten_ids,
             gs_contrib_threshold,
+            s_weight,
         )
 
         ctx.save_for_backward(
@@ -3341,11 +3229,15 @@ class _RasterizeToPixelsTexturedSigmoids(torch.autograd.Function):
             last_ids,
             median_ids,
         )
+        ctx.bwd_fn = bwd_fn
+        ctx.texture_range_x = texture_range_x
+        ctx.texture_range_y = texture_range_y
         ctx.width = width
         ctx.height = height
         ctx.tile_size = tile_size
         ctx.absgrad = absgrad
         ctx.distloss = distloss
+        ctx.s_weight = s_weight
 
         render_alphas = render_alphas.float()
         return (
@@ -3387,10 +3279,14 @@ class _RasterizeToPixelsTexturedSigmoids(torch.autograd.Function):
             last_ids,
             median_ids,
         ) = ctx.saved_tensors
+        bwd_fn = ctx.bwd_fn
+        texture_range_x = ctx.texture_range_x
+        texture_range_y = ctx.texture_range_y
         width = ctx.width
         height = ctx.height
         tile_size = ctx.tile_size
         absgrad = ctx.absgrad
+        s_weight = ctx.s_weight
 
         (
             v_means2d_abs,
@@ -3402,13 +3298,15 @@ class _RasterizeToPixelsTexturedSigmoids(torch.autograd.Function):
             v_textures,
             v_normals,
             v_densify,
-        ) = _make_lazy_cuda_func("rasterize_to_pixels_bwd2_textured_sigmoids")(
+        ) = _make_lazy_cuda_func(bwd_fn)(
             means2d,
             steepnesses,
             ray_transforms,
             colors,
             opacities,
             textures,
+            texture_range_x,
+            texture_range_y,
             normals,
             densify,
             backgrounds,
@@ -3418,6 +3316,7 @@ class _RasterizeToPixelsTexturedSigmoids(torch.autograd.Function):
             tile_size,
             isect_offsets,
             flatten_ids,
+            s_weight,
             render_colors,
             render_alphas,
             last_ids,
@@ -3441,12 +3340,16 @@ class _RasterizeToPixelsTexturedSigmoids(torch.autograd.Function):
             v_backgrounds = None
 
         return (
+            None,
+            None,
             v_means2d,
             v_steepnesses,
             v_ray_transforms,
             v_colors,
             v_opacities,
             v_textures,
+            None,
+            None,
             v_normals,
             v_densify,
             v_backgrounds,
@@ -3459,396 +3362,7 @@ class _RasterizeToPixelsTexturedSigmoids(torch.autograd.Function):
             None,  # absgrad
             None,  # distloss
             None,  # gs_contrib_threshold
-        )
-
-
-class _RasterizeToPixelsAnisoBilinearTexturedSigmoids(torch.autograd.Function):
-    """Rasterize Anisotropic Bilinear Textured Sigmoids (smooth-step 2DSS with aniso bilinear texture)."""
-
-    @staticmethod
-    def forward(
-        ctx,
-        means2d: Tensor,
-        steepnesses: Tensor,
-        ray_transforms: Tensor,
-        colors: Tensor,
-        opacities: Tensor,
-        textures: Tensor,
-        normals: Tensor,
-        densify: Tensor,
-        backgrounds: Tensor,
-        masks: Tensor,
-        width: int,
-        height: int,
-        tile_size: int,
-        isect_offsets: Tensor,
-        flatten_ids: Tensor,
-        absgrad: bool,
-        distloss: bool,
-        gs_contrib_threshold: float,
-    ) -> Tuple[Tensor, Tensor]:
-
-        (
-            render_colors,
-            render_alphas,
-            render_normals,
-            render_distort,
-            render_median,
-            last_ids,
-            median_ids,
-            gs_contrib_sum,
-            gs_contrib_count,
-        ) = _make_lazy_cuda_func(
-            "rasterize_to_pixels_fwd_aniso_bilinear_textured_sigmoids"
-        )(
-            means2d,
-            steepnesses,
-            ray_transforms,
-            colors,
-            opacities,
-            textures,
-            normals,
-            backgrounds,
-            masks,
-            width,
-            height,
-            tile_size,
-            isect_offsets,
-            flatten_ids,
-            gs_contrib_threshold,
-        )
-
-        ctx.save_for_backward(
-            means2d,
-            steepnesses,
-            ray_transforms,
-            colors,
-            opacities,
-            textures,
-            normals,
-            densify,
-            backgrounds,
-            masks,
-            isect_offsets,
-            flatten_ids,
-            render_colors,
-            render_alphas,
-            last_ids,
-            median_ids,
-        )
-        ctx.width = width
-        ctx.height = height
-        ctx.tile_size = tile_size
-        ctx.absgrad = absgrad
-        ctx.distloss = distloss
-
-        render_alphas = render_alphas.float()
-        return (
-            render_colors,
-            render_alphas,
-            render_normals,
-            render_distort,
-            render_median,
-            gs_contrib_sum,
-            gs_contrib_count,
-        )
-
-    @staticmethod
-    def backward(
-        ctx,
-        v_render_colors: Tensor,
-        v_render_alphas: Tensor,
-        v_render_normals: Tensor,
-        v_render_distort: Tensor,
-        v_render_median: Tensor,
-        v_gs_contrib_sum: Tensor,
-        v_gs_contrib_count: Tensor,
-    ):
-        (
-            means2d,
-            steepnesses,
-            ray_transforms,
-            colors,
-            opacities,
-            textures,
-            normals,
-            densify,
-            backgrounds,
-            masks,
-            isect_offsets,
-            flatten_ids,
-            render_colors,
-            render_alphas,
-            last_ids,
-            median_ids,
-        ) = ctx.saved_tensors
-        width = ctx.width
-        height = ctx.height
-        tile_size = ctx.tile_size
-        absgrad = ctx.absgrad
-
-        (
-            v_means2d_abs,
-            v_means2d,
-            v_steepnesses,
-            v_ray_transforms,
-            v_colors,
-            v_opacities,
-            v_textures,
-            v_normals,
-            v_densify,
-        ) = _make_lazy_cuda_func(
-            "rasterize_to_pixels_bwd_aniso_bilinear_textured_sigmoids"
-        )(
-            means2d,
-            steepnesses,
-            ray_transforms,
-            colors,
-            opacities,
-            textures,
-            normals,
-            densify,
-            backgrounds,
-            masks,
-            width,
-            height,
-            tile_size,
-            isect_offsets,
-            flatten_ids,
-            render_colors,
-            render_alphas,
-            last_ids,
-            median_ids,
-            v_render_colors.contiguous(),
-            v_render_alphas.contiguous(),
-            v_render_normals.contiguous(),
-            v_render_distort.contiguous(),
-            v_render_median.contiguous(),
-            absgrad,
-        )
-        torch.cuda.synchronize()
-        if absgrad:
-            means2d.absgrad = v_means2d_abs
-
-        if ctx.needs_input_grad[8]:
-            v_backgrounds = (v_render_colors * (1.0 - render_alphas).float()).sum(
-                dim=(1, 2)
-            )
-        else:
-            v_backgrounds = None
-
-        return (
-            v_means2d,
-            v_steepnesses,
-            v_ray_transforms,
-            v_colors,
-            v_opacities,
-            v_textures,
-            v_normals,
-            v_densify,
-            v_backgrounds,
-            None,  # masks
-            None,  # width
-            None,  # height
-            None,  # tile_size
-            None,  # isect_offsets
-            None,  # flatten_ids
-            None,  # absgrad
-            None,  # distloss
-            None,  # gs_contrib_threshold
-        )
-
-
-class _RasterizeToPixelsMipTexturedGaussians(torch.autograd.Function):
-    """Rasterize gaussians Textured Gaussians"""
-
-    @staticmethod
-    def forward(
-        ctx,
-        means2d: Tensor,
-        ray_transforms: Tensor,
-        colors: Tensor,
-        opacities: Tensor,
-        textures: Tensor,
-        normals: Tensor,
-        densify: Tensor,
-        backgrounds: Tensor,
-        masks: Tensor,
-        width: int,
-        height: int,
-        tile_size: int,
-        isect_offsets: Tensor,
-        flatten_ids: Tensor,
-        absgrad: bool,
-        distloss: bool,
-        gs_contrib_threshold: float,  # added
-        g_weight: float,
-    ) -> Tuple[Tensor, Tensor]:
-        (
-            render_colors,
-            render_alphas,
-            render_normals,
-            render_distort,
-            render_median,
-            last_ids,
-            median_ids,
-            gs_contrib_sum,  # added
-            gs_contrib_count,  # added
-        ) = _make_lazy_cuda_func("rasterize_to_pixels_fwd_mip_textured_gaussians")(
-            means2d,
-            ray_transforms,
-            colors,
-            opacities,
-            textures,
-            normals,
-            backgrounds,
-            masks,
-            width,
-            height,
-            tile_size,
-            isect_offsets,
-            flatten_ids,
-            gs_contrib_threshold,  # added
-            g_weight,
-        )
-
-        ctx.save_for_backward(
-            means2d,
-            ray_transforms,
-            colors,
-            opacities,
-            textures,
-            normals,
-            densify,
-            backgrounds,
-            masks,
-            isect_offsets,
-            flatten_ids,
-            render_colors,
-            render_alphas,
-            last_ids,
-            median_ids,
-        )
-        ctx.width = width
-        ctx.height = height
-        ctx.tile_size = tile_size
-        ctx.absgrad = absgrad
-        ctx.distloss = distloss
-        ctx.g_weight = g_weight
-
-        # double to float
-        render_alphas = render_alphas.float()
-        return (
-            render_colors,
-            render_alphas,
-            render_normals,
-            render_distort,
-            render_median,
-            gs_contrib_sum,
-            gs_contrib_count,
-        )
-
-    @staticmethod
-    def backward(
-        ctx,
-        v_render_colors: Tensor,
-        v_render_alphas: Tensor,
-        v_render_normals: Tensor,
-        v_render_distort: Tensor,
-        v_render_median: Tensor,
-        v_gs_contrib_sum: Tensor,  # added
-        v_gs_contrib_count: Tensor,  # added
-    ):
-
-        (
-            means2d,
-            ray_transforms,
-            colors,
-            opacities,
-            textures,
-            normals,
-            densify,
-            backgrounds,
-            masks,
-            isect_offsets,
-            flatten_ids,
-            render_colors,
-            render_alphas,
-            last_ids,
-            median_ids,
-        ) = ctx.saved_tensors
-        width = ctx.width
-        height = ctx.height
-        tile_size = ctx.tile_size
-        absgrad = ctx.absgrad
-        g_weight = ctx.g_weight
-
-        (
-            v_means2d_abs,
-            v_means2d,
-            v_ray_transforms,
-            v_colors,
-            v_opacities,
-            v_textures,
-            v_normals,
-            v_densify,
-        ) = _make_lazy_cuda_func("rasterize_to_pixels_bwd_mip_textured_gaussians")(
-            means2d,
-            ray_transforms,
-            colors,
-            opacities,
-            textures,
-            normals,
-            densify,
-            backgrounds,
-            masks,
-            width,
-            height,
-            tile_size,
-            isect_offsets,
-            flatten_ids,
-            g_weight,
-            render_colors,
-            render_alphas,
-            last_ids,
-            median_ids,
-            v_render_colors.contiguous(),
-            v_render_alphas.contiguous(),
-            v_render_normals.contiguous(),
-            v_render_distort.contiguous(),
-            v_render_median.contiguous(),
-            absgrad,
-        )
-        torch.cuda.synchronize()
-        if absgrad:
-            means2d.absgrad = v_means2d_abs
-
-        if ctx.needs_input_grad[7]:
-            v_backgrounds = (v_render_colors * (1.0 - render_alphas).float()).sum(
-                dim=(1, 2)
-            )
-        else:
-            v_backgrounds = None
-
-        return (
-            v_means2d,
-            v_ray_transforms,
-            v_colors,
-            v_opacities,
-            v_textures,
-            v_normals,
-            v_densify,
-            v_backgrounds,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,  # added for gs_contrib_threshold
-            None,
+            None,  # s_weight
         )
 
 
@@ -3864,6 +3378,8 @@ class _RasterizeToPixelsMip2TexturedGaussians(torch.autograd.Function):
         opacities: Tensor,
         textures: Tensor,
         log_texture_res: int,
+        texture_range_x: float,
+        texture_range_y: float,
         normals: Tensor,
         densify: Tensor,
         backgrounds: Tensor,
@@ -3895,6 +3411,8 @@ class _RasterizeToPixelsMip2TexturedGaussians(torch.autograd.Function):
             opacities,
             textures,
             log_texture_res,
+            texture_range_x,
+            texture_range_y,
             normals,
             backgrounds,
             masks,
@@ -3925,6 +3443,8 @@ class _RasterizeToPixelsMip2TexturedGaussians(torch.autograd.Function):
             median_ids,
         )
         ctx.log_texture_res = log_texture_res
+        ctx.texture_range_x = texture_range_x
+        ctx.texture_range_y = texture_range_y
         ctx.width = width
         ctx.height = height
         ctx.tile_size = tile_size
@@ -3974,6 +3494,8 @@ class _RasterizeToPixelsMip2TexturedGaussians(torch.autograd.Function):
             median_ids,
         ) = ctx.saved_tensors
         log_texture_res = ctx.log_texture_res
+        texture_range_x = ctx.texture_range_x
+        texture_range_y = ctx.texture_range_y
         width = ctx.width
         height = ctx.height
         tile_size = ctx.tile_size
@@ -3996,6 +3518,8 @@ class _RasterizeToPixelsMip2TexturedGaussians(torch.autograd.Function):
             opacities,
             textures,
             log_texture_res,
+            texture_range_x,
+            texture_range_y,
             normals,
             densify,
             backgrounds,
@@ -4035,6 +3559,8 @@ class _RasterizeToPixelsMip2TexturedGaussians(torch.autograd.Function):
             v_opacities,  # opacities
             v_textures,  # textures
             None,  # log_texture_res
+            None,
+            None,
             v_normals,  # normals
             v_densify,  # densify
             v_backgrounds,  # backgrounds
@@ -4048,792 +3574,6 @@ class _RasterizeToPixelsMip2TexturedGaussians(torch.autograd.Function):
             None,  # distloss
             None,  # gs_contrib_threshold
             None,  # g_weight
-        )
-
-
-class _RasterizeToPixelsBilinear2TexturedGaussians(torch.autograd.Function):
-    """Rasterize Textured Gaussians with bilinear2 filtering"""
-
-    @staticmethod
-    def forward(
-        ctx,
-        means2d: Tensor,
-        ray_transforms: Tensor,
-        colors: Tensor,
-        opacities: Tensor,
-        textures: Tensor,
-        normals: Tensor,
-        densify: Tensor,
-        backgrounds: Tensor,
-        masks: Tensor,
-        width: int,
-        height: int,
-        tile_size: int,
-        isect_offsets: Tensor,
-        flatten_ids: Tensor,
-        absgrad: bool,
-        distloss: bool,
-        gs_contrib_threshold: float,
-        g_weight: float,
-    ) -> Tuple[Tensor, Tensor]:
-        (
-            render_colors,
-            render_alphas,
-            render_normals,
-            render_distort,
-            render_median,
-            last_ids,
-            median_ids,
-            gs_contrib_sum,
-            gs_contrib_count,
-        ) = _make_lazy_cuda_func(
-            "rasterize_to_pixels_fwd_bilinear2_textured_gaussians"
-        )(
-            means2d,
-            ray_transforms,
-            colors,
-            opacities,
-            textures,
-            normals,
-            backgrounds,
-            masks,
-            width,
-            height,
-            tile_size,
-            isect_offsets,
-            flatten_ids,
-            gs_contrib_threshold,
-            g_weight,
-        )
-
-        ctx.save_for_backward(
-            means2d,
-            ray_transforms,
-            colors,
-            opacities,
-            textures,
-            normals,
-            densify,
-            backgrounds,
-            masks,
-            isect_offsets,
-            flatten_ids,
-            render_colors,
-            render_alphas,
-            last_ids,
-            median_ids,
-        )
-        ctx.width = width
-        ctx.height = height
-        ctx.tile_size = tile_size
-        ctx.absgrad = absgrad
-        ctx.distloss = distloss
-        ctx.g_weight = g_weight
-
-        render_alphas = render_alphas.float()
-        return (
-            render_colors,
-            render_alphas,
-            render_normals,
-            render_distort,
-            render_median,
-            gs_contrib_sum,
-            gs_contrib_count,
-        )
-
-    @staticmethod
-    def backward(
-        ctx,
-        v_render_colors: Tensor,
-        v_render_alphas: Tensor,
-        v_render_normals: Tensor,
-        v_render_distort: Tensor,
-        v_render_median: Tensor,
-        v_gs_contrib_sum: Tensor,
-        v_gs_contrib_count: Tensor,
-    ):
-        (
-            means2d,
-            ray_transforms,
-            colors,
-            opacities,
-            textures,
-            normals,
-            densify,
-            backgrounds,
-            masks,
-            isect_offsets,
-            flatten_ids,
-            render_colors,
-            render_alphas,
-            last_ids,
-            median_ids,
-        ) = ctx.saved_tensors
-        width = ctx.width
-        height = ctx.height
-        tile_size = ctx.tile_size
-        absgrad = ctx.absgrad
-        g_weight = ctx.g_weight
-
-        (
-            v_means2d_abs,
-            v_means2d,
-            v_ray_transforms,
-            v_colors,
-            v_opacities,
-            v_textures,
-            v_normals,
-            v_densify,
-        ) = _make_lazy_cuda_func(
-            "rasterize_to_pixels_bwd_bilinear2_textured_gaussians"
-        )(
-            means2d,
-            ray_transforms,
-            colors,
-            opacities,
-            textures,
-            normals,
-            densify,
-            backgrounds,
-            masks,
-            width,
-            height,
-            tile_size,
-            isect_offsets,
-            flatten_ids,
-            g_weight,
-            render_colors,
-            render_alphas,
-            last_ids,
-            median_ids,
-            v_render_colors.contiguous(),
-            v_render_alphas.contiguous(),
-            v_render_normals.contiguous(),
-            v_render_distort.contiguous(),
-            v_render_median.contiguous(),
-            absgrad,
-        )
-        torch.cuda.synchronize()
-        if absgrad:
-            means2d.absgrad = v_means2d_abs
-
-        if ctx.needs_input_grad[7]:
-            v_backgrounds = (v_render_colors * (1.0 - render_alphas).float()).sum(
-                dim=(1, 2)
-            )
-        else:
-            v_backgrounds = None
-
-        return (
-            v_means2d,
-            v_ray_transforms,
-            v_colors,
-            v_opacities,
-            v_textures,
-            v_normals,
-            v_densify,
-            v_backgrounds,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,  # gs_contrib_threshold
-            None,
-        )
-
-
-class _RasterizeToPixelsBilinear3TexturedGaussians(torch.autograd.Function):
-    """Rasterize Textured Gaussians with bilinear3 filtering"""
-
-    @staticmethod
-    def forward(
-        ctx,
-        means2d: Tensor,
-        ray_transforms: Tensor,
-        colors: Tensor,
-        opacities: Tensor,
-        textures: Tensor,
-        normals: Tensor,
-        densify: Tensor,
-        backgrounds: Tensor,
-        masks: Tensor,
-        width: int,
-        height: int,
-        tile_size: int,
-        isect_offsets: Tensor,
-        flatten_ids: Tensor,
-        absgrad: bool,
-        distloss: bool,
-        texgrad: bool,
-        gs_contrib_threshold: float,
-        g_weight: float,
-    ) -> Tuple[Tensor, Tensor]:
-        (
-            render_colors,
-            render_alphas,
-            render_normals,
-            render_distort,
-            render_median,
-            last_ids,
-            median_ids,
-            gs_contrib_sum,
-            gs_contrib_count,
-        ) = _make_lazy_cuda_func(
-            "rasterize_to_pixels_fwd_bilinear3_textured_gaussians"
-        )(
-            means2d,
-            ray_transforms,
-            colors,
-            opacities,
-            textures,
-            normals,
-            backgrounds,
-            masks,
-            width,
-            height,
-            tile_size,
-            isect_offsets,
-            flatten_ids,
-            gs_contrib_threshold,
-            g_weight,
-        )
-
-        ctx.save_for_backward(
-            means2d,
-            ray_transforms,
-            colors,
-            opacities,
-            textures,
-            normals,
-            densify,
-            backgrounds,
-            masks,
-            isect_offsets,
-            flatten_ids,
-            render_colors,
-            render_alphas,
-            last_ids,
-            median_ids,
-        )
-        ctx.width = width
-        ctx.height = height
-        ctx.tile_size = tile_size
-        ctx.absgrad = absgrad
-        ctx.distloss = distloss
-        ctx.texgrad = texgrad
-        ctx.g_weight = g_weight
-
-        render_alphas = render_alphas.float()
-        return (
-            render_colors,
-            render_alphas,
-            render_normals,
-            render_distort,
-            render_median,
-            gs_contrib_sum,
-            gs_contrib_count,
-        )
-
-    @staticmethod
-    def backward(
-        ctx,
-        v_render_colors: Tensor,
-        v_render_alphas: Tensor,
-        v_render_normals: Tensor,
-        v_render_distort: Tensor,
-        v_render_median: Tensor,
-        v_gs_contrib_sum: Tensor,
-        v_gs_contrib_count: Tensor,
-    ):
-        (
-            means2d,
-            ray_transforms,
-            colors,
-            opacities,
-            textures,
-            normals,
-            densify,
-            backgrounds,
-            masks,
-            isect_offsets,
-            flatten_ids,
-            render_colors,
-            render_alphas,
-            last_ids,
-            median_ids,
-        ) = ctx.saved_tensors
-        width = ctx.width
-        height = ctx.height
-        tile_size = ctx.tile_size
-        absgrad = ctx.absgrad
-        texgrad = ctx.texgrad
-        g_weight = ctx.g_weight
-
-        (
-            v_means2d_abs,
-            v_means2d,
-            v_ray_transforms,
-            v_colors,
-            v_opacities,
-            v_textures,
-            v_normals,
-            v_densify,
-        ) = _make_lazy_cuda_func(
-            "rasterize_to_pixels_bwd2_bilinear3_textured_gaussians"
-            if texgrad
-            else "rasterize_to_pixels_bwd_bilinear3_textured_gaussians"
-        )(
-            means2d,
-            ray_transforms,
-            colors,
-            opacities,
-            textures,
-            normals,
-            densify,
-            backgrounds,
-            masks,
-            width,
-            height,
-            tile_size,
-            isect_offsets,
-            flatten_ids,
-            g_weight,
-            render_colors,
-            render_alphas,
-            last_ids,
-            median_ids,
-            v_render_colors.contiguous(),
-            v_render_alphas.contiguous(),
-            v_render_normals.contiguous(),
-            v_render_distort.contiguous(),
-            v_render_median.contiguous(),
-            absgrad,
-        )
-        torch.cuda.synchronize()
-        if absgrad:
-            means2d.absgrad = v_means2d_abs
-
-        if ctx.needs_input_grad[7]:
-            v_backgrounds = (v_render_colors * (1.0 - render_alphas).float()).sum(
-                dim=(1, 2)
-            )
-        else:
-            v_backgrounds = None
-
-        return (
-            v_means2d,
-            v_ray_transforms,
-            v_colors,
-            v_opacities,
-            v_textures,
-            v_normals,
-            v_densify,
-            v_backgrounds,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,  # gs_contrib_threshold
-            None,
-        )
-
-
-class _RasterizeToPixelsAnisoTexturedGaussians(torch.autograd.Function):
-    """Rasterize gaussians Textured Gaussians"""
-
-    @staticmethod
-    def forward(
-        ctx,
-        means2d: Tensor,
-        ray_transforms: Tensor,
-        colors: Tensor,
-        opacities: Tensor,
-        textures: Tensor,
-        normals: Tensor,
-        densify: Tensor,
-        backgrounds: Tensor,
-        masks: Tensor,
-        width: int,
-        height: int,
-        tile_size: int,
-        isect_offsets: Tensor,
-        flatten_ids: Tensor,
-        absgrad: bool,
-        distloss: bool,
-        gs_contrib_threshold: float,  # added
-        g_weight: float,
-    ) -> Tuple[Tensor, Tensor]:
-        (
-            render_colors,
-            render_alphas,
-            render_normals,
-            render_distort,
-            render_median,
-            last_ids,
-            median_ids,
-            gs_contrib_sum,  # added
-            gs_contrib_count,  # added
-        ) = _make_lazy_cuda_func("rasterize_to_pixels_fwd_aniso_textured_gaussians")(
-            means2d,
-            ray_transforms,
-            colors,
-            opacities,
-            textures,
-            normals,
-            backgrounds,
-            masks,
-            width,
-            height,
-            tile_size,
-            isect_offsets,
-            flatten_ids,
-            gs_contrib_threshold,  # added
-            g_weight,
-        )
-
-        ctx.save_for_backward(
-            means2d,
-            ray_transforms,
-            colors,
-            opacities,
-            textures,
-            normals,
-            densify,
-            backgrounds,
-            masks,
-            isect_offsets,
-            flatten_ids,
-            render_colors,
-            render_alphas,
-            last_ids,
-            median_ids,
-        )
-        ctx.width = width
-        ctx.height = height
-        ctx.tile_size = tile_size
-        ctx.absgrad = absgrad
-        ctx.distloss = distloss
-        ctx.g_weight = g_weight
-
-        # double to float
-        render_alphas = render_alphas.float()
-        return (
-            render_colors,
-            render_alphas,
-            render_normals,
-            render_distort,
-            render_median,
-            gs_contrib_sum,
-            gs_contrib_count,
-        )
-
-    @staticmethod
-    def backward(
-        ctx,
-        v_render_colors: Tensor,
-        v_render_alphas: Tensor,
-        v_render_normals: Tensor,
-        v_render_distort: Tensor,
-        v_render_median: Tensor,
-        v_gs_contrib_sum: Tensor,  # added
-        v_gs_contrib_count: Tensor,  # added
-    ):
-
-        (
-            means2d,
-            ray_transforms,
-            colors,
-            opacities,
-            textures,
-            normals,
-            densify,
-            backgrounds,
-            masks,
-            isect_offsets,
-            flatten_ids,
-            render_colors,
-            render_alphas,
-            last_ids,
-            median_ids,
-        ) = ctx.saved_tensors
-        width = ctx.width
-        height = ctx.height
-        tile_size = ctx.tile_size
-        absgrad = ctx.absgrad
-        g_weight = ctx.g_weight
-
-        (
-            v_means2d_abs,
-            v_means2d,
-            v_ray_transforms,
-            v_colors,
-            v_opacities,
-            v_textures,
-            v_normals,
-            v_densify,
-        ) = _make_lazy_cuda_func("rasterize_to_pixels_bwd_aniso_textured_gaussians")(
-            means2d,
-            ray_transforms,
-            colors,
-            opacities,
-            textures,
-            normals,
-            densify,
-            backgrounds,
-            masks,
-            width,
-            height,
-            tile_size,
-            isect_offsets,
-            flatten_ids,
-            g_weight,
-            render_colors,
-            render_alphas,
-            last_ids,
-            median_ids,
-            v_render_colors.contiguous(),
-            v_render_alphas.contiguous(),
-            v_render_normals.contiguous(),
-            v_render_distort.contiguous(),
-            v_render_median.contiguous(),
-            absgrad,
-        )
-        torch.cuda.synchronize()
-        if absgrad:
-            means2d.absgrad = v_means2d_abs
-
-        if ctx.needs_input_grad[7]:
-            v_backgrounds = (v_render_colors * (1.0 - render_alphas).float()).sum(
-                dim=(1, 2)
-            )
-        else:
-            v_backgrounds = None
-
-        return (
-            v_means2d,
-            v_ray_transforms,
-            v_colors,
-            v_opacities,
-            v_textures,
-            v_normals,
-            v_densify,
-            v_backgrounds,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,  # added for gs_contrib_threshold
-            None,
-        )
-
-
-class _RasterizeToPixelsAnisoBilinearTexturedGaussians(torch.autograd.Function):
-    """Rasterize gaussians Anisotropic Bilinear Textured Gaussians"""
-
-    @staticmethod
-    def forward(
-        ctx,
-        means2d: Tensor,
-        ray_transforms: Tensor,
-        colors: Tensor,
-        opacities: Tensor,
-        textures: Tensor,
-        normals: Tensor,
-        densify: Tensor,
-        backgrounds: Tensor,
-        masks: Tensor,
-        width: int,
-        height: int,
-        tile_size: int,
-        isect_offsets: Tensor,
-        flatten_ids: Tensor,
-        absgrad: bool,
-        distloss: bool,
-        gs_contrib_threshold: float,
-        g_weight: float,
-    ) -> Tuple[Tensor, Tensor]:
-        (
-            render_colors,
-            render_alphas,
-            render_normals,
-            render_distort,
-            render_median,
-            last_ids,
-            median_ids,
-            gs_contrib_sum,
-            gs_contrib_count,
-        ) = _make_lazy_cuda_func(
-            "rasterize_to_pixels_fwd_aniso_bilinear_textured_gaussians"
-        )(
-            means2d,
-            ray_transforms,
-            colors,
-            opacities,
-            textures,
-            normals,
-            backgrounds,
-            masks,
-            width,
-            height,
-            tile_size,
-            isect_offsets,
-            flatten_ids,
-            gs_contrib_threshold,
-            g_weight,
-        )
-
-        ctx.save_for_backward(
-            means2d,
-            ray_transforms,
-            colors,
-            opacities,
-            textures,
-            normals,
-            densify,
-            backgrounds,
-            masks,
-            isect_offsets,
-            flatten_ids,
-            render_colors,
-            render_alphas,
-            last_ids,
-            median_ids,
-        )
-        ctx.width = width
-        ctx.height = height
-        ctx.tile_size = tile_size
-        ctx.absgrad = absgrad
-        ctx.distloss = distloss
-        ctx.g_weight = g_weight
-
-        # double to float
-        render_alphas = render_alphas.float()
-        return (
-            render_colors,
-            render_alphas,
-            render_normals,
-            render_distort,
-            render_median,
-            gs_contrib_sum,
-            gs_contrib_count,
-        )
-
-    @staticmethod
-    def backward(
-        ctx,
-        v_render_colors: Tensor,
-        v_render_alphas: Tensor,
-        v_render_normals: Tensor,
-        v_render_distort: Tensor,
-        v_render_median: Tensor,
-        v_gs_contrib_sum: Tensor,
-        v_gs_contrib_count: Tensor,
-    ):
-
-        (
-            means2d,
-            ray_transforms,
-            colors,
-            opacities,
-            textures,
-            normals,
-            densify,
-            backgrounds,
-            masks,
-            isect_offsets,
-            flatten_ids,
-            render_colors,
-            render_alphas,
-            last_ids,
-            median_ids,
-        ) = ctx.saved_tensors
-        width = ctx.width
-        height = ctx.height
-        tile_size = ctx.tile_size
-        absgrad = ctx.absgrad
-        g_weight = ctx.g_weight
-
-        (
-            v_means2d_abs,
-            v_means2d,
-            v_ray_transforms,
-            v_colors,
-            v_opacities,
-            v_textures,
-            v_normals,
-            v_densify,
-        ) = _make_lazy_cuda_func(
-            "rasterize_to_pixels_bwd_aniso_bilinear_textured_gaussians"
-        )(
-            means2d,
-            ray_transforms,
-            colors,
-            opacities,
-            textures,
-            normals,
-            densify,
-            backgrounds,
-            masks,
-            width,
-            height,
-            tile_size,
-            isect_offsets,
-            flatten_ids,
-            g_weight,
-            render_colors,
-            render_alphas,
-            last_ids,
-            median_ids,
-            v_render_colors.contiguous(),
-            v_render_alphas.contiguous(),
-            v_render_normals.contiguous(),
-            v_render_distort.contiguous(),
-            v_render_median.contiguous(),
-            absgrad,
-        )
-        torch.cuda.synchronize()
-        if absgrad:
-            means2d.absgrad = v_means2d_abs
-
-        if ctx.needs_input_grad[7]:
-            v_backgrounds = (v_render_colors * (1.0 - render_alphas).float()).sum(
-                dim=(1, 2)
-            )
-        else:
-            v_backgrounds = None
-
-        return (
-            v_means2d,
-            v_ray_transforms,
-            v_colors,
-            v_opacities,
-            v_textures,
-            v_normals,
-            v_densify,
-            v_backgrounds,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,  # gs_contrib_threshold
-            None,
         )
 
 
@@ -5063,6 +3803,8 @@ class _RasterizeToPixelsDctTexturedGaussians(torch.autograd.Function):
         colors: Tensor,
         opacities: Tensor,
         textures: Tensor,
+        texture_range_x: float,
+        texture_range_y: float,
         normals: Tensor,
         densify: Tensor,
         backgrounds: Tensor,
@@ -5092,6 +3834,8 @@ class _RasterizeToPixelsDctTexturedGaussians(torch.autograd.Function):
             colors,
             opacities,
             textures,
+            texture_range_x,
+            texture_range_y,
             normals,
             backgrounds,
             masks,
@@ -5120,6 +3864,8 @@ class _RasterizeToPixelsDctTexturedGaussians(torch.autograd.Function):
             last_ids,
             median_ids,
         )
+        ctx.texture_range_x = texture_range_x
+        ctx.texture_range_y = texture_range_y
         ctx.width = width
         ctx.height = height
         ctx.tile_size = tile_size
@@ -5167,6 +3913,8 @@ class _RasterizeToPixelsDctTexturedGaussians(torch.autograd.Function):
             last_ids,
             median_ids,
         ) = ctx.saved_tensors
+        texture_range_x = ctx.texture_range_x
+        texture_range_y = ctx.texture_range_y
         width = ctx.width
         height = ctx.height
         tile_size = ctx.tile_size
@@ -5187,6 +3935,8 @@ class _RasterizeToPixelsDctTexturedGaussians(torch.autograd.Function):
             colors,
             opacities,
             textures,
+            texture_range_x,
+            texture_range_y,
             normals,
             densify,
             backgrounds,
@@ -5224,6 +3974,7 @@ class _RasterizeToPixelsDctTexturedGaussians(torch.autograd.Function):
             v_colors,
             v_opacities,
             v_textures,
+            None,
             v_normals,
             v_densify,
             v_backgrounds,
@@ -5967,12 +4718,16 @@ class _RasterizeToPixelsTexturedGaussSigs(torch.autograd.Function):
     @staticmethod
     def forward(
         ctx,
+        fwd_fn: str,
+        bwd_fn: str,
         means2d: Tensor,
         steepnesses: Tensor,
         ray_transforms: Tensor,
         colors: Tensor,
         opacities: Tensor,
         textures: Tensor,
+        texture_range_x: float,
+        texture_range_y: float,
         normals: Tensor,
         densify: Tensor,
         backgrounds: Tensor,
@@ -5998,13 +4753,15 @@ class _RasterizeToPixelsTexturedGaussSigs(torch.autograd.Function):
             median_ids,
             gs_contrib_sum,
             gs_contrib_count,
-        ) = _make_lazy_cuda_func("rasterize_to_pixels_fwd_textured_gausssigs")(
+        ) = _make_lazy_cuda_func(fwd_fn)(
             means2d,
             steepnesses,
             ray_transforms,
             colors,
             opacities,
             textures,
+            texture_range_x,
+            texture_range_y,
             normals,
             backgrounds,
             masks,
@@ -6036,6 +4793,9 @@ class _RasterizeToPixelsTexturedGaussSigs(torch.autograd.Function):
             last_ids,
             median_ids,
         )
+        ctx.bwd_fn = bwd_fn
+        ctx.texture_range_x = texture_range_x
+        ctx.texture_range_y = texture_range_y
         ctx.width = width
         ctx.height = height
         ctx.tile_size = tile_size
@@ -6084,6 +4844,9 @@ class _RasterizeToPixelsTexturedGaussSigs(torch.autograd.Function):
             last_ids,
             median_ids,
         ) = ctx.saved_tensors
+        bwd_fn = ctx.bwd_fn
+        texture_range_x = ctx.texture_range_x
+        texture_range_y = ctx.texture_range_y
         width = ctx.width
         height = ctx.height
         tile_size = ctx.tile_size
@@ -6101,13 +4864,15 @@ class _RasterizeToPixelsTexturedGaussSigs(torch.autograd.Function):
             v_textures,
             v_normals,
             v_densify,
-        ) = _make_lazy_cuda_func("rasterize_to_pixels_bwd2_textured_gausssigs")(
+        ) = _make_lazy_cuda_func(bwd_fn)(
             means2d,
             steepnesses,
             ray_transforms,
             colors,
             opacities,
             textures,
+            texture_range_x,
+            texture_range_y,
             normals,
             densify,
             backgrounds,
@@ -6142,12 +4907,16 @@ class _RasterizeToPixelsTexturedGaussSigs(torch.autograd.Function):
             v_backgrounds = None
 
         return (
+            None,
+            None,
             v_means2d,
             v_steepnesses,
             v_ray_transforms,
             v_colors,
             v_opacities,
             v_textures,
+            None,
+            None,
             v_normals,
             v_densify,
             v_backgrounds,
@@ -6165,6 +4934,10 @@ class _RasterizeToPixelsTexturedGaussSigs(torch.autograd.Function):
         )
 
 
+GSPOST = "_textured_gausssigs"
+tgss_fns = {"bilinear_bwd2": (f"{PRE}fwd{GSPOST}", f"{PRE}bwd2{GSPOST}")}
+
+
 def rasterize_to_pixels_textured_gausssigs(
     means2d: Tensor,
     steepnesses: Tensor,
@@ -6172,6 +4945,8 @@ def rasterize_to_pixels_textured_gausssigs(
     colors: Tensor,
     opacities: Tensor,
     textures: Tensor,
+    texture_range_x: float,
+    texture_range_y: float,
     normals: Tensor,
     densify: Tensor,
     image_width: int,
@@ -6274,40 +5049,45 @@ def rasterize_to_pixels_textured_gausssigs(
         tile_width * tile_size >= image_width
     ), f"Assert Failed: {tile_width} * {tile_size} >= {image_width}"
 
-    match filtering:
-        case "bilinear_bwd2":
-            (
-                render_colors,
-                render_alphas,
-                render_normals,
-                render_distort,
-                render_median,
-                gs_contrib_sum,
-                gs_contrib_count,
-            ) = _RasterizeToPixelsTexturedGaussSigs.apply(
-                means2d.contiguous(),
-                steepnesses.contiguous(),
-                ray_transforms.contiguous(),
-                colors.contiguous(),
-                opacities.contiguous(),
-                textures.contiguous(),
-                normals.contiguous(),
-                densify.contiguous(),
-                backgrounds,
-                masks,
-                image_width,
-                image_height,
-                tile_size,
-                isect_offsets.contiguous(),
-                flatten_ids.contiguous(),
-                absgrad,
-                distloss,
-                gs_contrib_threshold,
-                g_weight,
-                s_weight,
-            )
-        case _:
-            raise Exception(f"Unsupported filter type {filtering}")
+    if filtering in tgss_fns:
+        (
+            render_colors,
+            render_alphas,
+            render_normals,
+            render_distort,
+            render_median,
+            gs_contrib_sum,
+            gs_contrib_count,
+        ) = _RasterizeToPixelsTexturedGaussSigs.apply(
+            tgss_fns[filtering][0],
+            tgss_fns[filtering][1],
+            means2d.contiguous(),
+            steepnesses.contiguous(),
+            ray_transforms.contiguous(),
+            colors.contiguous(),
+            opacities.contiguous(),
+            textures.contiguous(),
+            texture_range_x,
+            texture_range_y,
+            normals.contiguous(),
+            densify.contiguous(),
+            backgrounds,
+            masks,
+            image_width,
+            image_height,
+            tile_size,
+            isect_offsets.contiguous(),
+            flatten_ids.contiguous(),
+            absgrad,
+            distloss,
+            gs_contrib_threshold,
+            g_weight,
+            s_weight,
+        )
+    else:
+        match filtering:
+            case _:
+                raise Exception(f"Unsupported filter type {filtering}")
 
     if padded_channels > 0:
         render_colors = render_colors[..., :-padded_channels]

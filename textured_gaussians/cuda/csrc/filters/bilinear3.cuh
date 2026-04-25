@@ -14,12 +14,12 @@ namespace gsplat::bilinear3
     // Helper function for bilinear interpolation coordinate and weight calculation
     template <typename T>
     inline __device__ void precompute(
-        T s_x, T s_y, int texture_res_x, int texture_res_y,
+        T s_x, T s_y, int texture_res_x, int texture_res_y, T x_range, T y_range,
         int32_t (&ucoords)[4], int32_t (&vcoords)[4], T (&bilerp_weights)[4])
     {
         // Map s_x, s_y in [-3, 3] to texture coordinates
-        T u = (s_x + T(3)) / T(6) * (texture_res_x - 1);
-        T v = (s_y + T(3)) / T(6) * (texture_res_y - 1);
+        T u = (s_x + x_range) / (x_range * 2) * (texture_res_x - 1);
+        T v = (s_y + y_range) / (y_range * 2) * (texture_res_y - 1);
         // clamp the uv coordinates to valid range
         if (u < -1)
         {

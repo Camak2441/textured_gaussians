@@ -197,6 +197,16 @@ def process_config(cfg: Config):
     if cfg.texture_height is None:
         cfg.texture_height = cfg.texture_resolution
 
+    if cfg.texture_range == None:
+        match cfg.model_type:
+            case "tgs" | "dtgs":
+                cfg.texture_range = 3.0
+            case "tss" | "tgss":
+                cfg.texture_range = 1.2
+    cfg.texture_range_width = cfg.texture_range
+    if cfg.texture_range_height is None:
+        cfg.texture_range_height = cfg.texture_range
+
     # Load saved texture dimensions
     if cfg.saved_texture_resolution is None:
         if cfg.saved_texture_width is None:
@@ -279,12 +289,19 @@ def process_config(cfg: Config):
             args.append(f"fgo{cfg.freq_guidance_orient_start_iter}")
 
         match cfg.model_type:
-            case "tgs":
+            case "tgs" | "tss" | "tgss":
                 if cfg.texture_width != 64 or cfg.texture_height != 64:
                     if cfg.texture_width == cfg.texture_height:
                         args.append(f"t{cfg.texture_width}")
                     else:
                         args.append(f"t{cfg.texture_width}x{cfg.texture_height}")
+                if cfg.texture_range_width != 3.0 or cfg.texture_range_height != 3.0:
+                    if cfg.texture_range_width == cfg.texture_range_height:
+                        args.append(f"tr{cfg.texture_range_width}")
+                    else:
+                        args.append(
+                            f"tr{cfg.texture_range_width}x{cfg.texture_range_height}"
+                        )
                 if cfg.textured_rgb_clamp != "clamp":
                     args.append(f"rgb{cfg.textured_rgb_clamp}")
                 if cfg.textured_alpha_clamp != "normalize":
@@ -295,49 +312,39 @@ def process_config(cfg: Config):
                     case "bilinear":
                         args_suffix = create_args_suffix()
                         if cfg.result_dir is None:
-                            cfg.result_dir = f"{_RESULTS_DIR}/tgs{args_suffix}/{scene_args["result_dir"]}"
+                            cfg.result_dir = f"{_RESULTS_DIR}/{cfg.model_type}{args_suffix}/{scene_args["result_dir"]}"
                     case "bilinear_bwd2":
                         args_suffix = create_args_suffix()
                         if cfg.result_dir is None:
-                            cfg.result_dir = f"{_RESULTS_DIR}/tgs_b2{args_suffix}/{scene_args["result_dir"]}"
+                            cfg.result_dir = f"{_RESULTS_DIR}/{cfg.model_type}_b2{args_suffix}/{scene_args["result_dir"]}"
                     case "bilinear2":
                         args_suffix = create_args_suffix()
                         if cfg.result_dir is None:
-                            cfg.result_dir = f"{_RESULTS_DIR}/tgs2{args_suffix}/{scene_args["result_dir"]}"
+                            cfg.result_dir = f"{_RESULTS_DIR}/{cfg.model_type}2{args_suffix}/{scene_args["result_dir"]}"
                     case "bilinear3":
                         args_suffix = create_args_suffix()
                         if cfg.result_dir is None:
-                            cfg.result_dir = f"{_RESULTS_DIR}/tgs3{args_suffix}/{scene_args["result_dir"]}"
+                            cfg.result_dir = f"{_RESULTS_DIR}/{cfg.model_type}3{args_suffix}/{scene_args["result_dir"]}"
                     case "bilinear3_bwd2":
                         args_suffix = create_args_suffix()
                         if cfg.result_dir is None:
-                            cfg.result_dir = f"{_RESULTS_DIR}/tgs3_b2{args_suffix}/{scene_args["result_dir"]}"
-                    case "texture_splats":
-                        args.append(f"gw{cfg.gaussian_factor}")
-                        args_suffix = create_args_suffix()
-                        if cfg.result_dir is None:
-                            cfg.result_dir = f"{_RESULTS_DIR}/ts{args_suffix}/{scene_args["result_dir"]}"
-                    case "texture_splats_bwd2":
-                        args.append(f"gw{cfg.gaussian_factor}")
-                        args_suffix = create_args_suffix()
-                        if cfg.result_dir is None:
-                            cfg.result_dir = f"{_RESULTS_DIR}/ts_b2{args_suffix}/{scene_args["result_dir"]}"
+                            cfg.result_dir = f"{_RESULTS_DIR}/{cfg.model_type}3_b2{args_suffix}/{scene_args["result_dir"]}"
                     case "mipmapped":
                         args_suffix = create_args_suffix()
                         if cfg.result_dir is None:
-                            cfg.result_dir = f"{_RESULTS_DIR}/mip_tgs{args_suffix}/{scene_args["result_dir"]}"
+                            cfg.result_dir = f"{_RESULTS_DIR}/mip_{cfg.model_type}{args_suffix}/{scene_args["result_dir"]}"
                     case "mipmapped2":
                         args_suffix = create_args_suffix()
                         if cfg.result_dir is None:
-                            cfg.result_dir = f"{_RESULTS_DIR}/mip2_tgs{args_suffix}/{scene_args["result_dir"]}"
+                            cfg.result_dir = f"{_RESULTS_DIR}/mip2_{cfg.model_type}{args_suffix}/{scene_args["result_dir"]}"
                     case "anisotropic":
                         args_suffix = create_args_suffix()
                         if cfg.result_dir is None:
-                            cfg.result_dir = f"{_RESULTS_DIR}/aniso_tgs{args_suffix}/{scene_args["result_dir"]}"
+                            cfg.result_dir = f"{_RESULTS_DIR}/aniso_{cfg.model_type}{args_suffix}/{scene_args["result_dir"]}"
                     case "anisotropic_bilinear":
                         args_suffix = create_args_suffix()
                         if cfg.result_dir is None:
-                            cfg.result_dir = f"{_RESULTS_DIR}/aniso_bilinear_tgs{args_suffix}/{scene_args["result_dir"]}"
+                            cfg.result_dir = f"{_RESULTS_DIR}/aniso_bilinear_{cfg.model_type}{args_suffix}/{scene_args["result_dir"]}"
                     case _:
                         raise Exception(
                             f"Unrecognised filtering technique {cfg.filtering}"

@@ -818,6 +818,8 @@ class Runner:
                     {
                         "num_texture_samples",
                         "filtering",
+                        "texture_range_x",
+                        "texture_range_y",
                         "sample_alpha_threshold",
                         "texture_batch_size",
                         "texture_grad_method",
@@ -860,6 +862,8 @@ class Runner:
                     {
                         "num_texture_samples",
                         "filtering",
+                        "texture_range_x",
+                        "texture_range_y",
                         "sample_alpha_threshold",
                         "texture_batch_size",
                         "texture_grad_method",
@@ -904,6 +908,8 @@ class Runner:
                     {
                         "num_texture_samples",
                         "filtering",
+                        "texture_range_x",
+                        "texture_range_y",
                         "sample_alpha_threshold",
                         "texture_batch_size",
                         "texture_grad_method",
@@ -994,7 +1000,6 @@ class Runner:
                         "texture_input_type",
                         "coord_center",
                         "coord_scale",
-                        "s_weight",
                         "g_weight",
                     },
                 )
@@ -1114,7 +1119,16 @@ class Runner:
                     **kwargs,
                 )
             case "itgs":
-                remove_from_kwargs(kwargs, {"filtering", "s_weight", "g_weight"})
+                remove_from_kwargs(
+                    kwargs,
+                    {
+                        "filtering",
+                        "texture_range_x",
+                        "texture_range_y",
+                        "s_weight",
+                        "g_weight",
+                    },
+                )
                 (
                     render_colors,
                     render_alphas,

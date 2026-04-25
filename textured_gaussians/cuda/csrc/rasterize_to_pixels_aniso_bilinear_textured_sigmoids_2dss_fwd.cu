@@ -34,6 +34,7 @@ namespace gsplat
         const S *__restrict__ colors,                                           // [C, N, COLOR_DIM] or [nnz, COLOR_DIM]  // Gaussian colors or ND features.
         const S *__restrict__ opacities,                                        // [C, N] or [nnz]                        // Gaussian opacities that support per-view values.
         at::PackedTensorAccessor32<const S, 4, at::RestrictPtrTraits> textures, // [N, Texture_Resolution, Texture_Resolution, 4]
+        const vec2<S> texture_range,                                            //
         const S *__restrict__ normals,                                          // [C, N, 3] or [nnz, 3]                  // The normals in camera space.
         const S *__restrict__ backgrounds,                                      // [C, COLOR_DIM]                         // Background colors on camera basis
         const bool *__restrict__ masks,                                         // [C, tile_height, tile_width]            // Optional tile mask to skip rendering GS to masked tiles.
@@ -309,10 +310,18 @@ namespace gsplat
                     continue;
 
                 const vec2<S> s = vec2<S>(ray_cross.x / ray_cross.z, ray_cross.y / ray_cross.z);
-                vec2<S> s0 = anisotropic_bilinear::s_to_uv(vec2<S>(s0ray_cross.x / s0ray_cross.z, s0ray_cross.y / s0ray_cross.z), texture_res_x, texture_res_y);
-                vec2<S> s1 = anisotropic_bilinear::s_to_uv(vec2<S>(s1ray_cross.x / s1ray_cross.z, s1ray_cross.y / s1ray_cross.z), texture_res_x, texture_res_y);
-                vec2<S> s2 = anisotropic_bilinear::s_to_uv(vec2<S>(s2ray_cross.x / s2ray_cross.z, s2ray_cross.y / s2ray_cross.z), texture_res_x, texture_res_y);
-                vec2<S> s3 = anisotropic_bilinear::s_to_uv(vec2<S>(s3ray_cross.x / s3ray_cross.z, s3ray_cross.y / s3ray_cross.z), texture_res_x, texture_res_y);
+                vec2<S> s0 = anisotropic_bilinear::s_to_uv(
+                    vec2<S>(s0ray_cross.x / s0ray_cross.z, s0ray_cross.y / s0ray_cross.z),
+                    texture_res_x, texture_res_y, texture_range.x, texture_range.y);
+                vec2<S> s1 = anisotropic_bilinear::s_to_uv(
+                    vec2<S>(s1ray_cross.x / s1ray_cross.z, s1ray_cross.y / s1ray_cross.z),
+                    texture_res_x, texture_res_y, texture_range.x, texture_range.y);
+                vec2<S> s2 = anisotropic_bilinear::s_to_uv(
+                    vec2<S>(s2ray_cross.x / s2ray_cross.z, s2ray_cross.y / s2ray_cross.z),
+                    texture_res_x, texture_res_y, texture_range.x, texture_range.y);
+                vec2<S> s3 = anisotropic_bilinear::s_to_uv(
+                    vec2<S>(s3ray_cross.x / s3ray_cross.z, s3ray_cross.y / s3ray_cross.z),
+                    texture_res_x, texture_res_y, texture_range.x, texture_range.y);
 
                 vec2<S> n01, n12, n23, n30;
                 S n01max, n12max, n23max, n30max;
@@ -495,6 +504,7 @@ namespace gsplat
         const torch::Tensor &colors,                    // [C, N, channels] or [nnz, channels]
         const torch::Tensor &opacities,                 // [C, N]  or [nnz]
         const torch::Tensor &textures,                  //
+        const vec2<float> texture_range,                //
         const torch::Tensor &normals,                   // [C, N, 3]
         const at::optional<torch::Tensor> &backgrounds, // [C, channels]
         const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
@@ -601,6 +611,7 @@ namespace gsplat
                 colors.data_ptr<float>(),
                 opacities.data_ptr<float>(),
                 textures.packed_accessor32<const float, 4, at::RestrictPtrTraits>(),
+                texture_range,
                 normals.data_ptr<float>(),
                 backgrounds.has_value() ? backgrounds.value().data_ptr<float>()
                                         : nullptr,
@@ -653,6 +664,8 @@ namespace gsplat
         const torch::Tensor &colors,                    // [C, N, channels] or [nnz, channels]
         const torch::Tensor &opacities,                 // [C, N]  or [nnz]
         const torch::Tensor &textures,                  //
+        const float texture_range_x,                    //
+        const float texture_range_y,                    //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
         const at::optional<torch::Tensor> &backgrounds, // [C, channels]
         const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
@@ -678,6 +691,7 @@ namespace gsplat
             colors,                                        \
             opacities,                                     \
             textures,                                      \
+            vec2<float>(texture_range_x, texture_range_y), \
             normals,                                       \
             backgrounds,                                   \
             masks,                                         \

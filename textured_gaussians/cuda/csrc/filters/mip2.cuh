@@ -28,13 +28,13 @@ namespace gsplat::mip2
     // Helper function for trilinear interpolation coordinate and weight calculation
     template <typename T>
     inline __device__ int32_t precompute(
-        T s_x, T s_y, vec2<T> dsdx, vec2<T> dsdy, int texture_res, int log_texture_res,
+        T s_x, T s_y, vec2<T> dsdx, vec2<T> dsdy, int texture_res, int log_texture_res, T x_range, T y_range,
         int32_t (&mipcoords)[8], T (&trilerp_weights)[8])
     {
         // Map s_x, s_y in [-3, 3] to texture coordinates
 
-        vec2<T> duvdx = vec2<T>(dsdx.x / T(6) * (texture_res - 1), dsdx.y / T(6) * (texture_res - 1));
-        vec2<T> duvdy = vec2<T>(dsdy.x / T(6) * (texture_res - 1), dsdy.y / T(6) * (texture_res - 1));
+        vec2<T> duvdx = vec2<T>(dsdx.x / (x_range * 2) * (texture_res - 1), dsdx.y / (x_range * 2) * (texture_res - 1));
+        vec2<T> duvdy = vec2<T>(dsdy.x / (y_range * 2) * (texture_res - 1), dsdy.y / (y_range * 2) * (texture_res - 1));
         T duv = max(glm::length(duvdx), glm::length(duvdy));
         T t = log2(duv);
         if (t < 0)
@@ -47,8 +47,8 @@ namespace gsplat::mip2
         }
 
         // For ease of mipmapping, coordinate textures give the tl of the pixel
-        T u = (s_x + T(3)) / T(6) * (texture_res - 1);
-        T v = (s_y + T(3)) / T(6) * (texture_res - 1);
+        T u = (s_x + x_range) / (x_range * 2) * (texture_res - 1);
+        T v = (s_y + y_range) / (y_range * 2) * (texture_res - 1);
         int32_t t_low = (int32_t)floor(t);
         int32_t t_high = (int32_t)ceil(t);
 

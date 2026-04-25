@@ -14,17 +14,17 @@ namespace gsplat::bilinear2
     // Helper function for bilinear interpolation coordinate and weight calculation
     template <typename T>
     inline __device__ int32_t precompute(
-        T s_x, T s_y, int texture_res_x, int texture_res_y,
+        T s_x, T s_y, int texture_res_x, int texture_res_y, T x_range, T y_range,
         int32_t (&ucoords)[4], int32_t (&vcoords)[4], T (&bilerp_weights)[4])
     {
-        if (s_x < T(-3) || s_x > T(3) || s_y < T(-3) || s_y > T(3))
+        if (s_x < -x_range || s_x > x_range || s_y < -y_range || s_y > y_range)
         {
             return -1;
         }
         // Map s_x, s_y in [-3, 3] to texture coordinates
         // This version of bilinear mapping views each texel as being in the centre of its pixel
-        T u = (s_x + T(3)) / T(6) * texture_res_x - T(0.5);
-        T v = (s_y + T(3)) / T(6) * texture_res_y - T(0.5);
+        T u = (s_x + x_range) / (x_range * 2) * texture_res_x - T(0.5);
+        T v = (s_y + y_range) / (y_range * 2) * texture_res_y - T(0.5);
         // clamp the uv coordinates to valid range
         if (u < -1)
         {

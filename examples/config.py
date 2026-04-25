@@ -265,6 +265,8 @@ class Config:
     # textured gaussians
     texture_resolution: int = 64
     texture_height: int | None = None
+    texture_range: float | None = None
+    texture_range_height: float | None = None
     saved_texture_resolution: int | None = None
     saved_texture_width: int | None = None
     saved_texture_height: int | None = None

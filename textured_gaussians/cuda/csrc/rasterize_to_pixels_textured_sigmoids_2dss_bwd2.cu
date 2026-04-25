@@ -2,7 +2,7 @@
 #include "helpers.cuh"
 #include "types.cuh"
 #include "utils.cuh"
-#include "filters/bilinear_s.cuh"
+#include "filters/bilinear.cuh"
 #include <cooperative_groups.h>
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
@@ -35,6 +35,7 @@ namespace gsplat
         const S *__restrict__ normals,
         const S *__restrict__ opacities,
         at::PackedTensorAccessor32<const S, 4, at::RestrictPtrTraits> textures,
+        const vec2<S> texture_range,
         const S *__restrict__ backgrounds,
         const bool *__restrict__ masks,
 
@@ -68,7 +69,8 @@ namespace gsplat
         S *__restrict__ v_opacities,
         at::PackedTensorAccessor32<S, 4, at::RestrictPtrTraits> v_textures,
         S *__restrict__ v_normals,
-        S *__restrict__ v_densify)
+        S *__restrict__ v_densify,
+        const S s_weight)
     {
         auto block = cg::this_thread_block();
         uint32_t camera_id = block.group_index().x;
@@ -260,8 +262,10 @@ namespace gsplat
                         s = {ray_cross.x / ray_cross.z, ray_cross.y / ray_cross.z};
                     }
 
-                    valid_texture = bilinear_s::precompute(
-                        s.x, s.y, texture_res_x, texture_res_y, ucoords, vcoords, bilerp_weights);
+                    valid_texture = bilinear::precompute(
+                        s.x, s.y, texture_res_x, texture_res_y,
+                        texture_range.x, texture_range.y,
+                        ucoords, vcoords, bilerp_weights);
 
                     if (valid_texture > 0)
                     {
@@ -290,7 +294,7 @@ namespace gsplat
                         vis = sigmoid(-(steepness * __logf(gauss_weight)));
                     }
 
-                    alpha = min(S(0.999), opac * vis * alpha_scaling_factor);
+                    alpha = min(S(0.999), opac * (S(0.998) - s_weight + s_weight * vis) * alpha_scaling_factor);
 
                     if (gauss_weight < S(0) || alpha < S(1) / S(255))
                         valid = false;
@@ -377,11 +381,11 @@ namespace gsplat
                             S(2) * fac * (S(2) - S(2) * T - accum_w + fac) * v_distort;
                     }
 
-                    if (opac * vis * alpha_scaling_factor <= S(0.999))
+                    if (opac * (S(0.998) - s_weight + s_weight * vis) * alpha_scaling_factor <= S(0.999))
                     {
                         S v_depth = S(0);
                         // v_G = d(loss)/d(vis), the gradient w.r.t. the smooth step weight
-                        const S v_G = opac * v_alpha * alpha_scaling_factor;
+                        const S v_G = opac * s_weight * v_alpha * alpha_scaling_factor;
 
                         // gw^(k-1) = (1-vis)/(vis*gw)  [from vis=1/(1+gw^k) => gw^k=(1-vis)/vis]
                         // used in d(vis)/d(gw) = -vis^2 * k * gw^(k-1)
@@ -425,7 +429,7 @@ namespace gsplat
                             }
                         }
 
-                        v_opacity_local = vis * v_alpha * alpha_scaling_factor;
+                        v_opacity_local = (S(0.998) - s_weight + s_weight * vis) * v_alpha * alpha_scaling_factor;
 
                         // steepness gradient: d(vis)/d(k) = -vis*(1-vis)*log(gw)
                         // [from d(vis)/d(k) = -vis^2*gw^k*log(gw) and gw^k=(1-vis)/vis]
@@ -454,8 +458,8 @@ namespace gsplat
                         const S d_bw_du[4] = {-(S(1) - w_v), (S(1) - w_v), -w_v, w_v};
                         const S d_bw_dv[4] = {-(S(1) - w_u), -w_u, (S(1) - w_u), w_u};
 
-                        const S du_dsx = S(texture_res_x - 1) / S(6);
-                        const S dv_dsy = S(texture_res_y - 1) / S(6);
+                        const S du_dsx = S(texture_res_x - 1) / (texture_range.x);
+                        const S dv_dsy = S(texture_res_y - 1) / (texture_range.y);
 
                         vec2<S> v_s_tex = {S(0), S(0)};
 
@@ -471,9 +475,9 @@ namespace gsplat
                             }
                         }
 
-                        if (opac * vis * alpha_scaling_factor <= S(0.999))
+                        if (opac * (S(0.998) - s_weight + s_weight * vis) * alpha_scaling_factor <= S(0.999))
                         {
-                            const S v_asf = vis * opac * v_alpha;
+                            const S v_asf = (S(0.998) - s_weight + s_weight * vis) * opac * v_alpha;
                             for (uint32_t i = 0; i < 4; ++i)
                             {
                                 const S tex_val_a = textures[g][vcoords[i]][ucoords[i]][3];
@@ -589,6 +593,7 @@ namespace gsplat
         const torch::Tensor &colors,
         const torch::Tensor &opacities,
         const torch::Tensor &textures,
+        const vec2<float> texture_range,
         const torch::Tensor &normals,
         const torch::Tensor &densify,
         const at::optional<torch::Tensor> &backgrounds,
@@ -607,7 +612,8 @@ namespace gsplat
         const torch::Tensor &v_render_normals,
         const torch::Tensor &v_render_distort,
         const torch::Tensor &v_render_median,
-        bool absgrad)
+        bool absgrad,
+        float s_weight)
     {
         GSPLAT_DEVICE_GUARD(means2d);
         GSPLAT_CHECK_INPUT(means2d);
@@ -693,6 +699,7 @@ namespace gsplat
                     normals.data_ptr<float>(),
                     opacities.data_ptr<float>(),
                     textures.packed_accessor32<const float, 4, at::RestrictPtrTraits>(),
+                    texture_range,
                     backgrounds.has_value() ? backgrounds.value().data_ptr<float>() : nullptr,
                     masks.has_value() ? masks.value().data_ptr<bool>() : nullptr,
                     image_width,
@@ -720,7 +727,8 @@ namespace gsplat
                     v_opacities.data_ptr<float>(),
                     v_textures.packed_accessor32<float, 4, at::RestrictPtrTraits>(),
                     v_normals.data_ptr<float>(),
-                    v_densify.data_ptr<float>());
+                    v_densify.data_ptr<float>(),
+                    s_weight);
         }
 
         return std::make_tuple(
@@ -752,6 +760,8 @@ namespace gsplat
         const torch::Tensor &colors,
         const torch::Tensor &opacities,
         const torch::Tensor &textures,
+        const float texture_range_x,
+        const float texture_range_y,
         const torch::Tensor &normals,
         const torch::Tensor &densify,
         const at::optional<torch::Tensor> &backgrounds,
@@ -761,6 +771,7 @@ namespace gsplat
         const uint32_t tile_size,
         const torch::Tensor &tile_offsets,
         const torch::Tensor &flatten_ids,
+        float s_weight,
         const torch::Tensor &render_colors,
         const torch::Tensor &render_alphas,
         const torch::Tensor &last_ids,
@@ -775,34 +786,36 @@ namespace gsplat
         GSPLAT_CHECK_INPUT(colors);
         uint32_t COLOR_DIM = colors.size(-1);
 
-#define __GS__CALL_(N)                          \
-    case N:                                     \
-        return call_bwd2_ts_kernel_with_dim<N>( \
-            means2d,                            \
-            steepnesses,                        \
-            ray_transforms,                     \
-            colors,                             \
-            opacities,                          \
-            textures,                           \
-            normals,                            \
-            densify,                            \
-            backgrounds,                        \
-            masks,                              \
-            image_width,                        \
-            image_height,                       \
-            tile_size,                          \
-            tile_offsets,                       \
-            flatten_ids,                        \
-            render_colors,                      \
-            render_alphas,                      \
-            last_ids,                           \
-            median_ids,                         \
-            v_render_colors,                    \
-            v_render_alphas,                    \
-            v_render_normals,                   \
-            v_render_distort,                   \
-            v_render_median,                    \
-            absgrad);
+#define __GS__CALL_(N)                                     \
+    case N:                                                \
+        return call_bwd2_ts_kernel_with_dim<N>(            \
+            means2d,                                       \
+            steepnesses,                                   \
+            ray_transforms,                                \
+            colors,                                        \
+            opacities,                                     \
+            textures,                                      \
+            vec2<float>(texture_range_x, texture_range_y), \
+            normals,                                       \
+            densify,                                       \
+            backgrounds,                                   \
+            masks,                                         \
+            image_width,                                   \
+            image_height,                                  \
+            tile_size,                                     \
+            tile_offsets,                                  \
+            flatten_ids,                                   \
+            render_colors,                                 \
+            render_alphas,                                 \
+            last_ids,                                      \
+            median_ids,                                    \
+            v_render_colors,                               \
+            v_render_alphas,                               \
+            v_render_normals,                              \
+            v_render_distort,                              \
+            v_render_median,                               \
+            absgrad,                                       \
+            s_weight);
 
         switch (COLOR_DIM)
         {

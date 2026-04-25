@@ -2,7 +2,7 @@
 #include "helpers.cuh"
 #include "types.cuh"
 #include "utils.cuh"
-#include "filters/bilinear_s.cuh"
+#include "filters/bilinear.cuh"
 #include <cooperative_groups.h>
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
@@ -35,6 +35,7 @@ namespace gsplat
         const S *__restrict__ normals,
         const S *__restrict__ opacities,
         at::PackedTensorAccessor32<const S, 4, at::RestrictPtrTraits> textures,
+        const vec2<S> texture_range,
         const S *__restrict__ backgrounds,
         const bool *__restrict__ masks,
 
@@ -264,8 +265,10 @@ namespace gsplat
                         s = {ray_cross.x / ray_cross.z, ray_cross.y / ray_cross.z};
                     }
 
-                    valid_texture = bilinear_s::precompute(
-                        s.x, s.y, texture_res_x, texture_res_y, ucoords, vcoords, bilerp_weights);
+                    valid_texture = bilinear::precompute(
+                        s.x, s.y, texture_res_x, texture_res_y,
+                        texture_range.x, texture_range.y,
+                        ucoords, vcoords, bilerp_weights);
 
                     if (valid_texture > 0)
                     {
@@ -466,8 +469,8 @@ namespace gsplat
                         const S d_bw_du[4] = {-(S(1) - w_v), (S(1) - w_v), -w_v, w_v};
                         const S d_bw_dv[4] = {-(S(1) - w_u), -w_u, (S(1) - w_u), w_u};
 
-                        const S du_dsx = S(texture_res_x - 1) / S(6);
-                        const S dv_dsy = S(texture_res_y - 1) / S(6);
+                        const S du_dsx = S(texture_res_x - 1) / (texture_range.x * 2);
+                        const S dv_dsy = S(texture_res_y - 1) / (texture_range.y * 2);
 
                         vec2<S> v_s_tex = {S(0), S(0)};
 
@@ -601,6 +604,7 @@ namespace gsplat
         const torch::Tensor &colors,
         const torch::Tensor &opacities,
         const torch::Tensor &textures,
+        const vec2<float> texture_range,
         const torch::Tensor &normals,
         const torch::Tensor &densify,
         const at::optional<torch::Tensor> &backgrounds,
@@ -707,6 +711,7 @@ namespace gsplat
                     normals.data_ptr<float>(),
                     opacities.data_ptr<float>(),
                     textures.packed_accessor32<const float, 4, at::RestrictPtrTraits>(),
+                    texture_range,
                     backgrounds.has_value() ? backgrounds.value().data_ptr<float>() : nullptr,
                     masks.has_value() ? masks.value().data_ptr<bool>() : nullptr,
                     image_width,
@@ -768,6 +773,8 @@ namespace gsplat
         const torch::Tensor &colors,
         const torch::Tensor &opacities,
         const torch::Tensor &textures,
+        const float texture_range_x,
+        const float texture_range_y,
         const torch::Tensor &normals,
         const torch::Tensor &densify,
         const at::optional<torch::Tensor> &backgrounds,
@@ -793,35 +800,36 @@ namespace gsplat
         GSPLAT_CHECK_INPUT(colors);
         uint32_t COLOR_DIM = colors.size(-1);
 
-#define __GS__CALL_(N)                           \
-    case N:                                      \
-        return call_bwd2_tgs_kernel_with_dim<N>( \
-            means2d,                             \
-            steepnesses,                         \
-            ray_transforms,                      \
-            colors,                              \
-            opacities,                           \
-            textures,                            \
-            normals,                             \
-            densify,                             \
-            backgrounds,                         \
-            masks,                               \
-            image_width,                         \
-            image_height,                        \
-            tile_size,                           \
-            tile_offsets,                        \
-            flatten_ids,                         \
-            render_colors,                       \
-            render_alphas,                       \
-            last_ids,                            \
-            median_ids,                          \
-            v_render_colors,                     \
-            v_render_alphas,                     \
-            v_render_normals,                    \
-            v_render_distort,                    \
-            v_render_median,                     \
-            absgrad,                             \
-            g_weight,                            \
+#define __GS__CALL_(N)                                     \
+    case N:                                                \
+        return call_bwd2_tgs_kernel_with_dim<N>(           \
+            means2d,                                       \
+            steepnesses,                                   \
+            ray_transforms,                                \
+            colors,                                        \
+            opacities,                                     \
+            textures,                                      \
+            vec2<float>(texture_range_x, texture_range_y), \
+            normals,                                       \
+            densify,                                       \
+            backgrounds,                                   \
+            masks,                                         \
+            image_width,                                   \
+            image_height,                                  \
+            tile_size,                                     \
+            tile_offsets,                                  \
+            flatten_ids,                                   \
+            render_colors,                                 \
+            render_alphas,                                 \
+            last_ids,                                      \
+            median_ids,                                    \
+            v_render_colors,                               \
+            v_render_alphas,                               \
+            v_render_normals,                              \
+            v_render_distort,                              \
+            v_render_median,                               \
+            absgrad,                                       \
+            g_weight,                                      \
             s_weight);
 
         switch (COLOR_DIM)

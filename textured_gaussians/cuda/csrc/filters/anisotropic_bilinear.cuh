@@ -14,10 +14,10 @@ namespace gsplat::anisotropic_bilinear
 {
 
     template <typename T>
-    inline __device__ vec2<T> s_to_uv(vec2<T> s, int texture_res_x, int texture_res_y)
+    inline __device__ vec2<T> s_to_uv(vec2<T> s, int texture_res_x, int texture_res_y, T x_range, T y_range)
     {
-        return vec2<T>((s.x + T(3)) / T(6) * (texture_res_x - 1),
-                       (s.y + T(3)) / T(6) * (texture_res_y - 1));
+        return vec2<T>((s.x + x_range) / (x_range * 2) * (texture_res_x - 1),
+                       (s.y + y_range) / (y_range * 2) * (texture_res_y - 1));
     }
 
     template <typename T>
