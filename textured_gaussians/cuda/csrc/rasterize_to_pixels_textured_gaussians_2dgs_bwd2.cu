@@ -40,6 +40,7 @@ namespace gsplat
         const uint32_t tile_height,
         const int32_t *__restrict__ tile_offsets, // [C, tile_height, tile_width]
         const int32_t *__restrict__ flatten_ids,  // [n_isects]
+        const S g_weight,
 
         // fwd outputs
         const S *__restrict__ render_colors,    // [C, image_height, image_width,
@@ -302,9 +303,10 @@ namespace gsplat
                  * Forward pass variables
                  * ==================================================
                  */
-                S alpha;           // for the currently processed gaussian, per pixel
-                S opac;            // opacity of the currently processed gaussian, per pixel
-                S vis;             // visibility of the currently processed gaussian (the pure gaussian weight, not multiplied by opacity), per pixel
+                S alpha;            // for the currently processed gaussian, per pixel
+                S opac;             // opacity of the currently processed gaussian, per pixel
+                S vis;              // visibility of the currently processed gaussian (the pure gaussian weight, not multiplied by opacity), per pixel
+                S gaussian_kernel;  // raw Gaussian exponential exp(-sigma)
                 S gauss_weight_3d; // 3D gaussian weight (using the proper intersection of UV space), per pixel
                 S gauss_weight_2d; // 2D gaussian weight (using the projected 2D mean), per pixel
                 S gauss_weight;    // minimum of 3D and 2D gaussian weights, per pixel
@@ -379,7 +381,8 @@ namespace gsplat
 
                     // visibility and alpha
                     const S sigma = S(0.5) * gauss_weight;
-                    vis = exp(-sigma);
+                    gaussian_kernel = exp(-sigma);
+                    vis = S(0.998) - g_weight + g_weight * gaussian_kernel;
                     alpha = min(S(0.999), opac * vis * alpha_scaling_factor); // clipped alpha
 
                     // gaussian throw out
@@ -554,8 +557,8 @@ namespace gsplat
 
                             // derivative of G_i w.r.t. ray-primitive intersection uv coordinates
                             const vec2<S> v_s = {
-                                v_G * -vis * s.x + v_depth * w_M.x,
-                                v_G * -vis * s.y + v_depth * w_M.y};
+                                v_G * -g_weight * gaussian_kernel * s.x + v_depth * w_M.x,
+                                v_G * -g_weight * gaussian_kernel * s.y + v_depth * w_M.y};
 
                             // backward through the projective transform
                             // @see rasterize_to_pixels_2dgs_fwd.cu to understand what is going on here
@@ -580,8 +583,8 @@ namespace gsplat
                         else
                         {
                             // computing the derivative of G_i w.r.t. 2d projected gaussian parameters (trivial)
-                            const S v_G_ddelx = -vis * FILTER_INV_SQUARE * d.x;
-                            const S v_G_ddely = -vis * FILTER_INV_SQUARE * d.y;
+                            const S v_G_ddelx = -g_weight * gaussian_kernel * FILTER_INV_SQUARE * d.x;
+                            const S v_G_ddely = -g_weight * gaussian_kernel * FILTER_INV_SQUARE * d.y;
                             v_xy_local = {v_G * v_G_ddelx, v_G * v_G_ddely};
                             if (v_means2d_abs != nullptr)
                             {
@@ -788,6 +791,7 @@ namespace gsplat
         // ray_crossions
         const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
         const torch::Tensor &flatten_ids,  // [n_isects]
+        const float g_weight,
         // forward outputs
         const torch::Tensor
             &render_colors,                 // [C, image_height, image_width, COLOR_DIM]
@@ -899,6 +903,7 @@ namespace gsplat
                     tile_height,
                     tile_offsets.data_ptr<int32_t>(),
                     flatten_ids.data_ptr<int32_t>(),
+                    g_weight,
                     render_colors.data_ptr<float>(),
                     render_alphas.data_ptr<float>(),
                     last_ids.data_ptr<int32_t>(),
@@ -957,6 +962,7 @@ namespace gsplat
         // ray_crossions
         const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
         const torch::Tensor &flatten_ids,  // [n_isects]
+        const float g_weight,
         // forward outputs
         const torch::Tensor
             &render_colors,                 // [C, image_height, image_width, COLOR_DIM]
@@ -993,6 +999,7 @@ namespace gsplat
             tile_size,                         \
             tile_offsets,                      \
             flatten_ids,                       \
+            g_weight,                          \
             render_colors,                     \
             render_alphas,                     \
             last_ids,                          \

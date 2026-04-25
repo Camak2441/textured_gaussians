@@ -46,6 +46,7 @@ from textured_gaussians.rendering import (
     rasterization_2dss,
     rasterization_2dgss,
     rasterization_textured_gaussians,
+    rasterization_textured_gausssigs,
     rasterization_textured_sigmoids,
     rasterization_dct_textured_gaussians,
     rasterization_implicit_textured_gaussians,
@@ -1027,6 +1028,47 @@ class Runner:
                     norm_rot_grad=self.cfg.norm_rot_grad,
                     **kwargs,
                 )
+            case "tgss":
+                remove_from_kwargs(
+                    kwargs,
+                    {
+                        "num_texture_samples",
+                        "sample_alpha_threshold",
+                        "texture_batch_size",
+                        "texture_grad_method",
+                        "texture_input_type",
+                        "coord_center",
+                        "coord_scale",
+                    },
+                )
+                textures = self.get_textures()
+                (
+                    render_colors,
+                    render_alphas,
+                    render_normals,
+                    normals_from_depth,
+                    render_distort,
+                    render_median,
+                    _,
+                    _,
+                    info,
+                ) = rasterization_textured_gausssigs(
+                    means=means,
+                    quats=quats,
+                    scales=scales,
+                    opacities=opacities,
+                    colors=colors,
+                    textures=textures,
+                    viewmats=torch.linalg.inv(camtoworlds),  # [C, 4, 4]
+                    Ks=Ks,  # [C, 3, 3]
+                    width=width,
+                    height=height,
+                    packed=self.cfg.packed,
+                    absgrad=self.cfg.absgrad,
+                    sparse_grad=self.cfg.sparse_grad,
+                    norm_rot_grad=self.cfg.norm_rot_grad,
+                    **kwargs,
+                )
             case "dtgs":
                 remove_from_kwargs(
                     kwargs,
@@ -1573,6 +1615,20 @@ class Runner:
                     self.writer.add_scalar("train/normalloss", normalloss.item(), step)
                 if cfg.dist_loss:
                     self.writer.add_scalar("train/distloss", distloss.item(), step)
+                if cfg.alpha_loss:
+                    self.writer.add_scalar("train/alpha_loss", alpha_loss.item(), step)
+                if cfg.scale_loss:
+                    self.writer.add_scalar("train/scale_loss", scale_loss.item(), step)
+                if cfg.opac_loss:
+                    self.writer.add_scalar("train/opac_loss", opac_loss.item(), step)
+                if cfg.tex_opac_loss and "textures" in self.splats:
+                    self.writer.add_scalar(
+                        "train/tex_opac_loss", tex_opac_loss.item(), step
+                    )
+                if cfg.steepness_loss and "steepnesses" in self.splats:
+                    self.writer.add_scalar(
+                        "train/steepness_loss", steepness_loss.item(), step
+                    )
                 if cfg.freq_loss and cfg.model_type == "dtgs":
                     self.writer.add_scalar("train/freqloss", freqloss.item(), step)
                 if use_freq_guidance:

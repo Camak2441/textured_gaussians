@@ -234,6 +234,7 @@ class Config:
         "dtgs",
         "itgs",
         "tss",
+        "tgss",
     ] = "2dgs"
     texture_model: str | None = None
     num_texture_samples: int = 10
@@ -282,8 +283,6 @@ class Config:
         "bilinear2",
         "bilinear3",
         "bilinear3_bwd2",
-        "texture_splats",
-        "texture_splats_bwd2",
         "mipmapped",
         "mipmapped2",
         "anisotropic",
