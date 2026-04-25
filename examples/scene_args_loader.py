@@ -295,13 +295,15 @@ def process_config(cfg: Config):
                         args.append(f"t{cfg.texture_width}")
                     else:
                         args.append(f"t{cfg.texture_width}x{cfg.texture_height}")
-                if cfg.texture_range_width != 3.0 or cfg.texture_range_height != 3.0:
-                    if cfg.texture_range_width == cfg.texture_range_height:
-                        args.append(f"tr{cfg.texture_range_width}")
+                default_tr = {"tgs": 3.0, "tss": 1.2, "tgss": 1.2}[cfg.model_type]
+                display_trd = round(default_tr * 1000)
+                display_trw = round(cfg.texture_range_width * 1000)
+                display_trh = round(cfg.texture_range_height * 1000)
+                if display_trw != display_trd or display_trh != display_trd:
+                    if display_trw == display_trh:
+                        args.append(f"tr{display_trw}")
                     else:
-                        args.append(
-                            f"tr{cfg.texture_range_width}x{cfg.texture_range_height}"
-                        )
+                        args.append(f"tr{display_trw}x{display_trh}")
                 if cfg.textured_rgb_clamp != "clamp":
                     args.append(f"rgb{cfg.textured_rgb_clamp}")
                 if cfg.textured_alpha_clamp != "normalize":
