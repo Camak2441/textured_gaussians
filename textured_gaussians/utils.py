@@ -12,10 +12,13 @@ type Filtering = Literal[
     "bilinear2",
     "bilinear3",
     "bilinear3_bwd2",
+    "bilinear4",
+    "bilinear4_bwd2",
     "mipmapped",
     "mipmapped2",
     "anisotropic",
     "anisotropic_bilinear",
+    "anisotropic_bilinear2",
 ]
 type TextureGrads = Literal["dev", "cpu", "checkpoint"]
 type TextureInputType = Literal["gaussian", "world", "world_and_view"]

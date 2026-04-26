@@ -16,7 +16,4 @@ python simple_trainer_textured_gaussians.py mcmc \
     --opac_loss \
     --opac_loss_fn="quad1" \
     --opac_loss_start_iter 1000 \
-    --schedule_scales_lr \
-    --schedule_quats_lr \
-    --steps_scaler=1 \
     --port 6070

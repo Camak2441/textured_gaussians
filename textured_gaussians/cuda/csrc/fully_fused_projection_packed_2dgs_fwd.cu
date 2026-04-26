@@ -1,5 +1,5 @@
 
-#include "bindings.h"
+#include "kernel_utils.h"
 #include "helpers.cuh"
 #include "utils.cuh"
 

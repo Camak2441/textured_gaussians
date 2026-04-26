@@ -262,8 +262,8 @@ namespace gsplat::anisotropic_bilinear
                         vec2<T>(T(u), T(v)), &A, &Sx, &Sy, &Sxy))
                     continue;
 
-                int u1 = min(u + 1, texture_res_x - 1);
-                int v1 = min(v + 1, texture_res_y - 1);
+                int u1 = u + 1;
+                int v1 = v + 1;
                 value += textures[g][v][u][k] * (A - Sx - Sy + Sxy) + textures[g][v][u1][k] * (Sx - Sxy) + textures[g][v1][u][k] * (Sy - Sxy) + textures[g][v1][u1][k] * Sxy;
             }
         }
@@ -293,8 +293,8 @@ namespace gsplat::anisotropic_bilinear
                         vec2<T>(T(u), T(v)), &A, &Sx, &Sy, &Sxy))
                     continue;
 
-                int u1 = min(u + 1, texture_res_x - 1);
-                int v1 = min(v + 1, texture_res_y - 1);
+                int u1 = u + 1;
+                int v1 = v + 1;
                 T w00 = (A - Sx - Sy + Sxy) * iarea;
                 T w10 = (Sx - Sxy) * iarea;
                 T w01 = (Sy - Sxy) * iarea;
@@ -334,8 +334,8 @@ namespace gsplat::anisotropic_bilinear
                         vec2<T>(T(u), T(v)), &A, &Sx, &Sy, &Sxy))
                     continue;
 
-                int u1 = min(u + 1, texture_res_x - 1);
-                int v1 = min(v + 1, texture_res_y - 1);
+                int u1 = u + 1;
+                int v1 = v + 1;
                 gpuAtomicAdd(&v_textures[g][v][u][k], ndelta * (A - Sx - Sy + Sxy));
                 gpuAtomicAdd(&v_textures[g][v][u1][k], ndelta * (Sx - Sxy));
                 gpuAtomicAdd(&v_textures[g][v1][u][k], ndelta * (Sy - Sxy));
@@ -375,8 +375,8 @@ namespace gsplat::anisotropic_bilinear
                         vec2<T>(T(u), T(v)), &A, &Sx, &Sy, &Sxy))
                     continue;
 
-                int u1 = min(u + 1, texture_res_x - 1);
-                int v1 = min(v + 1, texture_res_y - 1);
+                int u1 = u + 1;
+                int v1 = v + 1;
                 T w00 = (A - Sx - Sy + Sxy);
                 T w10 = (Sx - Sxy);
                 T w01 = (Sy - Sxy);

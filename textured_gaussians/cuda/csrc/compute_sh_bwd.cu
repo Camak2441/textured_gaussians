@@ -1,4 +1,4 @@
-#include "bindings.h"
+#include "kernel_utils.h"
 #include "spherical_harmonics.cuh"
 #include "types.cuh"
 

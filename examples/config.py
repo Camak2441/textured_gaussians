@@ -285,10 +285,13 @@ class Config:
         "bilinear2",
         "bilinear3",
         "bilinear3_bwd2",
+        "bilinear4",
+        "bilinear4_bwd2",
         "mipmapped",
         "mipmapped2",
         "anisotropic",
         "anisotropic_bilinear",
+        "anisotropic_bilinear2",
     ] = "bilinear"
 
     def adjust_steps(self, factor: float):

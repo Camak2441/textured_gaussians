@@ -1,4 +1,4 @@
-#include "bindings.h"
+#include "kernel_utils.h"
 #include "helpers.cuh"
 #include "types.cuh"
 #define FILTER_INV_SQUARE 2.0f

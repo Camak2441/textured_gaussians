@@ -1,4 +1,4 @@
-#include "bindings.h"
+#include "kernel_utils.h"
 
 namespace gsplat {
 

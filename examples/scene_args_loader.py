@@ -209,7 +209,7 @@ def process_config(cfg: Config):
             case "tgs" | "dtgs":
                 cfg.texture_range = 3.0
             case "tss" | "tgss":
-                cfg.texture_range = 1.2
+                cfg.texture_range = 1.5
     cfg.texture_range_width = cfg.texture_range
     if cfg.texture_range_height is None:
         cfg.texture_range_height = cfg.texture_range
@@ -312,7 +312,7 @@ def process_config(cfg: Config):
                         args.append(f"t{cfg.texture_width}")
                     else:
                         args.append(f"t{cfg.texture_width}x{cfg.texture_height}")
-                default_tr = {"tgs": 3.0, "tss": 1.2, "tgss": 1.2}[cfg.model_type]
+                default_tr = {"tgs": 3.0, "tss": 1.5, "tgss": 1.5}[cfg.model_type]
                 display_trd = round(default_tr * 1000)
                 display_trw = round(cfg.texture_range_width * 1000)
                 display_trh = round(cfg.texture_range_height * 1000)
@@ -327,47 +327,37 @@ def process_config(cfg: Config):
                     args.append(f"a{cfg.textured_alpha_clamp}")
                 if cfg.freeze_geometry != None:
                     args.append(f"to{cfg.freeze_geometry}")
-                match cfg.filtering:
-                    case "bilinear":
-                        args_suffix = create_args_suffix()
-                        if cfg.result_dir is None:
-                            cfg.result_dir = f"{_RESULTS_DIR}/{cfg.model_type}{args_suffix}/{scene_args["result_dir"]}"
-                    case "bilinear_bwd2":
-                        args_suffix = create_args_suffix()
-                        if cfg.result_dir is None:
-                            cfg.result_dir = f"{_RESULTS_DIR}/{cfg.model_type}_b2{args_suffix}/{scene_args["result_dir"]}"
-                    case "bilinear2":
-                        args_suffix = create_args_suffix()
-                        if cfg.result_dir is None:
-                            cfg.result_dir = f"{_RESULTS_DIR}/{cfg.model_type}2{args_suffix}/{scene_args["result_dir"]}"
-                    case "bilinear3":
-                        args_suffix = create_args_suffix()
-                        if cfg.result_dir is None:
-                            cfg.result_dir = f"{_RESULTS_DIR}/{cfg.model_type}3{args_suffix}/{scene_args["result_dir"]}"
-                    case "bilinear3_bwd2":
-                        args_suffix = create_args_suffix()
-                        if cfg.result_dir is None:
-                            cfg.result_dir = f"{_RESULTS_DIR}/{cfg.model_type}3_b2{args_suffix}/{scene_args["result_dir"]}"
-                    case "mipmapped":
-                        args_suffix = create_args_suffix()
-                        if cfg.result_dir is None:
-                            cfg.result_dir = f"{_RESULTS_DIR}/mip_{cfg.model_type}{args_suffix}/{scene_args["result_dir"]}"
-                    case "mipmapped2":
-                        args_suffix = create_args_suffix()
-                        if cfg.result_dir is None:
-                            cfg.result_dir = f"{_RESULTS_DIR}/mip2_{cfg.model_type}{args_suffix}/{scene_args["result_dir"]}"
-                    case "anisotropic":
-                        args_suffix = create_args_suffix()
-                        if cfg.result_dir is None:
-                            cfg.result_dir = f"{_RESULTS_DIR}/aniso_{cfg.model_type}{args_suffix}/{scene_args["result_dir"]}"
-                    case "anisotropic_bilinear":
-                        args_suffix = create_args_suffix()
-                        if cfg.result_dir is None:
-                            cfg.result_dir = f"{_RESULTS_DIR}/aniso_bilinear_{cfg.model_type}{args_suffix}/{scene_args["result_dir"]}"
-                    case _:
-                        raise Exception(
-                            f"Unrecognised filtering technique {cfg.filtering}"
+                path_prefixes = {
+                    "mipmapped": "mip_",
+                    "mipmapped2": "mip2_",
+                    "anisotropic": "aniso_",
+                    "anisotropic_bilinear": "aniso_bilinear",
+                    "anisotropic_bilinear": "aniso_bilinear2",
+                }
+                path_suffixes = {
+                    "bilinear": "",
+                    "bilinear_bwd": "_b2",
+                    "bilinear2": "2",
+                    "bilinear3": "3",
+                    "bilinear3_bwd2": "3_b2",
+                    "bilinear4": "4",
+                    "bilinear4_bwd2": "4_b2",
+                }
+                if cfg.filtering in path_prefixes or cfg.filtering in path_suffixes:
+                    args_suffix = create_args_suffix()
+                    if cfg.result_dir is None:
+                        prefix = path_prefixes.get(cfg.filtering, "")
+                        suffix = path_suffixes.get(cfg.filtering, "")
+                        folder_name = f"{prefix}{cfg.model_type}{suffix}{args_suffix}"
+                        cfg.result_dir = (
+                            f"{_RESULTS_DIR}/{folder_name}/{scene_args["result_dir"]}"
                         )
+                else:
+                    match cfg.filtering:
+                        case _:
+                            raise Exception(
+                                f"Unrecognised filtering technique {cfg.filtering}"
+                            )
 
             case "itgs":
                 if cfg.base_color_factor is not None:

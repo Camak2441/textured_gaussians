@@ -1,4 +1,4 @@
-#include "bindings.h"
+#include "kernel_utils.h"
 #include "helpers.cuh"
 #include "types.cuh"
 #include "filters/anisotropic_bilinear.cuh"
@@ -378,6 +378,10 @@ namespace gsplat
                         &alpha_scaling_factor,
                         tex_color);
                     alpha *= alpha_scaling_factor;
+                }
+                else
+                {
+                    alpha *= 0;
                 }
                 alpha = min(S(0.999), alpha);
 

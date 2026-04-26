@@ -1,4 +1,4 @@
-#include "bindings.h"
+#include "kernel_utils.h"
 #include "helpers.cuh"
 #include "types.cuh"
 #include "utils.cuh"
@@ -388,7 +388,7 @@ namespace gsplat
                 }
                 else
                 {
-                    alpha_scaling_factor = S(1);
+                    alpha_scaling_factor = S(0);
                 }
                 const S alpha = min(S(0.999), opac * kernel * alpha_scaling_factor);
 

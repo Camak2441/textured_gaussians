@@ -1,4 +1,4 @@
-#include "bindings.h"
+#include "kernel_utils.h"
 #include "helpers.cuh"
 #include "types.cuh"
 #include "filters/mip.cuh"

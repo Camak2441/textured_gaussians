@@ -1792,6 +1792,8 @@ tgs_fns = {
     "bilinear2": (f"{PRE}fwd_bilinear2{TGSPOST}", f"{PRE}bwd_bilinear2{TGSPOST}"),
     "bilinear3": (f"{PRE}fwd_bilinear3{TGSPOST}", f"{PRE}bwd_bilinear3{TGSPOST}"),
     "bilinear3_bwd2": (f"{PRE}fwd_bilinear3{TGSPOST}", f"{PRE}bwd2_bilinear3{TGSPOST}"),
+    "bilinear4": (f"{PRE}fwd_bilinear4{TGSPOST}", f"{PRE}bwd_bilinear4{TGSPOST}"),
+    "bilinear4_bwd2": (f"{PRE}fwd_bilinear4{TGSPOST}", f"{PRE}bwd2_bilinear4{TGSPOST}"),
     "mipmapped": (f"{PRE}fwd_mip{TGSPOST}", f"{PRE}bwd_mip{TGSPOST}"),
     "anisotropic": (f"{PRE}fwd_aniso{TGSPOST}", f"{PRE}bwd_aniso{TGSPOST}"),
     "anisotropic_bilinear": (
@@ -2000,12 +2002,12 @@ def rasterize_to_pixels_textured_gaussians(
     )
 
 
-SPOST = "_textured_sigmoids"
+TSSPOST = "_textured_sigmoids"
 tss_fns = {
-    "bilinear_bwd2": (f"{PRE}fwd{SPOST}", f"{PRE}bwd{SPOST}"),
+    "bilinear_bwd2": (f"{PRE}fwd{TSSPOST}", f"{PRE}bwd{TSSPOST}"),
     "anisotropic_bilinear": (
-        f"{PRE}fwd_aniso_bilinear{SPOST}",
-        f"{PRE}bwd_aniso_bilinear{SPOST}",
+        f"{PRE}fwd_aniso_bilinear{TSSPOST}",
+        f"{PRE}bwd_aniso_bilinear{TSSPOST}",
     ),
 }
 
@@ -4938,12 +4940,20 @@ class _RasterizeToPixelsTexturedGaussSigs(torch.autograd.Function):
         )
 
 
-GSPOST = "_textured_gausssigs"
+TGSSPOST = "_textured_gausssigs"
 tgss_fns = {
-    "bilinear_bwd2": (f"{PRE}fwd{GSPOST}", f"{PRE}bwd2{GSPOST}"),
+    "bilinear_bwd2": (f"{PRE}fwd{TGSSPOST}", f"{PRE}bwd2{TGSSPOST}"),
+    "bilinear4_bwd2": (
+        f"{PRE}fwd_bilinear4{TGSSPOST}",
+        f"{PRE}bwd2_bilinear4{TGSSPOST}",
+    ),
     "anisotropic_bilinear": (
-        f"{PRE}fwd_aniso_bilinear{GSPOST}",
-        f"{PRE}bwd_aniso_bilinear{GSPOST}",
+        f"{PRE}fwd_aniso_bilinear{TGSSPOST}",
+        f"{PRE}bwd_aniso_bilinear{TGSSPOST}",
+    ),
+    "anisotropic_bilinear2": (
+        f"{PRE}fwd_aniso_bilinear2{TGSSPOST}",
+        f"{PRE}bwd_aniso_bilinear2{TGSSPOST}",
     ),
 }
 
