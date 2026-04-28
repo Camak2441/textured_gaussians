@@ -276,6 +276,9 @@ def process_config(cfg: Config):
         if cfg.data_factor != 4:
             args.append(f"df{cfg.data_factor}")
 
+        if cfg.init_type == "sfm":
+            args.append("sfm")
+
         if cfg.opac_loss:
             args.append(f"o{cfg.opac_loss_fn}-{cfg.opac_loss_start_iter}")
 
