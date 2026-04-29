@@ -5,15 +5,18 @@ export CUDA_VISIBLE_DEVICES=${2:-0}
 python simple_trainer_textured_gaussians.py mcmc \
     --scene "$1" \
     --init_extent 1 \
-    --init_type=pretrained \
+    --init_type=sfm \
     --background_mode "white" \
-    --model_type=tgs \
+    --model_type=2dgss \
+    --sigmoid_factor=c08 \
     --init_num_pts=10000 \
     --strategy.cap-max=10000 \
-    --strategy.refine-start-iter=1000000000000 \
     --alpha_loss \
-    --dist_loss \
     --normal_loss \
-    --textured_rgb \
-    --textured_alpha \
+    --opac_loss \
+    --opac_loss_fn="quad1" \
+    --opac_loss_start_iter 1000 \
+    --schedule_scales_lr \
+    --schedule_quats_lr \
+    --steps_scaler=1 \
     --port 6070
