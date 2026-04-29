@@ -16,5 +16,5 @@ python simple_trainer_textured_gaussians.py mcmc \
     --normal_loss \
     --textured_rgb \
     --textured_alpha \
-    --resuma \
+    --resume \
     --port 6070
