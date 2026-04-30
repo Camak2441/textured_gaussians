@@ -300,13 +300,23 @@ def process_config(cfg: Config):
 
         match cfg.model_type:
             case "tgs" | "tss" | "tgss":
-                if (
-                    cfg.model_type == "tgs" and cfg.gaussian_factor != "one"
-                ) or cfg.model_type == "tgss":
+                if cfg.gaussian_factor is None and cfg.model_type == "tgs":
+                    cfg.gaussian_factor = "one"
+                if cfg.gaussian_factor is None and cfg.model_type == "tgss":
+                    cfg.gaussian_factor = "half"
+                if cfg.sigmoid_factor is None and cfg.model_type == "tss":
+                    cfg.sigmoid_factor = "one"
+                if cfg.sigmoid_factor is None and cfg.model_type == "tgss":
+                    cfg.sigmoid_factor = "half"
+
+                if cfg.gaussian_factor is not None and (
+                    (cfg.model_type == "tgs" and cfg.gaussian_factor != "one")
+                    or cfg.model_type == "tgss"
+                ):
                     args.append(f"sg{cfg.gaussian_factor}")
-                if (
+                if cfg.sigmoid_factor is not None and (
                     cfg.model_type == "tss"
-                    and cfg.gaussian_factor != "one"
+                    and cfg.sigmoid_factor != "one"
                     or cfg.model_type == "tgss"
                 ):
                     args.append(f"sw{cfg.sigmoid_factor}")
