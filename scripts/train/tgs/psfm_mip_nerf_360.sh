@@ -1,0 +1,9 @@
+bash train/tgs/psfm.sh bicycle
+bash train/tgs/psfm.sh bonsai
+bash train/tgs/psfm.sh counter
+bash train/tgs/psfm.sh flowers
+bash train/tgs/psfm.sh garden
+bash train/tgs/psfm.sh kitchen
+bash train/tgs/psfm.sh room
+bash train/tgs/psfm.sh stump
+bash train/tgs/psfm.sh treehill
