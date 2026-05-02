@@ -1,0 +1,9 @@
+bash train/tgss/4_g9999_o_ot_ta_po.sh bicycle
+bash train/tgss/4_g9999_o_ot_ta_po.sh bonsai
+bash train/tgss/4_g9999_o_ot_ta_po.sh counter
+bash train/tgss/4_g9999_o_ot_ta_po.sh flowers
+bash train/tgss/4_g9999_o_ot_ta_po.sh garden
+bash train/tgss/4_g9999_o_ot_ta_po.sh kitchen
+bash train/tgss/4_g9999_o_ot_ta_po.sh room
+bash train/tgss/4_g9999_o_ot_ta_po.sh stump
+bash train/tgss/4_g9999_o_ot_ta_po.sh treehill

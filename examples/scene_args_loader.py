@@ -300,6 +300,11 @@ def process_config(cfg: Config):
 
         match cfg.model_type:
             case "tgs" | "tss" | "tgss":
+                if cfg.textured_alpha and not cfg.textured_rgb:
+                    args.append("ta")
+                elif not cfg.textured_alpha and cfg.textured_rgb:
+                    args.append("trgb")
+
                 if cfg.gaussian_factor is None and cfg.model_type == "tgs":
                     cfg.gaussian_factor = "one"
                 if cfg.gaussian_factor is None and cfg.model_type == "tgss":
@@ -349,7 +354,7 @@ def process_config(cfg: Config):
                 }
                 path_suffixes = {
                     "bilinear": "",
-                    "bilinear_bwd": "_b2",
+                    "bilinear_bwd2": "_b2",
                     "bilinear2": "2",
                     "bilinear3": "3",
                     "bilinear3_bwd2": "3_b2",
