@@ -230,12 +230,10 @@ namespace gsplat
         // each thread loads one gaussian at a time before rasterizing
         const uint32_t tr = block.thread_rank();
 
-        // Column-major (transposed) layout: thread tr owns element [i * block_size + tr].
-        // A warp reading coefficient i hits 32 consecutive banks → zero bank conflicts.
-        ucos += tr;
-        vcos += tr;
-        ducos += tr;
-        dvcos += tr;
+        ucos += tr * texture_res_x;
+        vcos += tr * texture_res_y;
+        ducos += tr * texture_res_x;
+        dvcos += tr * texture_res_y;
 
         cg::thread_block_tile<32> warp = cg::tiled_partition<32>(block);
 
