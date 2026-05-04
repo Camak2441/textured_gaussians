@@ -33,6 +33,8 @@ namespace gsplat
         const S *__restrict__ opacities,                                        // [C, N] or [nnz]                        // Gaussian opacities that support per-view values.
         at::PackedTensorAccessor32<const S, 4, at::RestrictPtrTraits> textures, // [N, Texture_Resolution, Texture_Resolution, 4]
         const vec2<S> texture_range,                                            //
+        const bool texture_color,                                               //
+        const bool texture_alpha,                                               //
         const S *__restrict__ normals,                                          // [C, N, 3] or [nnz, 3]                  // The normals in camera space.
         const S *__restrict__ backgrounds,                                      // [C, COLOR_DIM]                         // Background colors on camera basis
         const bool *__restrict__ masks,                                         // [C, tile_height, tile_width]            // Optional tile mask to skip rendering GS to masked tiles.
@@ -369,18 +371,45 @@ namespace gsplat
 
                 if (valid_texture > 0)
                 {
-                    S alpha_scaling_factor = S(0);
-                    anisotropic::alpha_color_sample<COLOR_DIM, 3, S>(
-                        textures, g, s0, s1, s2, s3,
-                        n01, n12, n23, n30,
-                        n01min, n01max, n12min, n12max, n23min, n23max, n30min, n30max,
-                        minu, maxu, minv, maxv,
-                        s0texel, s1texel, s2texel, s3texel,
-                        area, iarea,
-                        texture_res_x, texture_res_y,
-                        &alpha_scaling_factor,
-                        tex_color);
-                    alpha *= alpha_scaling_factor;
+                    if (texture_color && texture_alpha)
+                    {
+                        S alpha_scaling_factor = S(0);
+                        anisotropic::alpha_color_sample<COLOR_DIM, S>(
+                            textures, g, s0, s1, s2, s3,
+                            n01, n12, n23, n30,
+                            n01min, n01max, n12min, n12max, n23min, n23max, n30min, n30max,
+                            minu, maxu, minv, maxv,
+                            s0texel, s1texel, s2texel, s3texel,
+                            area, iarea,
+                            texture_res_x, texture_res_y,
+                            &alpha_scaling_factor,
+                            tex_color);
+                        alpha *= alpha_scaling_factor;
+                    }
+                    else if (texture_color)
+                    {
+                        anisotropic::color_sample<COLOR_DIM, S>(
+                            textures, g, s0, s1, s2, s3,
+                            n01, n12, n23, n30,
+                            n01min, n01max, n12min, n12max, n23min, n23max, n30min, n30max,
+                            minu, maxu, minv, maxv,
+                            s0texel, s1texel, s2texel, s3texel,
+                            area, iarea,
+                            texture_res_x, texture_res_y,
+                            tex_color);
+                    }
+                    else if (texture_alpha)
+                    {
+                        S alpha_scaling_factor = anisotropic::sample<S>(
+                            textures, g, 0, s0, s1, s2, s3,
+                            n01, n12, n23, n30,
+                            n01min, n01max, n12min, n12max, n23min, n23max, n30min, n30max,
+                            minu, maxu, minv, maxv,
+                            s0texel, s1texel, s2texel, s3texel,
+                            area, iarea,
+                            texture_res_x, texture_res_y);
+                        alpha *= alpha_scaling_factor;
+                    }
                 }
                 alpha = min(S(0.999), alpha);
 
@@ -500,6 +529,8 @@ namespace gsplat
         const torch::Tensor &opacities,                 // [C, N]  or [nnz]
         const torch::Tensor &textures,                  //
         const vec2<float> texture_range,                //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
         const torch::Tensor &normals,                   // [C, N, 3]
         const at::optional<torch::Tensor> &backgrounds, // [C, channels]
         const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
@@ -606,6 +637,8 @@ namespace gsplat
                 opacities.data_ptr<float>(),
                 textures.packed_accessor32<const float, 4, at::RestrictPtrTraits>(),
                 texture_range,
+                texture_color,
+                texture_alpha,
                 normals.data_ptr<float>(),
                 backgrounds.has_value() ? backgrounds.value().data_ptr<float>()
                                         : nullptr,
@@ -660,6 +693,8 @@ namespace gsplat
         const torch::Tensor &textures,                  //
         const float texture_range_x,                    //
         const float texture_range_y,                    //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
         const at::optional<torch::Tensor> &backgrounds, // [C, channels]
         const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
@@ -686,6 +721,8 @@ namespace gsplat
             opacities,                                     \
             textures,                                      \
             vec2<float>(texture_range_x, texture_range_y), \
+            texture_color,                                 \
+            texture_alpha,                                 \
             normals,                                       \
             backgrounds,                                   \
             masks,                                         \

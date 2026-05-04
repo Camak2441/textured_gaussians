@@ -35,6 +35,8 @@ namespace gsplat
         const S *__restrict__ opacities,                                        // [C, N] or [nnz]
         at::PackedTensorAccessor32<const S, 4, at::RestrictPtrTraits> textures, // [N, res, res, 4]
         const vec2<S> texture_range,                                            //
+        const bool texture_color,
+        const bool texture_alpha,
         const S *__restrict__ normals,                                          // [C, N, 3] or [nnz, 3]
         const S *__restrict__ backgrounds,                                      // [C, COLOR_DIM]
         const bool *__restrict__ masks,                                         // [C, tile_height, tile_width]
@@ -82,6 +84,8 @@ namespace gsplat
             backgrounds += camera_id * COLOR_DIM;
         if (masks != nullptr)
             masks += camera_id * tile_height * tile_width;
+
+        const uint32_t alpha_channel = texture_color ? COLOR_DIM : 0;
 
         S px = (S)j + S(0.5);
         S py = (S)i + S(0.5);
@@ -186,17 +190,14 @@ namespace gsplat
                     texture_range.x, texture_range.y,
                     ucoords, vcoords, bilerp_weights);
 
-                S alpha_scaling_factor = S(0);
-                if (valid_texture > 0)
+                S alpha_scaling_factor = S(1);
+                if (texture_alpha && valid_texture > 0)
                 {
+                    alpha_scaling_factor = S(0);
                     GSPLAT_PRAGMA_UNROLL
                     for (uint32_t i = 0; i < 4; ++i)
                         alpha_scaling_factor +=
-                            bilerp_weights[i] * textures[g][vcoords[i]][ucoords[i]][3];
-                }
-                else
-                {
-                    alpha_scaling_factor = S(1);
+                            bilerp_weights[i] * textures[g][vcoords[i]][ucoords[i]][alpha_channel];
                 }
 
                 // gaussian weight (minimum of 3D intersection and 2D projected)
@@ -238,7 +239,7 @@ namespace gsplat
                 {
                     auto base_color = c_ptr[k];
                     S tex_color = S(0);
-                    if (valid_texture > 0)
+                    if (texture_color && valid_texture > 0)
                     {
                         for (uint32_t i = 0; i < 4; ++i)
                             tex_color += bilerp_weights[i] * textures[g][vcoords[i]][ucoords[i]][k];
@@ -314,6 +315,8 @@ namespace gsplat
         const torch::Tensor &opacities,
         const torch::Tensor &textures,
         const vec2<float> texture_range,
+        const bool texture_color,
+        const bool texture_alpha,
         const torch::Tensor &normals,
         const at::optional<torch::Tensor> &backgrounds,
         const at::optional<torch::Tensor> &masks,
@@ -411,6 +414,8 @@ namespace gsplat
                 opacities.data_ptr<float>(),
                 textures.packed_accessor32<const float, 4, at::RestrictPtrTraits>(),
                 texture_range,
+                texture_color,
+                texture_alpha,
                 normals.data_ptr<float>(),
                 backgrounds.has_value() ? backgrounds.value().data_ptr<float>() : nullptr,
                 masks.has_value() ? masks.value().data_ptr<bool>() : nullptr,
@@ -465,6 +470,8 @@ namespace gsplat
         const torch::Tensor &textures,
         const float texture_range_x,
         const float texture_range_y,
+        const bool texture_color,
+        const bool texture_alpha,
         const torch::Tensor &normals,
         const at::optional<torch::Tensor> &backgrounds,
         const at::optional<torch::Tensor> &masks,
@@ -490,6 +497,8 @@ namespace gsplat
             opacities,                                     \
             textures,                                      \
             vec2<float>(texture_range_x, texture_range_y), \
+            texture_color,                                 \
+            texture_alpha,                                 \
             normals,                                       \
             backgrounds,                                   \
             masks,                                         \

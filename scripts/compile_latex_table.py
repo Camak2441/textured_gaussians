@@ -8,17 +8,23 @@ Usage:
     --scenes chair drums ficus hotdog lego materials mic ship \
     --results_dir results
 """
-import argparse, json, os, glob
+import argparse, json, os, glob, re
 
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "..", "results")
 
 
+def _step_number(path):
+    m = re.search(r"val_step(\d+)\.json$", path)
+    return int(m.group(1)) if m else -1
+
+
 def last_val_stats(results_dir, model, scene):
     pattern = os.path.join(results_dir, model, scene, "stats", "val_step*.json")
-    files = sorted(glob.glob(pattern))
+    files = glob.glob(pattern)
     if not files:
         return None
-    with open(files[-1]) as f:
+    latest = max(files, key=_step_number)
+    with open(latest) as f:
         return json.load(f)
 
 

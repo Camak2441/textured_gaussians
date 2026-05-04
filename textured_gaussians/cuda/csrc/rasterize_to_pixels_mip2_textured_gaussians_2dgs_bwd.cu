@@ -32,6 +32,9 @@ namespace gsplat
         at::PackedTensorAccessor32<const S, 3, at::RestrictPtrTraits> textures, // [N, total_mip_texels, channels] flat mip pyramid
         const uint32_t log_texture_res,                                         //
         const vec2<S> texture_range,                                            //
+        const bool texture_color,                                               //
+        const bool texture_alpha,                                               //
+        const bool texture_gradients,                                           //
         const S *__restrict__ backgrounds,                                      // [C, COLOR_DIM]                         // Background colors on camera basis
         const bool *__restrict__ masks,                                         // [C, tile_height, tile_width]           // Optional tile mask to skip rendering GS to masked tiles.
 
@@ -114,6 +117,8 @@ namespace gsplat
         {
             return;
         }
+
+        const uint32_t alpha_channel = texture_color ? COLOR_DIM : 0;
 
         const S px = (S)j + S(0.5);
         const S py = (S)i + S(0.5);
@@ -377,12 +382,12 @@ namespace gsplat
                         mipcoords, trilerp_weights);
 
                     // calculate alpha texture scaling factor
-                    if (valid_texture > 0)
+                    if (texture_alpha && valid_texture > 0)
                     {
                         GSPLAT_PRAGMA_UNROLL
                         for (uint32_t i = 0; i < 8; ++i)
                         {
-                            alpha_scaling_factor += trilerp_weights[i] * textures[g][mipcoords[i]][3];
+                            alpha_scaling_factor += trilerp_weights[i] * textures[g][mipcoords[i]][alpha_channel];
                         }
                     }
                     else
@@ -484,7 +489,7 @@ namespace gsplat
                     {
                         v_rgb_local[k] += fac * v_render_c[k];
 
-                        if (valid_texture > 0)
+                        if (texture_color && valid_texture > 0)
                         {
                             // update texture gradients
                             GSPLAT_PRAGMA_UNROLL
@@ -616,12 +621,12 @@ namespace gsplat
                         v_opacity_local = vis * v_alpha * alpha_scaling_factor;
 
                         // update alpha scaling factor gradients
-                        if (valid_texture > 0)
+                        if (texture_alpha && valid_texture > 0)
                         {
                             GSPLAT_PRAGMA_UNROLL
                             for (uint32_t i = 0; i < 8; ++i)
                             {
-                                gpuAtomicAdd(&v_textures[g][mipcoords[i]][3], trilerp_weights[i] * vis * opac * v_alpha);
+                                gpuAtomicAdd(&v_textures[g][mipcoords[i]][alpha_channel], trilerp_weights[i] * vis * opac * v_alpha);
                             }
                         }
                     }
@@ -739,6 +744,9 @@ namespace gsplat
         const torch::Tensor &textures,                  //
         const uint32_t log_texture_res,                 //
         const vec2<float> texture_range,                //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
+        const bool texture_gradients,                   //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
         const torch::Tensor &densify,                   //
         const at::optional<torch::Tensor> &backgrounds, // [C, 3]
@@ -855,6 +863,9 @@ namespace gsplat
                     textures.packed_accessor32<const float, 3, at::RestrictPtrTraits>(),
                     log_texture_res,
                     texture_range,
+                    texture_color,
+                    texture_alpha,
+                    texture_gradients,
                     backgrounds.has_value() ? backgrounds.value().data_ptr<float>()
                                             : nullptr,
                     masks.has_value() ? masks.value().data_ptr<bool>() : nullptr,
@@ -917,6 +928,9 @@ namespace gsplat
         const uint32_t log_texture_res,                 //
         const float texture_range_x,                    //
         const float texture_range_y,                    //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
+        const bool texture_gradients,                   //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
         const torch::Tensor &densify,                   //
         const at::optional<torch::Tensor> &backgrounds, // [C, 3]
@@ -947,6 +961,10 @@ namespace gsplat
 
         GSPLAT_CHECK_INPUT(colors);
         uint32_t COLOR_DIM = colors.size(-1);
+        if (texture_gradients)
+        {
+            AT_ERROR("Unsupported texture gradients");
+        }
 
 #define __GS__CALL_(N)                                     \
     case N:                                                \
@@ -958,6 +976,9 @@ namespace gsplat
             textures,                                      \
             log_texture_res,                               \
             vec2<float>(texture_range_x, texture_range_y), \
+            texture_color,                                 \
+            texture_alpha,                                 \
+            texture_gradients,                             \
             normals,                                       \
             densify,                                       \
             backgrounds,                                   \

@@ -41,6 +41,7 @@ from utils import (
     remove_from_kwargs,
 )
 
+from textured_gaussians.utils import num_color_channels
 from textured_gaussians.rendering import (
     rasterization_2dgs,
     rasterization_2dss,
@@ -169,10 +170,16 @@ def create_splats_with_optimizers(
                 textures = ckpt["textures"][sampled_pts_idx]
             else:
                 textures = torch.ones(
-                    points.shape[0], cfg.texture_height, cfg.texture_width, 4
+                    points.shape[0],
+                    cfg.texture_height,
+                    cfg.texture_width,
+                    num_color_channels(cfg.textured_rgb, cfg.textured_alpha),
                 )
-                textures[:, :, :, :3] = 0.1  # init color to low value
-                textures[:, :, :, 3] = 1.0  # init alpha to 1.0
+                if cfg.textured_rgb:
+                    textures[..., :3] = 0.1  # init color to low value
+                if cfg.textured_alpha:
+                    alpha_channel = 3 if cfg.textured_rgb else 0
+                    textures[..., alpha_channel] = 1.0  # init alpha to 1.0
             params.append(("textures", torch.nn.Parameter(textures), 2.5e-3))
         case "dtgs":
             if init_type == "pretrained" and "textures" in ckpt:
@@ -445,9 +452,7 @@ class Runner:
     def get_textures(self):
         # textures: [N, L, L, 4]
         textures = self.splats["textures"]
-        if not self.cfg.textured_rgb:
-            rgb_textures = torch.zeros_like(textures[..., :3])  # [N, L, L, 3]
-        else:
+        if self.cfg.textured_rgb:
             rgb_textures = textures[..., :3]  # [N, L, L, 3]
             match self.cfg.textured_rgb_clamp:
                 case "none":
@@ -463,10 +468,11 @@ class Runner:
                     rgb_textures = rgb_textures.sigmoid()
                 case _:
                     print(f"Unknown clamp type {self.cfg.textured_rgb_clamp}")
-        if not self.cfg.textured_alpha:
-            alpha_textures = torch.ones_like(textures[..., 3:4])  # [N, L, L, 1]
-        else:
-            alpha_textures = textures[..., 3:4]  # [N, L, L, 1]
+        if self.cfg.textured_alpha:
+            if self.cfg.textured_rgb:
+                alpha_textures = textures[..., 3:4]  # [N, L, L, 1]
+            else:
+                alpha_textures = textures[..., :1]  # [N, L, L, 1]
             match self.cfg.textured_alpha_clamp:
                 case "none":
                     pass
@@ -482,7 +488,14 @@ class Runner:
                 case _:
                     print(f"Unknown clamp type {self.cfg.textured_alpha_clamp}")
 
-        textures = torch.cat([rgb_textures, alpha_textures], dim=-1)  # [N, L, L, 4]
+        if self.cfg.textured_rgb and self.cfg.textured_alpha:
+            textures = torch.cat([rgb_textures, alpha_textures], dim=-1)  # [N, L, L, 4]
+        elif self.cfg.textured_rgb:
+            textures = rgb_textures
+        elif self.cfg.textured_alpha:
+            textures = alpha_textures
+        else:
+            textures = torch.Tensor()
         return textures
 
     @torch.no_grad()
@@ -515,6 +528,21 @@ class Runner:
                     colors = colors.unsqueeze(-1).unsqueeze(-1)  # [N, 4, 1, 1]
 
                 textures = self.get_textures()  # [N, H, W, 4]
+                if not self.cfg.textured_rgb and self.cfg.textured_alpha:
+                    textures = torch.cat(
+                        [
+                            torch.ones_like(textures),
+                            torch.ones_like(textures),
+                            torch.ones_like(textures),
+                            textures,
+                        ],
+                        dim=-1,
+                    )
+                if self.cfg.textured_rgb and not self.cfg.textured_alpha:
+                    textures = torch.cat(
+                        [textures, torch.ones_like(textures[..., 0])], dim=-1
+                    )
+
                 texture_height = textures.shape[1]
                 texture_width = textures.shape[2]
                 textures = textures.permute(0, 3, 1, 2)  # [N, 4, H, W]
@@ -647,6 +675,21 @@ class Runner:
 
         if self.model_type in ("tgs", "tss", "tgss"):
             all_textures = self.get_textures()  # [N, L, L, 4]
+            if not self.cfg.textured_rgb and self.cfg.textured_alpha:
+                all_textures = torch.cat(
+                    [
+                        torch.ones_like(all_textures),
+                        torch.ones_like(all_textures),
+                        torch.ones_like(all_textures),
+                        all_textures,
+                    ],
+                    dim=-1,
+                )
+            if self.cfg.textured_rgb and not self.cfg.textured_alpha:
+                all_textures = torch.cat(
+                    [all_textures, torch.ones_like(all_textures[..., 0])], dim=-1
+                )
+
             batch_size = 4096
             for start in tqdm.trange(0, N, batch_size, desc="Rendering texture video"):
                 end = min(start + batch_size, N)
@@ -823,6 +866,8 @@ class Runner:
                         "filtering",
                         "texture_range_x",
                         "texture_range_y",
+                        "texture_color",
+                        "texture_alpha",
                         "sample_alpha_threshold",
                         "texture_batch_size",
                         "texture_grad_method",
@@ -867,6 +912,8 @@ class Runner:
                         "filtering",
                         "texture_range_x",
                         "texture_range_y",
+                        "texture_color",
+                        "texture_alpha",
                         "sample_alpha_threshold",
                         "texture_batch_size",
                         "texture_grad_method",
@@ -913,6 +960,8 @@ class Runner:
                         "filtering",
                         "texture_range_x",
                         "texture_range_y",
+                        "texture_color",
+                        "texture_alpha",
                         "sample_alpha_threshold",
                         "texture_batch_size",
                         "texture_grad_method",
@@ -1130,6 +1179,8 @@ class Runner:
                         "filtering",
                         "texture_range_x",
                         "texture_range_y",
+                        "texture_color",
+                        "texture_alpha",
                         "s_weight",
                         "g_weight",
                     },
@@ -1390,6 +1441,8 @@ class Runner:
                 texture_batch_size=self.cfg.texture_batch_size,
                 texture_grad_method=self.cfg.texture_grad_method,
                 texture_input_type=self.cfg.texture_input_type,
+                texture_color=self.cfg.textured_rgb,
+                texture_alpha=self.cfg.textured_alpha,
                 coord_center=self.coord_center,
                 coord_scale=self.coord_scale,
                 **opt_kwargs,
@@ -1930,6 +1983,8 @@ class Runner:
                 texture_batch_size=self.cfg.texture_batch_size,
                 texture_grad_method=self.cfg.texture_grad_method,
                 texture_input_type=self.cfg.texture_input_type,
+                texture_color=self.cfg.textured_rgb,
+                texture_alpha=self.cfg.textured_alpha,
                 coord_center=self.coord_center,
                 coord_scale=self.coord_scale,
                 **opt_kwargs,
@@ -2111,6 +2166,8 @@ class Runner:
                 texture_batch_size=self.cfg.texture_batch_size,
                 texture_grad_method=self.cfg.texture_grad_method,
                 texture_input_type=self.cfg.texture_input_type,
+                texture_color=self.cfg.textured_rgb,
+                texture_alpha=self.cfg.textured_alpha,
                 coord_center=self.coord_center,
                 coord_scale=self.coord_scale,
                 **opt_kwargs,
@@ -2207,6 +2264,8 @@ class Runner:
                 texture_batch_size=cfg.texture_batch_size,
                 texture_grad_method=cfg.texture_grad_method,
                 texture_input_type=cfg.texture_input_type,
+                texture_color=cfg.textured_rgb,
+                texture_alpha=cfg.textured_alpha,
                 coord_center=self.coord_center,
                 coord_scale=self.coord_scale,
                 **opt_kwargs,
@@ -2256,6 +2315,8 @@ class Runner:
             texture_batch_size=self.cfg.texture_batch_size,
             texture_grad_method=self.cfg.texture_grad_method,
             texture_input_type=self.cfg.texture_input_type,
+            texture_color=self.cfg.textured_rgb,
+            texture_alpha=self.cfg.textured_alpha,
             coord_center=self.coord_center,
             coord_scale=self.coord_scale,
             **opt_kwargs,

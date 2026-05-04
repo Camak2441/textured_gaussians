@@ -33,6 +33,8 @@ namespace gsplat
         const S *__restrict__ opacities,                                        // [C, N] or [nnz]                        // Gaussian opacities that support per-view values.
         at::PackedTensorAccessor32<const S, 4, at::RestrictPtrTraits> textures, // [N, Texture_Resolution, Texture_Resolution, 4]
         const vec2<S> texture_range,                                            //
+        const bool texture_color,                                               //
+        const bool texture_alpha,                                               //
         const S *__restrict__ normals,                                          // [C, N, 3] or [nnz, 3]                  // The normals in camera space.
         const S *__restrict__ backgrounds,                                      // [C, COLOR_DIM]                         // Background colors on camera basis
         const bool *__restrict__ masks,                                         // [C, tile_height, tile_width]            // Optional tile mask to skip rendering GS to masked tiles.
@@ -100,6 +102,8 @@ namespace gsplat
         {
             masks += camera_id * tile_height * tile_width;
         }
+
+        const uint32_t alpha_channel = texture_color ? COLOR_DIM : 0;
 
         // find the center of the pixel
         S px = (S)j + S(0.5);
@@ -308,12 +312,12 @@ namespace gsplat
 
                 // calculate alpha texture scaling factor
                 S alpha_scaling_factor = S(0);
-                if (valid_texture > 0)
+                if (texture_alpha && valid_texture > 0)
                 {
                     GSPLAT_PRAGMA_UNROLL
                     for (uint32_t i = 0; i < 4; ++i)
                     {
-                        alpha_scaling_factor += bilerp_weights[i] * bilinear3::sample(textures, texture_res_x, texture_res_y, g, vcoords[i], ucoords[i], 3);
+                        alpha_scaling_factor += bilerp_weights[i] * bilinear3::sample(textures, texture_res_x, texture_res_y, g, vcoords[i], ucoords[i], alpha_channel);
                     }
                 }
                 else
@@ -359,7 +363,7 @@ namespace gsplat
                 {
                     auto base_color = c_ptr[k];
                     S tex_color = S(0);
-                    if (valid_texture > 0)
+                    if (texture_color && valid_texture > 0)
                     {
                         for (uint32_t i = 0; i < 4; ++i)
                         {
@@ -462,6 +466,8 @@ namespace gsplat
         const torch::Tensor &opacities,                 // [C, N]  or [nnz]
         const torch::Tensor &textures,                  //
         const vec2<float> texture_range,                //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
         const torch::Tensor &normals,                   // [C, N, 3]
         const at::optional<torch::Tensor> &backgrounds, // [C, channels]
         const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
@@ -568,6 +574,8 @@ namespace gsplat
                 opacities.data_ptr<float>(),
                 textures.packed_accessor32<const float, 4, at::RestrictPtrTraits>(),
                 texture_range,
+                texture_color,
+                texture_alpha,
                 normals.data_ptr<float>(),
                 backgrounds.has_value() ? backgrounds.value().data_ptr<float>()
                                         : nullptr,
@@ -622,6 +630,8 @@ namespace gsplat
         const torch::Tensor &textures,                  //
         const float texture_range_x,                    //
         const float texture_range_y,                    //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
         const at::optional<torch::Tensor> &backgrounds, // [C, channels]
         const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
@@ -648,6 +658,8 @@ namespace gsplat
             opacities,                                     \
             textures,                                      \
             vec2<float>(texture_range_x, texture_range_y), \
+            texture_color,                                  \
+            texture_alpha,                                  \
             normals,                                       \
             backgrounds,                                   \
             masks,                                         \

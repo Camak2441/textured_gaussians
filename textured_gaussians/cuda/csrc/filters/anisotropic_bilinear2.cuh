@@ -271,7 +271,7 @@ namespace gsplat::anisotropic_bilinear2
         return value * iarea;
     }
 
-    template <uint32_t COLOR_DIM, uint32_t alphai, typename T>
+    template <uint32_t COLOR_DIM, typename T>
     inline __device__ void alpha_color_sample(
         at::PackedTensorAccessor32<const T, 4, at::RestrictPtrTraits> textures,
         int32_t g,
@@ -308,7 +308,48 @@ namespace gsplat::anisotropic_bilinear2
                 {
                     col[k] += textures[g][v0][u0][k] * w00 + textures[g][v0][u1][k] * w10 + textures[g][v1][u0][k] * w01 + textures[g][v1][u1][k] * w11;
                 }
-                *alpha += textures[g][v0][u0][alphai] * w00 + textures[g][v0][u1][alphai] * w10 + textures[g][v1][u0][alphai] * w01 + textures[g][v1][u1][alphai] * w11;
+                *alpha += textures[g][v0][u0][COLOR_DIM] * w00 + textures[g][v0][u1][COLOR_DIM] * w10 + textures[g][v1][u0][COLOR_DIM] * w01 + textures[g][v1][u1][COLOR_DIM] * w11;
+            }
+        }
+    }
+
+    template <uint32_t COLOR_DIM, typename T>
+    inline __device__ void color_sample(
+        at::PackedTensorAccessor32<const T, 4, at::RestrictPtrTraits> textures,
+        int32_t g,
+        vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
+        vec2<T> n01, vec2<T> n12, vec2<T> n23, vec2<T> n30,
+        T n01max, T n12max, T n23max, T n30max,
+        int32_t minu, int32_t maxu, int32_t minv, int32_t maxv,
+        T area, T iarea,
+        int texture_res_x, int texture_res_y,
+        T col[COLOR_DIM])
+    {
+        for (int v = minv; v < maxv; v++)
+        {
+            for (int u = minu; u < maxu; u++)
+            {
+                T A, Sx, Sy, Sxy;
+                if (!clip_and_compute_moments(
+                        s0, s1, s2, s3, n01, n12, n23, n30,
+                        n01max, n12max, n23max, n30max,
+                        vec2<T>(T(u), T(v)), &A, &Sx, &Sy, &Sxy))
+                    continue;
+
+                int u0 = max(0, min(u, texture_res_x - 1));
+                int v0 = max(0, min(v, texture_res_y - 1));
+                int u1 = max(0, min(u + 1, texture_res_x - 1));
+                int v1 = max(0, min(u + 1, texture_res_y - 1));
+                T w00 = (A - Sx - Sy + Sxy) * iarea;
+                T w10 = (Sx - Sxy) * iarea;
+                T w01 = (Sy - Sxy) * iarea;
+                T w11 = Sxy * iarea;
+
+                GSPLAT_PRAGMA_UNROLL
+                for (int k = 0; k < COLOR_DIM; ++k)
+                {
+                    col[k] += textures[g][v0][u0][k] * w00 + textures[g][v0][u1][k] * w10 + textures[g][v1][u0][k] * w01 + textures[g][v1][u1][k] * w11;
+                }
             }
         }
     }

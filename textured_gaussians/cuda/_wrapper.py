@@ -1787,18 +1787,39 @@ def rasterize_to_pixels_2dgs(
 PRE = "rasterize_to_pixels_"
 TGSPOST = "_textured_gaussians"
 tgs_fns = {
-    "bilinear": (f"{PRE}fwd{TGSPOST}", f"{PRE}bwd{TGSPOST}"),
-    "bilinear_bwd2": (f"{PRE}fwd{TGSPOST}", f"{PRE}bwd2{TGSPOST}"),
-    "bilinear2": (f"{PRE}fwd_bilinear2{TGSPOST}", f"{PRE}bwd_bilinear2{TGSPOST}"),
-    "bilinear3": (f"{PRE}fwd_bilinear3{TGSPOST}", f"{PRE}bwd_bilinear3{TGSPOST}"),
-    "bilinear3_bwd2": (f"{PRE}fwd_bilinear3{TGSPOST}", f"{PRE}bwd2_bilinear3{TGSPOST}"),
-    "bilinear4": (f"{PRE}fwd_bilinear4{TGSPOST}", f"{PRE}bwd_bilinear4{TGSPOST}"),
-    "bilinear4_bwd2": (f"{PRE}fwd_bilinear4{TGSPOST}", f"{PRE}bwd2_bilinear4{TGSPOST}"),
-    "mipmapped": (f"{PRE}fwd_mip{TGSPOST}", f"{PRE}bwd_mip{TGSPOST}"),
-    "anisotropic": (f"{PRE}fwd_aniso{TGSPOST}", f"{PRE}bwd_aniso{TGSPOST}"),
+    "bilinear": (f"{PRE}fwd{TGSPOST}", f"{PRE}bwd{TGSPOST}", False),
+    "bilinear_bwd2": (f"{PRE}fwd{TGSPOST}", f"{PRE}bwd{TGSPOST}", True),
+    "bilinear2": (
+        f"{PRE}fwd_bilinear2{TGSPOST}",
+        f"{PRE}bwd_bilinear2{TGSPOST}",
+        False,
+    ),
+    "bilinear3": (
+        f"{PRE}fwd_bilinear3{TGSPOST}",
+        f"{PRE}bwd_bilinear3{TGSPOST}",
+        False,
+    ),
+    "bilinear3_bwd2": (
+        f"{PRE}fwd_bilinear3{TGSPOST}",
+        f"{PRE}bwd2_bilinear3{TGSPOST}",
+        True,
+    ),
+    "bilinear4": (
+        f"{PRE}fwd_bilinear4{TGSPOST}",
+        f"{PRE}bwd_bilinear4{TGSPOST}",
+        False,
+    ),
+    "bilinear4_bwd2": (
+        f"{PRE}fwd_bilinear4{TGSPOST}",
+        f"{PRE}bwd2_bilinear4{TGSPOST}",
+        True,
+    ),
+    "mipmapped": (f"{PRE}fwd_mip{TGSPOST}", f"{PRE}bwd_mip{TGSPOST}", False),
+    "anisotropic": (f"{PRE}fwd_aniso{TGSPOST}", f"{PRE}bwd_aniso{TGSPOST}", False),
     "anisotropic_bilinear": (
         f"{PRE}fwd_aniso_bilinear{TGSPOST}",
         f"{PRE}bwd_aniso_bilinear{TGSPOST}",
+        False,
     ),
 }
 
@@ -1811,6 +1832,8 @@ def rasterize_to_pixels_textured_gaussians(
     textures: Tensor,
     texture_range_x: float,
     texture_range_y: float,
+    texture_color: bool,
+    texture_alpha: bool,
     normals: Tensor,
     densify: Tensor,
     image_width: int,
@@ -1927,6 +1950,9 @@ def rasterize_to_pixels_textured_gaussians(
             textures.contiguous(),
             texture_range_x,
             texture_range_y,
+            texture_color,
+            texture_alpha,
+            tgs_fns[filtering][2],
             normals.contiguous(),
             densify.contiguous(),
             backgrounds,
@@ -1971,6 +1997,9 @@ def rasterize_to_pixels_textured_gaussians(
                     log_texture_res,
                     texture_range_x,
                     texture_range_y,
+                    texture_color,
+                    texture_alpha,
+                    False,
                     normals.contiguous(),
                     densify.contiguous(),
                     backgrounds,
@@ -2004,10 +2033,12 @@ def rasterize_to_pixels_textured_gaussians(
 
 TSSPOST = "_textured_sigmoids"
 tss_fns = {
-    "bilinear_bwd2": (f"{PRE}fwd{TSSPOST}", f"{PRE}bwd{TSSPOST}"),
+    "bilinear": (f"{PRE}fwd{TSSPOST}", f"{PRE}bwd{TSSPOST}", False),
+    "bilinear_bwd2": (f"{PRE}fwd{TSSPOST}", f"{PRE}bwd{TSSPOST}", True),
     "anisotropic_bilinear": (
         f"{PRE}fwd_aniso_bilinear{TSSPOST}",
         f"{PRE}bwd_aniso_bilinear{TSSPOST}",
+        False,
     ),
 }
 
@@ -2021,6 +2052,8 @@ def rasterize_to_pixels_textured_sigmoids(
     textures: Tensor,
     texture_range_x: float,
     texture_range_y: float,
+    texture_color: bool,
+    texture_alpha: bool,
     normals: Tensor,
     densify: Tensor,
     image_width: int,
@@ -2138,6 +2171,9 @@ def rasterize_to_pixels_textured_sigmoids(
             textures.contiguous(),
             texture_range_x,
             texture_range_y,
+            texture_color,
+            texture_alpha,
+            tss_fns[filtering][2],
             normals.contiguous(),
             densify.contiguous(),
             backgrounds,
@@ -2959,6 +2995,9 @@ class _RasterizeToPixelsTexturedGaussians(torch.autograd.Function):
         textures: Tensor,
         texture_range_x: float,
         texture_range_y: float,
+        texture_color: bool,
+        texture_alpha: bool,
+        texture_gradients: bool,
         normals: Tensor,
         densify: Tensor,
         backgrounds: Tensor,
@@ -2991,6 +3030,8 @@ class _RasterizeToPixelsTexturedGaussians(torch.autograd.Function):
             textures,
             texture_range_x,
             texture_range_y,
+            texture_color,
+            texture_alpha,
             normals,
             backgrounds,
             masks,
@@ -3023,6 +3064,9 @@ class _RasterizeToPixelsTexturedGaussians(torch.autograd.Function):
         ctx.bwd_fn = bwd_fn
         ctx.texture_range_x = texture_range_x
         ctx.texture_range_y = texture_range_y
+        ctx.texture_color = texture_color
+        ctx.texture_alpha = texture_alpha
+        ctx.texture_gradients = texture_gradients
         ctx.width = width
         ctx.height = height
         ctx.tile_size = tile_size
@@ -3074,6 +3118,9 @@ class _RasterizeToPixelsTexturedGaussians(torch.autograd.Function):
         bwd_fn = ctx.bwd_fn
         texture_range_x = ctx.texture_range_x
         texture_range_y = ctx.texture_range_y
+        texture_color = ctx.texture_color
+        texture_alpha = ctx.texture_alpha
+        texture_gradients = ctx.texture_gradients
         width = ctx.width
         height = ctx.height
         tile_size = ctx.tile_size
@@ -3097,6 +3144,9 @@ class _RasterizeToPixelsTexturedGaussians(torch.autograd.Function):
             textures,
             texture_range_x,
             texture_range_y,
+            texture_color,
+            texture_alpha,
+            texture_gradients,
             normals,
             densify,
             backgrounds,
@@ -3122,7 +3172,7 @@ class _RasterizeToPixelsTexturedGaussians(torch.autograd.Function):
         if absgrad:
             means2d.absgrad = v_means2d_abs
 
-        if ctx.needs_input_grad[7]:
+        if ctx.needs_input_grad[14]:
             v_backgrounds = (v_render_colors * (1.0 - render_alphas).float()).sum(
                 dim=(1, 2)
             )
@@ -3137,8 +3187,11 @@ class _RasterizeToPixelsTexturedGaussians(torch.autograd.Function):
             v_colors,
             v_opacities,
             v_textures,
-            None,
-            None,
+            None,  # texture_range_x
+            None,  # texture_range_y
+            None,  # texture_color
+            None,  # texture_alpha
+            None,  # texture_gradients
             v_normals,
             v_densify,
             v_backgrounds,
@@ -3151,7 +3204,7 @@ class _RasterizeToPixelsTexturedGaussians(torch.autograd.Function):
             None,
             None,
             None,  # added for gs_contrib_threshold
-            None,
+            None,  # g_weight
         )
 
 
@@ -3171,6 +3224,9 @@ class _RasterizeToPixelsTexturedSigmoids(torch.autograd.Function):
         textures: Tensor,
         texture_range_x: float,
         texture_range_y: float,
+        texture_color: bool,
+        texture_alpha: bool,
+        texture_gradients: bool,
         normals: Tensor,
         densify: Tensor,
         backgrounds: Tensor,
@@ -3205,6 +3261,8 @@ class _RasterizeToPixelsTexturedSigmoids(torch.autograd.Function):
             textures,
             texture_range_x,
             texture_range_y,
+            texture_color,
+            texture_alpha,
             normals,
             backgrounds,
             masks,
@@ -3238,6 +3296,9 @@ class _RasterizeToPixelsTexturedSigmoids(torch.autograd.Function):
         ctx.bwd_fn = bwd_fn
         ctx.texture_range_x = texture_range_x
         ctx.texture_range_y = texture_range_y
+        ctx.texture_color = texture_color
+        ctx.texture_alpha = texture_alpha
+        ctx.texture_gradients = texture_gradients
         ctx.width = width
         ctx.height = height
         ctx.tile_size = tile_size
@@ -3288,6 +3349,9 @@ class _RasterizeToPixelsTexturedSigmoids(torch.autograd.Function):
         bwd_fn = ctx.bwd_fn
         texture_range_x = ctx.texture_range_x
         texture_range_y = ctx.texture_range_y
+        texture_color = ctx.texture_color
+        texture_alpha = ctx.texture_alpha
+        texture_gradients = ctx.texture_gradients
         width = ctx.width
         height = ctx.height
         tile_size = ctx.tile_size
@@ -3313,6 +3377,9 @@ class _RasterizeToPixelsTexturedSigmoids(torch.autograd.Function):
             textures,
             texture_range_x,
             texture_range_y,
+            texture_color,
+            texture_alpha,
+            texture_gradients,
             normals,
             densify,
             backgrounds,
@@ -3354,8 +3421,11 @@ class _RasterizeToPixelsTexturedSigmoids(torch.autograd.Function):
             v_colors,
             v_opacities,
             v_textures,
-            None,
-            None,
+            None,  # texture_range_x
+            None,  # texture_range_y
+            None,  # texture_color
+            None,  # texture_alpha
+            None,  # texture_gradients
             v_normals,
             v_densify,
             v_backgrounds,
@@ -3386,6 +3456,9 @@ class _RasterizeToPixelsMip2TexturedGaussians(torch.autograd.Function):
         log_texture_res: int,
         texture_range_x: float,
         texture_range_y: float,
+        texture_color: bool,
+        texture_alpha: bool,
+        texture_gradients: bool,
         normals: Tensor,
         densify: Tensor,
         backgrounds: Tensor,
@@ -3419,6 +3492,8 @@ class _RasterizeToPixelsMip2TexturedGaussians(torch.autograd.Function):
             log_texture_res,
             texture_range_x,
             texture_range_y,
+            texture_color,
+            texture_alpha,
             normals,
             backgrounds,
             masks,
@@ -3451,6 +3526,9 @@ class _RasterizeToPixelsMip2TexturedGaussians(torch.autograd.Function):
         ctx.log_texture_res = log_texture_res
         ctx.texture_range_x = texture_range_x
         ctx.texture_range_y = texture_range_y
+        ctx.texture_color = texture_color
+        ctx.texture_alpha = texture_alpha
+        ctx.texture_gradients = texture_gradients
         ctx.width = width
         ctx.height = height
         ctx.tile_size = tile_size
@@ -3502,6 +3580,9 @@ class _RasterizeToPixelsMip2TexturedGaussians(torch.autograd.Function):
         log_texture_res = ctx.log_texture_res
         texture_range_x = ctx.texture_range_x
         texture_range_y = ctx.texture_range_y
+        texture_color = ctx.texture_color
+        texture_alpha = ctx.texture_alpha
+        texture_gradients = ctx.texture_gradients
         width = ctx.width
         height = ctx.height
         tile_size = ctx.tile_size
@@ -3526,6 +3607,9 @@ class _RasterizeToPixelsMip2TexturedGaussians(torch.autograd.Function):
             log_texture_res,
             texture_range_x,
             texture_range_y,
+            texture_color,
+            texture_alpha,
+            texture_gradients,
             normals,
             densify,
             backgrounds,
@@ -3559,17 +3643,20 @@ class _RasterizeToPixelsMip2TexturedGaussians(torch.autograd.Function):
             v_backgrounds = None
 
         return (
-            v_means2d,  # means2d
-            v_ray_transforms,  # ray_transforms
-            v_colors,  # colors
-            v_opacities,  # opacities
-            v_textures,  # textures
+            v_means2d,
+            v_ray_transforms,
+            v_colors,
+            v_opacities,
+            v_textures,
             None,  # log_texture_res
-            None,
-            None,
-            v_normals,  # normals
-            v_densify,  # densify
-            v_backgrounds,  # backgrounds
+            None,  # texture_range_x
+            None,  # texture_range_y
+            None,  # texture_color
+            None,  # texture_alpha
+            None,  # texture_gradients
+            v_normals,
+            v_densify,
+            v_backgrounds,
             None,  # masks
             None,  # width
             None,  # height
@@ -4734,6 +4821,9 @@ class _RasterizeToPixelsTexturedGaussSigs(torch.autograd.Function):
         textures: Tensor,
         texture_range_x: float,
         texture_range_y: float,
+        texture_color: bool,
+        texture_alpha: bool,
+        texture_gradients: bool,
         normals: Tensor,
         densify: Tensor,
         backgrounds: Tensor,
@@ -4768,6 +4858,8 @@ class _RasterizeToPixelsTexturedGaussSigs(torch.autograd.Function):
             textures,
             texture_range_x,
             texture_range_y,
+            texture_color,
+            texture_alpha,
             normals,
             backgrounds,
             masks,
@@ -4802,6 +4894,9 @@ class _RasterizeToPixelsTexturedGaussSigs(torch.autograd.Function):
         ctx.bwd_fn = bwd_fn
         ctx.texture_range_x = texture_range_x
         ctx.texture_range_y = texture_range_y
+        ctx.texture_color = texture_color
+        ctx.texture_alpha = texture_alpha
+        ctx.texture_gradients = texture_gradients
         ctx.width = width
         ctx.height = height
         ctx.tile_size = tile_size
@@ -4853,6 +4948,9 @@ class _RasterizeToPixelsTexturedGaussSigs(torch.autograd.Function):
         bwd_fn = ctx.bwd_fn
         texture_range_x = ctx.texture_range_x
         texture_range_y = ctx.texture_range_y
+        texture_color = ctx.texture_color
+        texture_alpha = ctx.texture_alpha
+        texture_gradients = ctx.texture_gradients
         width = ctx.width
         height = ctx.height
         tile_size = ctx.tile_size
@@ -4879,6 +4977,9 @@ class _RasterizeToPixelsTexturedGaussSigs(torch.autograd.Function):
             textures,
             texture_range_x,
             texture_range_y,
+            texture_color,
+            texture_alpha,
+            texture_gradients,
             normals,
             densify,
             backgrounds,
@@ -4921,8 +5022,11 @@ class _RasterizeToPixelsTexturedGaussSigs(torch.autograd.Function):
             v_colors,
             v_opacities,
             v_textures,
-            None,
-            None,
+            None,  # texture_range_x
+            None,  # texture_range_y
+            None,  # texture_color
+            None,  # texture_alpha
+            None,  # texture_gradients
             v_normals,
             v_densify,
             v_backgrounds,
@@ -4942,18 +5046,27 @@ class _RasterizeToPixelsTexturedGaussSigs(torch.autograd.Function):
 
 TGSSPOST = "_textured_gausssigs"
 tgss_fns = {
-    "bilinear_bwd2": (f"{PRE}fwd{TGSSPOST}", f"{PRE}bwd2{TGSSPOST}"),
+    "bilinear": (f"{PRE}fwd{TGSSPOST}", f"{PRE}bwd{TGSSPOST}", False),
+    "bilinear_bwd2": (f"{PRE}fwd{TGSSPOST}", f"{PRE}bwd{TGSSPOST}", True),
+    "bilinear4": (
+        f"{PRE}fwd_bilinear4{TGSSPOST}",
+        f"{PRE}bwd_bilinear4{TGSSPOST}",
+        False,
+    ),
     "bilinear4_bwd2": (
         f"{PRE}fwd_bilinear4{TGSSPOST}",
-        f"{PRE}bwd2_bilinear4{TGSSPOST}",
+        f"{PRE}bwd_bilinear4{TGSSPOST}",
+        True,
     ),
     "anisotropic_bilinear": (
         f"{PRE}fwd_aniso_bilinear{TGSSPOST}",
         f"{PRE}bwd_aniso_bilinear{TGSSPOST}",
+        False,
     ),
     "anisotropic_bilinear2": (
         f"{PRE}fwd_aniso_bilinear2{TGSSPOST}",
         f"{PRE}bwd_aniso_bilinear2{TGSSPOST}",
+        False,
     ),
 }
 
@@ -4967,6 +5080,8 @@ def rasterize_to_pixels_textured_gausssigs(
     textures: Tensor,
     texture_range_x: float,
     texture_range_y: float,
+    texture_color: bool,
+    texture_alpha: bool,
     normals: Tensor,
     densify: Tensor,
     image_width: int,
@@ -5089,6 +5204,9 @@ def rasterize_to_pixels_textured_gausssigs(
             textures.contiguous(),
             texture_range_x,
             texture_range_y,
+            texture_color,
+            texture_alpha,
+            tgss_fns[filtering][2],
             normals.contiguous(),
             densify.contiguous(),
             backgrounds,

@@ -515,6 +515,8 @@ namespace gsplat
         const torch::Tensor &textures,                  //
         const float texture_range_x,                    //
         const float texture_range_y,                    //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
         const at::optional<torch::Tensor> &backgrounds, // [C, channels]
         const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
@@ -546,6 +548,9 @@ namespace gsplat
         const torch::Tensor &textures,                  //
         const float texture_range_x,                    //
         const float texture_range_y,                    //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
+        const bool texture_gradients,                   //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3],
         const torch::Tensor &densify,                   //
         const at::optional<torch::Tensor> &backgrounds, // [C, 3]
@@ -581,50 +586,6 @@ namespace gsplat
         torch::Tensor,
         torch::Tensor,
         torch::Tensor,
-        torch::Tensor>
-    rasterize_to_pixels_bwd2_textured_gaussians_tensor(
-        // Gaussian parameters
-        const torch::Tensor &means2d,                   // [C, N, 2] or [nnz, 2]
-        const torch::Tensor &ray_transforms,            // [C, N, 3, 3] or [nnz, 3, 3]
-        const torch::Tensor &colors,                    // [C, N, 3] or [nnz, 3]
-        const torch::Tensor &opacities,                 // [C, N] or [nnz]
-        const torch::Tensor &textures,                  //
-        const float texture_range_x,                    //
-        const float texture_range_y,                    //
-        const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
-        const torch::Tensor &densify,                   //
-        const at::optional<torch::Tensor> &backgrounds, // [C, 3]
-        const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
-        // image size
-        const uint32_t image_width,
-        const uint32_t image_height,
-        const uint32_t tile_size,
-        // intersections
-        const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
-        const torch::Tensor &flatten_ids,  // [n_isects]
-        const float g_weight,
-        // forward outputs
-        const torch::Tensor &render_colors, // [C, image_height, image_width, COLOR_DIM]
-        const torch::Tensor &render_alphas, // [C, image_height, image_width, 1]
-        const torch::Tensor &last_ids,      // [C, image_height, image_width]
-        const torch::Tensor &median_ids,    // [C, image_height, image_width]
-        // gradients of outputs
-        const torch::Tensor &v_render_colors,  // [C, image_height, image_width, 3]
-        const torch::Tensor &v_render_alphas,  // [C, image_height, image_width, 1]
-        const torch::Tensor &v_render_normals, // [C, image_height, image_width, 3]
-        const torch::Tensor &v_render_distort, // [C, image_height, image_width, 1]
-        const torch::Tensor &v_render_median,  // [C, image_height, image_width, 1]
-        // options
-        bool absgrad);
-
-    std::tuple<
-        torch::Tensor,
-        torch::Tensor,
-        torch::Tensor,
-        torch::Tensor,
-        torch::Tensor,
-        torch::Tensor,
-        torch::Tensor,
         torch::Tensor,
         torch::Tensor>
     rasterize_to_pixels_fwd_mip_textured_gaussians_tensor(
@@ -636,6 +597,8 @@ namespace gsplat
         const torch::Tensor &textures,                  //
         const float texture_range_x,                    //
         const float texture_range_y,                    //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
         const at::optional<torch::Tensor> &backgrounds, // [C, channels]
         const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
@@ -667,6 +630,9 @@ namespace gsplat
         const torch::Tensor &textures,                  //
         const float texture_range_x,                    //
         const float texture_range_y,                    //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
+        const bool texture_gradients,                   //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3],
         const torch::Tensor &densify,                   //
         const at::optional<torch::Tensor> &backgrounds, // [C, 3]
@@ -714,6 +680,8 @@ namespace gsplat
         const uint32_t log_texture_res,                 //
         const float texture_range_x,                    //
         const float texture_range_y,                    //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
         const at::optional<torch::Tensor> &backgrounds, // [C, channels]
         const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
@@ -747,6 +715,9 @@ namespace gsplat
         const uint32_t log_texture_res,                 //
         const float texture_range_x,                    //
         const float texture_range_y,                    //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
+        const bool texture_gradients,                   //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
         const torch::Tensor &densify,                   //
         const at::optional<torch::Tensor> &backgrounds, // [C, 3]
@@ -793,6 +764,8 @@ namespace gsplat
         const torch::Tensor &textures,                  //
         const float texture_range_x,                    //
         const float texture_range_y,                    //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
         const at::optional<torch::Tensor> &backgrounds, // [C, channels]
         const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
@@ -824,6 +797,9 @@ namespace gsplat
         const torch::Tensor &textures,                  //
         const float texture_range_x,                    //
         const float texture_range_y,                    //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
+        const bool texture_gradients,                   //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3],
         const torch::Tensor &densify,                   //
         const at::optional<torch::Tensor> &backgrounds, // [C, 3]
@@ -869,6 +845,8 @@ namespace gsplat
         const torch::Tensor &textures,
         const float texture_range_x,
         const float texture_range_y,
+        const bool texture_color,
+        const bool texture_alpha,
         const torch::Tensor &normals,
         const at::optional<torch::Tensor> &backgrounds,
         const at::optional<torch::Tensor> &masks,
@@ -897,6 +875,9 @@ namespace gsplat
         const torch::Tensor &textures,
         const float texture_range_x,
         const float texture_range_y,
+        const bool texture_color,
+        const bool texture_alpha,
+        const bool texture_gradients,
         const torch::Tensor &normals,
         const torch::Tensor &densify,
         const at::optional<torch::Tensor> &backgrounds,
@@ -937,6 +918,8 @@ namespace gsplat
         const torch::Tensor &textures,                  //
         const float texture_range_x,                    //
         const float texture_range_y,                    //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
         const at::optional<torch::Tensor> &backgrounds, // [C, channels]
         const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
@@ -968,6 +951,9 @@ namespace gsplat
         const torch::Tensor &textures,                  //
         const float texture_range_x,                    //
         const float texture_range_y,                    //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
+        const bool texture_gradients,                   //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
         const torch::Tensor &densify,                   //
         const at::optional<torch::Tensor> &backgrounds, // [C, 3]
@@ -1013,6 +999,8 @@ namespace gsplat
         const torch::Tensor &textures,                  //
         const float texture_range_x,                    //
         const float texture_range_y,                    //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
         const at::optional<torch::Tensor> &backgrounds, // [C, channels]
         const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
@@ -1044,6 +1032,9 @@ namespace gsplat
         const torch::Tensor &textures,                  //
         const float texture_range_x,                    //
         const float texture_range_y,                    //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
+        const bool texture_gradients,                   //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
         const torch::Tensor &densify,                   //
         const at::optional<torch::Tensor> &backgrounds, // [C, 3]
@@ -1089,6 +1080,8 @@ namespace gsplat
         const torch::Tensor &textures,                  //
         const float texture_range_x,                    //
         const float texture_range_y,                    //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
         const at::optional<torch::Tensor> &backgrounds, // [C, channels]
         const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
@@ -1120,94 +1113,9 @@ namespace gsplat
         const torch::Tensor &textures,                  //
         const float texture_range_x,                    //
         const float texture_range_y,                    //
-        const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
-        const torch::Tensor &densify,                   //
-        const at::optional<torch::Tensor> &backgrounds, // [C, 3]
-        const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
-        // image size
-        const uint32_t image_width,
-        const uint32_t image_height,
-        const uint32_t tile_size,
-        // intersections
-        const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
-        const torch::Tensor &flatten_ids,  // [n_isects]
-        const float g_weight,
-        // forward outputs
-        const torch::Tensor &render_colors, // [C, image_height, image_width, COLOR_DIM]
-        const torch::Tensor &render_alphas, // [C, image_height, image_width, 1]
-        const torch::Tensor &last_ids,      // [C, image_height, image_width]
-        const torch::Tensor &median_ids,    // [C, image_height, image_width]
-        // gradients of outputs
-        const torch::Tensor &v_render_colors,  // [C, image_height, image_width, 3]
-        const torch::Tensor &v_render_alphas,  // [C, image_height, image_width, 1]
-        const torch::Tensor &v_render_normals, // [C, image_height, image_width, 3]
-        const torch::Tensor &v_render_distort, // [C, image_height, image_width, 1]
-        const torch::Tensor &v_render_median,  // [C, image_height, image_width, 1]
-        // options
-        bool absgrad);
-
-    std::tuple<
-        torch::Tensor,
-        torch::Tensor,
-        torch::Tensor,
-        torch::Tensor,
-        torch::Tensor,
-        torch::Tensor,
-        torch::Tensor,
-        torch::Tensor>
-    rasterize_to_pixels_bwd2_bilinear4_textured_gaussians_tensor(
-        // Gaussian parameters
-        const torch::Tensor &means2d,                   // [C, N, 2] or [nnz, 2]
-        const torch::Tensor &ray_transforms,            // [C, N, 3, 3] or [nnz, 3, 3]
-        const torch::Tensor &colors,                    // [C, N, 3] or [nnz, 3]
-        const torch::Tensor &opacities,                 // [C, N] or [nnz]
-        const torch::Tensor &textures,                  //
-        const float texture_range_x,                    //
-        const float texture_range_y,                    //
-        const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
-        const torch::Tensor &densify,                   //
-        const at::optional<torch::Tensor> &backgrounds, // [C, 3]
-        const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
-        // image size
-        const uint32_t image_width,
-        const uint32_t image_height,
-        const uint32_t tile_size,
-        // intersections
-        const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
-        const torch::Tensor &flatten_ids,  // [n_isects]
-        const float g_weight,
-        // forward outputs
-        const torch::Tensor &render_colors, // [C, image_height, image_width, COLOR_DIM]
-        const torch::Tensor &render_alphas, // [C, image_height, image_width, 1]
-        const torch::Tensor &last_ids,      // [C, image_height, image_width]
-        const torch::Tensor &median_ids,    // [C, image_height, image_width]
-        // gradients of outputs
-        const torch::Tensor &v_render_colors,  // [C, image_height, image_width, 3]
-        const torch::Tensor &v_render_alphas,  // [C, image_height, image_width, 1]
-        const torch::Tensor &v_render_normals, // [C, image_height, image_width, 3]
-        const torch::Tensor &v_render_distort, // [C, image_height, image_width, 1]
-        const torch::Tensor &v_render_median,  // [C, image_height, image_width, 1]
-        // options
-        bool absgrad);
-
-    std::tuple<
-        torch::Tensor,
-        torch::Tensor,
-        torch::Tensor,
-        torch::Tensor,
-        torch::Tensor,
-        torch::Tensor,
-        torch::Tensor,
-        torch::Tensor>
-    rasterize_to_pixels_bwd2_bilinear3_textured_gaussians_tensor(
-        // Gaussian parameters
-        const torch::Tensor &means2d,                   // [C, N, 2] or [nnz, 2]
-        const torch::Tensor &ray_transforms,            // [C, N, 3, 3] or [nnz, 3, 3]
-        const torch::Tensor &colors,                    // [C, N, 3] or [nnz, 3]
-        const torch::Tensor &opacities,                 // [C, N] or [nnz]
-        const torch::Tensor &textures,                  //
-        const float texture_range_x,                    //
-        const float texture_range_y,                    //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
+        const bool texture_gradients,                   //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
         const torch::Tensor &densify,                   //
         const at::optional<torch::Tensor> &backgrounds, // [C, 3]
@@ -1560,6 +1468,8 @@ namespace gsplat
         const torch::Tensor &textures,
         const float texture_range_x,
         const float texture_range_y,
+        const bool texture_color,
+        const bool texture_alpha,
         const torch::Tensor &normals,
         const at::optional<torch::Tensor> &backgrounds,
         const at::optional<torch::Tensor> &masks,
@@ -1581,7 +1491,7 @@ namespace gsplat
         torch::Tensor,
         torch::Tensor,
         torch::Tensor>
-    rasterize_to_pixels_bwd2_textured_sigmoids_tensor(
+    rasterize_to_pixels_bwd_textured_sigmoids_tensor(
         const torch::Tensor &means2d,
         const torch::Tensor &steepnesses,
         const torch::Tensor &ray_transforms,
@@ -1590,6 +1500,9 @@ namespace gsplat
         const torch::Tensor &textures,
         const float texture_range_x,
         const float texture_range_y,
+        const bool texture_color,
+        const bool texture_alpha,
+        const bool texture_gradients,
         const torch::Tensor &normals,
         const torch::Tensor &densify,
         const at::optional<torch::Tensor> &backgrounds,
@@ -1624,6 +1537,8 @@ namespace gsplat
         const torch::Tensor &textures,
         const float texture_range_x,
         const float texture_range_y,
+        const bool texture_color,
+        const bool texture_alpha,
         const torch::Tensor &normals,
         const at::optional<torch::Tensor> &backgrounds,
         const at::optional<torch::Tensor> &masks,
@@ -1647,6 +1562,9 @@ namespace gsplat
         const torch::Tensor &textures,
         const float texture_range_x,
         const float texture_range_y,
+        const bool texture_color,
+        const bool texture_alpha,
+        const bool texture_gradients,
         const torch::Tensor &normals,
         const torch::Tensor &densify,
         const at::optional<torch::Tensor> &backgrounds,
@@ -1732,6 +1650,8 @@ namespace gsplat
         const torch::Tensor &textures,
         const float texture_range_x,
         const float texture_range_y,
+        const bool texture_color,
+        const bool texture_alpha,
         const torch::Tensor &normals,
         const at::optional<torch::Tensor> &backgrounds,
         const at::optional<torch::Tensor> &masks,
@@ -1747,7 +1667,7 @@ namespace gsplat
     std::tuple<
         torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
         torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
-    rasterize_to_pixels_bwd2_textured_gausssigs_tensor(
+    rasterize_to_pixels_bwd_textured_gausssigs_tensor(
         const torch::Tensor &means2d,
         const torch::Tensor &steepnesses,
         const torch::Tensor &ray_transforms,
@@ -1756,6 +1676,9 @@ namespace gsplat
         const torch::Tensor &textures,
         const float texture_range_x,
         const float texture_range_y,
+        const bool texture_color,
+        const bool texture_alpha,
+        const bool texture_gradients,
         const torch::Tensor &normals,
         const torch::Tensor &densify,
         const at::optional<torch::Tensor> &backgrounds,
@@ -1791,6 +1714,8 @@ namespace gsplat
         const torch::Tensor &textures,
         const float texture_range_x,
         const float texture_range_y,
+        const bool texture_color,
+        const bool texture_alpha,
         const torch::Tensor &normals,
         const at::optional<torch::Tensor> &backgrounds,
         const at::optional<torch::Tensor> &masks,
@@ -1806,7 +1731,7 @@ namespace gsplat
     std::tuple<
         torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
         torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
-    rasterize_to_pixels_bwd2_bilinear4_textured_gausssigs_tensor(
+    rasterize_to_pixels_bwd_bilinear4_textured_gausssigs_tensor(
         const torch::Tensor &means2d,
         const torch::Tensor &steepnesses,
         const torch::Tensor &ray_transforms,
@@ -1815,6 +1740,9 @@ namespace gsplat
         const torch::Tensor &textures,
         const float texture_range_x,
         const float texture_range_y,
+        const bool texture_color,
+        const bool texture_alpha,
+        const bool texture_gradients,
         const torch::Tensor &normals,
         const torch::Tensor &densify,
         const at::optional<torch::Tensor> &backgrounds,
@@ -1850,6 +1778,8 @@ namespace gsplat
         const torch::Tensor &textures,
         const float texture_range_x,
         const float texture_range_y,
+        const bool texture_color,
+        const bool texture_alpha,
         const torch::Tensor &normals,
         const at::optional<torch::Tensor> &backgrounds,
         const at::optional<torch::Tensor> &masks,
@@ -1874,6 +1804,9 @@ namespace gsplat
         const torch::Tensor &textures,
         const float texture_range_x,
         const float texture_range_y,
+        const bool texture_color,
+        const bool texture_alpha,
+        const bool texture_gradients,
         const torch::Tensor &normals,
         const torch::Tensor &densify,
         const at::optional<torch::Tensor> &backgrounds,
@@ -1909,6 +1842,8 @@ namespace gsplat
         const torch::Tensor &textures,
         const float texture_range_x,
         const float texture_range_y,
+        const bool texture_color,
+        const bool texture_alpha,
         const torch::Tensor &normals,
         const at::optional<torch::Tensor> &backgrounds,
         const at::optional<torch::Tensor> &masks,
@@ -1933,6 +1868,9 @@ namespace gsplat
         const torch::Tensor &textures,
         const float texture_range_x,
         const float texture_range_y,
+        const bool texture_color,
+        const bool texture_alpha,
+        const bool texture_gradients,
         const torch::Tensor &normals,
         const torch::Tensor &densify,
         const at::optional<torch::Tensor> &backgrounds,

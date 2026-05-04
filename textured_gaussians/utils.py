@@ -23,6 +23,35 @@ type Filtering = Literal[
 type TextureGrads = Literal["dev", "cpu", "checkpoint"]
 type TextureInputType = Literal["gaussian", "world", "world_and_view"]
 
+
+FILTER_TEXTURE_DIMS: dict[Filtering, int] = {
+    "bilinear": 4,
+    "bilinear_bwd2": 4,
+    "bilinear2": 4,
+    "bilinear3": 4,
+    "bilinear3_bwd2": 4,
+    "bilinear4": 4,
+    "bilinear4_bwd2": 4,
+    "mipmapped": 4,
+    "mipmapped2": 4,
+    "anisotropic": 4,
+    "anisotropic_bilinear": 4,
+    "anisotropic_bilinear2": 4,
+}
+
+
+def num_color_channels(texture_color, texture_alpha):
+    match texture_color, texture_alpha:
+        case True, True:
+            return 4
+        case True, False:
+            return 3
+        case False, True:
+            return 1
+        case False, False:
+            return 0
+
+
 # Coordinate normalisation strategies for world-space texture inputs.
 #   "none"               — no normalisation; raw world-space coordinates used as-is.
 #   "unit_sphere"        — focus-point centre, median radius scale; cameras within unit sphere.

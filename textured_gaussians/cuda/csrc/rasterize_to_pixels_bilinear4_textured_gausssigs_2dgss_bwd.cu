@@ -2,7 +2,7 @@
 #include "helpers.cuh"
 #include "types.cuh"
 #include "utils.cuh"
-#include "filters/bilinear.cuh"
+#include "filters/bilinear4.cuh"
 #include <cooperative_groups.h>
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
@@ -22,7 +22,7 @@ namespace gsplat
      * Rasterization to Pixels Backward Pass Textured Sigmoids (2DSS kernel)
      ****************************************************************************/
     template <uint32_t COLOR_DIM, typename S>
-    __global__ void rasterize_to_pixels_bwd2_textured_gausssigs_kernel(
+    __global__ void rasterize_to_pixels_bwd_bilinear4_textured_gausssigs_kernel(
         const uint32_t C,
         const uint32_t N,
         const uint32_t n_isects,
@@ -36,6 +36,9 @@ namespace gsplat
         const S *__restrict__ opacities,
         at::PackedTensorAccessor32<const S, 4, at::RestrictPtrTraits> textures,
         const vec2<S> texture_range,
+        const bool texture_color,
+        const bool texture_alpha,
+        const bool texture_gradients,
         const S *__restrict__ backgrounds,
         const bool *__restrict__ masks,
 
@@ -111,6 +114,8 @@ namespace gsplat
         {
             return;
         }
+
+        const uint32_t alpha_channel = texture_color ? COLOR_DIM : 0;
 
         const S px = (S)j + S(0.5);
         const S py = (S)i + S(0.5);
@@ -265,17 +270,18 @@ namespace gsplat
                         s = {ray_cross.x / ray_cross.z, ray_cross.y / ray_cross.z};
                     }
 
-                    valid_texture = bilinear::precompute(
+                    valid_texture = 1;
+                    bilinear4::precompute(
                         s.x, s.y, texture_res_x, texture_res_y,
                         texture_range.x, texture_range.y,
                         ucoords, vcoords, bilerp_weights);
 
-                    if (valid_texture > 0)
+                    if (texture_alpha && valid_texture > 0)
                     {
                         alpha_scaling_factor = S(0);
                         for (uint32_t i = 0; i < 4; ++i)
                             alpha_scaling_factor +=
-                                bilerp_weights[i] * textures[g][vcoords[i]][ucoords[i]][3];
+                                bilerp_weights[i] * textures[g][vcoords[i]][ucoords[i]][alpha_channel];
                     }
                     else
                     {
@@ -335,7 +341,7 @@ namespace gsplat
                     for (uint32_t k = 0; k < COLOR_DIM; ++k)
                     {
                         v_rgb_local[k] += fac * v_render_c[k];
-                        if (valid_texture > 0)
+                        if (texture_color && valid_texture > 0)
                         {
                             for (uint32_t i = 0; i < 4; ++i)
                             {
@@ -451,17 +457,17 @@ namespace gsplat
                         }
 
                         // texture alpha channel gradient
-                        if (valid_texture > 0)
+                        if (texture_alpha && valid_texture > 0)
                         {
                             for (uint32_t i = 0; i < 4; ++i)
                                 gpuAtomicAdd(
-                                    &v_textures[g][vcoords[i]][ucoords[i]][3],
+                                    &v_textures[g][vcoords[i]][ucoords[i]][alpha_channel],
                                     bilerp_weights[i] * vis * opac * v_alpha);
                         }
                     }
 
                     // texture UV gradient (contribution from color and alpha channels)
-                    if (valid_texture > 0)
+                    if (texture_gradients && valid_texture > 0)
                     {
                         const S w_u = bilerp_weights[1] + bilerp_weights[3];
                         const S w_v = bilerp_weights[2] + bilerp_weights[3];
@@ -474,24 +480,27 @@ namespace gsplat
 
                         vec2<S> v_s_tex = {S(0), S(0)};
 
-                        GSPLAT_PRAGMA_UNROLL
-                        for (uint32_t k = 0; k < COLOR_DIM; ++k)
+                        if (texture_color)
                         {
-                            const S v_tex_k = fac * v_render_c[k];
-                            for (uint32_t i = 0; i < 4; ++i)
+                            GSPLAT_PRAGMA_UNROLL
+                            for (uint32_t k = 0; k < COLOR_DIM; ++k)
                             {
-                                const S tex_val = textures[g][vcoords[i]][ucoords[i]][k];
-                                v_s_tex.x += v_tex_k * d_bw_du[i] * tex_val * du_dsx;
-                                v_s_tex.y += v_tex_k * d_bw_dv[i] * tex_val * dv_dsy;
+                                const S v_tex_k = fac * v_render_c[k];
+                                for (uint32_t i = 0; i < 4; ++i)
+                                {
+                                    const S tex_val = textures[g][vcoords[i]][ucoords[i]][k];
+                                    v_s_tex.x += v_tex_k * d_bw_du[i] * tex_val * du_dsx;
+                                    v_s_tex.y += v_tex_k * d_bw_dv[i] * tex_val * dv_dsy;
+                                }
                             }
                         }
 
-                        if (opac * vis * alpha_scaling_factor <= S(0.999))
+                        if (texture_alpha && opac * vis * alpha_scaling_factor <= S(0.999))
                         {
                             const S v_asf = vis * opac * v_alpha;
                             for (uint32_t i = 0; i < 4; ++i)
                             {
-                                const S tex_val_a = textures[g][vcoords[i]][ucoords[i]][3];
+                                const S tex_val_a = textures[g][vcoords[i]][ucoords[i]][alpha_channel];
                                 v_s_tex.x += v_asf * d_bw_du[i] * tex_val_a * du_dsx;
                                 v_s_tex.y += v_asf * d_bw_dv[i] * tex_val_a * dv_dsy;
                             }
@@ -597,7 +606,7 @@ namespace gsplat
         torch::Tensor,
         torch::Tensor,
         torch::Tensor>
-    call_bwd2_tgs_kernel_with_dim(
+    call_bwd_tgs4_kernel_with_dim(
         const torch::Tensor &means2d,
         const torch::Tensor &steepnesses,
         const torch::Tensor &ray_transforms,
@@ -605,6 +614,9 @@ namespace gsplat
         const torch::Tensor &opacities,
         const torch::Tensor &textures,
         const vec2<float> texture_range,
+        const bool texture_color,
+        const bool texture_alpha,
+        const bool texture_gradients,
         const torch::Tensor &normals,
         const torch::Tensor &densify,
         const at::optional<torch::Tensor> &backgrounds,
@@ -689,7 +701,7 @@ namespace gsplat
             at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
 
             if (cudaFuncSetAttribute(
-                    rasterize_to_pixels_bwd2_textured_gausssigs_kernel<CDIM, float>,
+                    rasterize_to_pixels_bwd_bilinear4_textured_gausssigs_kernel<CDIM, float>,
                     cudaFuncAttributeMaxDynamicSharedMemorySize,
                     shared_mem) != cudaSuccess)
             {
@@ -698,7 +710,7 @@ namespace gsplat
                     shared_mem,
                     " bytes), try lowering tile_size.");
             }
-            rasterize_to_pixels_bwd2_textured_gausssigs_kernel<CDIM, float>
+            rasterize_to_pixels_bwd_bilinear4_textured_gausssigs_kernel<CDIM, float>
                 <<<blocks, threads, shared_mem, stream>>>(
                     C,
                     N,
@@ -712,6 +724,9 @@ namespace gsplat
                     opacities.data_ptr<float>(),
                     textures.packed_accessor32<const float, 4, at::RestrictPtrTraits>(),
                     texture_range,
+                    texture_color,
+                    texture_alpha,
+                    texture_gradients,
                     backgrounds.has_value() ? backgrounds.value().data_ptr<float>() : nullptr,
                     masks.has_value() ? masks.value().data_ptr<bool>() : nullptr,
                     image_width,
@@ -766,7 +781,7 @@ namespace gsplat
         torch::Tensor,
         torch::Tensor,
         torch::Tensor>
-    rasterize_to_pixels_bwd2_textured_gausssigs_tensor(
+    rasterize_to_pixels_bwd_bilinear4_textured_gausssigs_tensor(
         const torch::Tensor &means2d,
         const torch::Tensor &steepnesses,
         const torch::Tensor &ray_transforms,
@@ -775,6 +790,9 @@ namespace gsplat
         const torch::Tensor &textures,
         const float texture_range_x,
         const float texture_range_y,
+        const bool texture_color,
+        const bool texture_alpha,
+        const bool texture_gradients,
         const torch::Tensor &normals,
         const torch::Tensor &densify,
         const at::optional<torch::Tensor> &backgrounds,
@@ -802,7 +820,7 @@ namespace gsplat
 
 #define __GS__CALL_(N)                                     \
     case N:                                                \
-        return call_bwd2_tgs_kernel_with_dim<N>(           \
+        return call_bwd_tgs4_kernel_with_dim<N>(           \
             means2d,                                       \
             steepnesses,                                   \
             ray_transforms,                                \
@@ -810,6 +828,9 @@ namespace gsplat
             opacities,                                     \
             textures,                                      \
             vec2<float>(texture_range_x, texture_range_y), \
+            texture_color,                                 \
+            texture_alpha,                                 \
+            texture_gradients,                             \
             normals,                                       \
             densify,                                       \
             backgrounds,                                   \

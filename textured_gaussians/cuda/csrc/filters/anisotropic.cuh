@@ -300,7 +300,7 @@ namespace gsplat::anisotropic
     }
 
     // Helper function for anisotropic sampling
-    template <uint32_t COLOR_DIM, uint32_t alphai, typename T>
+    template <uint32_t COLOR_DIM, typename T>
     inline __device__ void alpha_color_sample(
         at::PackedTensorAccessor32<const T, 4, at::RestrictPtrTraits> textures,
         int32_t g,
@@ -321,7 +321,7 @@ namespace gsplat::anisotropic
             {
                 col[k] += textures[g][minv][minu][k];
             }
-            *alpha += textures[g][minv][minu][alphai];
+            *alpha += textures[g][minv][minu][COLOR_DIM];
             return;
         }
 
@@ -343,7 +343,55 @@ namespace gsplat::anisotropic
                 {
                     col[k] += textures[g][v][u][k] * pixel_area;
                 }
-                *alpha += textures[g][v][u][alphai] * pixel_area;
+                *alpha += textures[g][v][u][COLOR_DIM] * pixel_area;
+            }
+        }
+
+        return;
+    }
+
+    // Helper function for anisotropic sampling
+    template <uint32_t COLOR_DIM, typename T>
+    inline __device__ void color_sample(
+        at::PackedTensorAccessor32<const T, 4, at::RestrictPtrTraits> textures,
+        int32_t g,
+        vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
+        vec2<T> n01, vec2<T> n12, vec2<T> n23, vec2<T> n30,
+        T n01min, T n01max, T n12min, T n12max, T n23min, T n23max, T n30min, T n30max,
+        int32_t minu, int32_t maxu, int32_t minv, int32_t maxv,
+        vec2<int> s0texel, vec2<int> s1texel, vec2<int> s2texel, vec2<int> s3texel,
+        T area, T iarea,
+        int texture_res_x, int texture_res_y,
+        T col[COLOR_DIM])
+    {
+        if (minu + 1 == maxu && minv + 1 == maxv)
+        {
+            GSPLAT_PRAGMA_UNROLL
+            for (int k = 0; k < COLOR_DIM; ++k)
+            {
+                col[k] += textures[g][minv][minu][k];
+            }
+            return;
+        }
+
+        for (int v = minv; v < maxv; v++)
+        {
+            for (int u = minu; u < maxu; u++)
+            {
+                T pixel_area;
+                if ((u == s0texel.x && v == s0texel.y) || (u == s1texel.x && v == s1texel.y) || (u == s2texel.x && v == s2texel.y) || (u == s3texel.x && v == s3texel.y))
+                {
+                    pixel_area = ratio_corners_inside_pixel(s0, s1, s2, s3, vec2<T>(u, v)) * iarea;
+                }
+                else
+                {
+                    pixel_area = ratio_inside_pixel(s0, s1, s2, s3, n01, n12, n23, n30, n01min, n01max, n12min, n12max, n23min, n23max, n30min, n30max, vec2<T>(T(u) + T(0.5), T(v) + T(0.5))) * iarea;
+                }
+                GSPLAT_PRAGMA_UNROLL
+                for (int k = 0; k < COLOR_DIM; ++k)
+                {
+                    col[k] += textures[g][v][u][k] * pixel_area;
+                }
             }
         }
 

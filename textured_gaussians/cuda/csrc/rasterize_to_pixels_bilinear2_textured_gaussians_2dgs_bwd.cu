@@ -31,6 +31,9 @@ namespace gsplat
         const S *__restrict__ opacities,                                        // [C, N] or [nnz]                        // Gaussian opacities that support per-view values.
         at::PackedTensorAccessor32<const S, 4, at::RestrictPtrTraits> textures, // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM] // Gaussian textures or ND features.
         const vec2<S> texture_range,                                            //
+        const bool texture_color,                                               //
+        const bool texture_alpha,                                               //
+        const bool texture_gradients,                                           //
         const S *__restrict__ backgrounds,                                      // [C, COLOR_DIM]                         // Background colors on camera basis
         const bool *__restrict__ masks,                                         // [C, tile_height, tile_width]           // Optional tile mask to skip rendering GS to masked tiles.
 
@@ -114,6 +117,8 @@ namespace gsplat
         {
             return;
         }
+
+        const uint32_t alpha_channel = texture_color ? COLOR_DIM : 0;
 
         const S px = (S)j + S(0.5);
         const S py = (S)i + S(0.5);
@@ -358,13 +363,13 @@ namespace gsplat
                     valid_texture = bilinear2::precompute(s.x, s.y, texture_res_x, texture_res_y, texture_range.x, texture_range.y, ucoords, vcoords, bilerp_weights);
 
                     // computer alpha scaling factor
-                    if (valid_texture > 0)
+                    if (texture_alpha && valid_texture > 0)
                     {
                         // update texture gradients
                         GSPLAT_PRAGMA_UNROLL
                         for (uint32_t i = 0; i < 4; ++i)
                         {
-                            alpha_scaling_factor += bilerp_weights[i] * bilinear2::sample(textures, texture_res_x, texture_res_y, g, vcoords[i], ucoords[i], 3);
+                            alpha_scaling_factor += bilerp_weights[i] * bilinear2::sample(textures, texture_res_x, texture_res_y, g, vcoords[i], ucoords[i], alpha_channel);
                         }
                     }
                     else
@@ -466,7 +471,7 @@ namespace gsplat
                     {
                         v_rgb_local[k] += fac * v_render_c[k];
 
-                        if (valid_texture > 0)
+                        if (texture_color && valid_texture > 0)
                         {
                             // update texture gradients
                             for (uint32_t i = 0; i < 4; ++i)
@@ -597,11 +602,11 @@ namespace gsplat
                         v_opacity_local = vis * v_alpha * alpha_scaling_factor;
 
                         // update alpha scaling factor gradients
-                        if (valid_texture > 0)
+                        if (texture_alpha && valid_texture > 0)
                         {
                             for (uint32_t i = 0; i < 4; ++i)
                             {
-                                bilinear2::update(v_textures, texture_res_x, texture_res_y, g, vcoords[i], ucoords[i], 3, bilerp_weights[i] * vis * opac * v_alpha);
+                                bilinear2::update(v_textures, texture_res_x, texture_res_y, g, vcoords[i], ucoords[i], alpha_channel, bilerp_weights[i] * vis * opac * v_alpha);
                             }
                         }
                     }
@@ -718,6 +723,9 @@ namespace gsplat
         const torch::Tensor &opacities,                 // [C, N] or [nnz]
         const torch::Tensor &textures,                  //
         const vec2<float> texture_range,                //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
+        const bool texture_gradients,                   //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
         const torch::Tensor &densify,                   //
         const at::optional<torch::Tensor> &backgrounds, // [C, 3]
@@ -833,6 +841,9 @@ namespace gsplat
                     opacities.data_ptr<float>(),
                     textures.packed_accessor32<const float, 4, at::RestrictPtrTraits>(),
                     texture_range,
+                    texture_color,
+                    texture_alpha,
+                    texture_gradients,
                     backgrounds.has_value() ? backgrounds.value().data_ptr<float>()
                                             : nullptr,
                     masks.has_value() ? masks.value().data_ptr<bool>() : nullptr,
@@ -894,6 +905,9 @@ namespace gsplat
         const torch::Tensor &textures,                  //
         const float texture_range_x,                    //
         const float texture_range_y,                    //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
+        const bool texture_gradients,                   //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
         const torch::Tensor &densify,                   //
         const at::optional<torch::Tensor> &backgrounds, // [C, 3]
@@ -924,6 +938,10 @@ namespace gsplat
 
         GSPLAT_CHECK_INPUT(colors);
         uint32_t COLOR_DIM = colors.size(-1);
+        if (texture_gradients)
+        {
+            AT_ERROR("Unsupported texture gradients");
+        }
 
 #define __GS__CALL_(N)                                     \
     case N:                                                \
@@ -934,6 +952,9 @@ namespace gsplat
             opacities,                                     \
             textures,                                      \
             vec2<float>(texture_range_x, texture_range_y), \
+            texture_color,                                 \
+            texture_alpha,                                 \
+            texture_gradients,                             \
             normals,                                       \
             densify,                                       \
             backgrounds,                                   \

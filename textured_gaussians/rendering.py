@@ -29,7 +29,13 @@ from .distributed import (
     all_to_all_int32,
     all_to_all_tensor_list,
 )
-from .utils import Filtering, depth_to_normal, get_projection_matrix
+from .utils import (
+    FILTER_TEXTURE_DIMS,
+    Filtering,
+    depth_to_normal,
+    get_projection_matrix,
+    num_color_channels,
+)
 
 
 def rasterization(
@@ -1352,6 +1358,8 @@ def rasterization_textured_gaussians(
     height: int,
     texture_range_x: float = 3.0,
     texture_range_y: float = 3.0,
+    texture_color: bool = True,
+    texture_alpha: bool = True,
     near_plane: float = 0.01,
     far_plane: float = 1e10,
     radius_clip: float = 0.0,
@@ -1480,7 +1488,9 @@ def rasterization_textured_gaussians(
     assert viewmats.shape == (C, 4, 4), viewmats.shape
     assert Ks.shape == (C, 3, 3), Ks.shape
     assert (
-        textures.shape[0] == N and textures.shape[-1] == 4 and textures.dim() == 4
+        textures.shape[0] == N
+        and (textures.shape[-1] == num_color_channels(texture_color, texture_alpha))
+        and textures.dim() == FILTER_TEXTURE_DIMS[filtering]
     ), textures.shape
     assert render_mode in ["RGB", "D", "ED", "RGB+D", "RGB+ED"], render_mode
     if distloss:
@@ -1609,6 +1619,8 @@ def rasterization_textured_gaussians(
         textures,
         texture_range_x,
         texture_range_y,
+        texture_color,
+        texture_alpha,
         normals,
         densify,
         width,
@@ -1700,6 +1712,8 @@ def rasterization_textured_sigmoids(
     height: int,
     texture_range_x: float = 1.2,
     texture_range_y: float = 1.2,
+    texture_color: bool = True,
+    texture_alpha: bool = True,
     near_plane: float = 0.01,
     far_plane: float = 1e10,
     radius_clip: float = 0.0,
@@ -1746,7 +1760,9 @@ def rasterization_textured_sigmoids(
     assert viewmats.shape == (C, 4, 4), viewmats.shape
     assert Ks.shape == (C, 3, 3), Ks.shape
     assert (
-        textures.shape[0] == N and textures.shape[-1] == 4 and textures.dim() == 4
+        textures.shape[0] == N
+        and (textures.shape[-1] == num_color_channels(texture_color, texture_alpha))
+        and textures.dim() == FILTER_TEXTURE_DIMS[filtering]
     ), textures.shape
     assert render_mode in ["RGB", "D", "ED", "RGB+D", "RGB+ED"], render_mode
     if distloss:
@@ -1860,6 +1876,8 @@ def rasterization_textured_sigmoids(
         textures,
         texture_range_x,
         texture_range_y,
+        texture_color,
+        texture_alpha,
         normals,
         densify,
         width,
@@ -3304,6 +3322,8 @@ def rasterization_textured_gausssigs(
     height: int,
     texture_range_x: float = 1.2,
     texture_range_y: float = 1.2,
+    texture_color: bool = True,
+    texture_alpha: bool = True,
     near_plane: float = 0.01,
     far_plane: float = 1e10,
     radius_clip: float = 0.0,
@@ -3360,7 +3380,9 @@ def rasterization_textured_gausssigs(
     assert viewmats.shape == (C, 4, 4), viewmats.shape
     assert Ks.shape == (C, 3, 3), Ks.shape
     assert (
-        textures.shape[0] == N and textures.shape[-1] == 4 and textures.dim() == 4
+        textures.shape[0] == N
+        and (textures.shape[-1] == num_color_channels(texture_color, texture_alpha))
+        and textures.dim() == FILTER_TEXTURE_DIMS[filtering]
     ), textures.shape
     assert render_mode in ["RGB", "D", "ED", "RGB+D", "RGB+ED"], render_mode
     if distloss:
@@ -3474,6 +3496,8 @@ def rasterization_textured_gausssigs(
         textures,
         texture_range_x,
         texture_range_y,
+        texture_color,
+        texture_alpha,
         normals,
         densify,
         width,

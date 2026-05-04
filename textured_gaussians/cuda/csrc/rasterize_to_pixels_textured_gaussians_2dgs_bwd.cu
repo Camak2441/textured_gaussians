@@ -31,6 +31,9 @@ namespace gsplat
         const S *__restrict__ opacities,                                        // [C, N] or [nnz]                        // Gaussian opacities that support per-view values.
         at::PackedTensorAccessor32<const S, 4, at::RestrictPtrTraits> textures, // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM] // Gaussian textures or ND features.
         const vec2<S> texture_range,                                            //
+        const bool texture_color,                                               //
+        const bool texture_alpha,                                               //
+        const bool texture_gradients,                                           //
         const S *__restrict__ backgrounds,                                      // [C, COLOR_DIM]                         // Background colors on camera basis
         const bool *__restrict__ masks,                                         // [C, tile_height, tile_width]           // Optional tile mask to skip rendering GS to masked tiles.
 
@@ -114,6 +117,8 @@ namespace gsplat
         {
             return;
         }
+
+        const uint32_t alpha_channel = texture_color ? COLOR_DIM : 0;
 
         const S px = (S)j + S(0.5);
         const S py = (S)i + S(0.5);
@@ -361,12 +366,12 @@ namespace gsplat
                         ucoords, vcoords, bilerp_weights);
 
                     // computer alpha scaling factor
-                    if (valid_texture > 0)
+                    if (texture_alpha && valid_texture > 0)
                     {
                         alpha_scaling_factor = S(0);
                         for (uint32_t i = 0; i < 4; ++i)
                         {
-                            alpha_scaling_factor += bilerp_weights[i] * textures[g][vcoords[i]][ucoords[i]][3];
+                            alpha_scaling_factor += bilerp_weights[i] * textures[g][vcoords[i]][ucoords[i]][alpha_channel];
                         }
                     }
                     else
@@ -468,7 +473,7 @@ namespace gsplat
                     {
                         v_rgb_local[k] += fac * v_render_c[k];
 
-                        if (valid_texture > 0)
+                        if (texture_color && valid_texture > 0)
                         {
                             // update texture gradients
                             for (uint32_t i = 0; i < 4; ++i)
@@ -599,13 +604,81 @@ namespace gsplat
                         v_opacity_local = vis * v_alpha * alpha_scaling_factor;
 
                         // update alpha scaling factor gradients
-                        if (valid_texture > 0)
+                        if (texture_alpha && valid_texture > 0)
                         {
                             for (uint32_t i = 0; i < 4; ++i)
                             {
-                                gpuAtomicAdd(&v_textures[g][vcoords[i]][ucoords[i]][3], bilerp_weights[i] * vis * opac * v_alpha);
+                                gpuAtomicAdd(&v_textures[g][vcoords[i]][ucoords[i]][alpha_channel], bilerp_weights[i] * vis * opac * v_alpha);
                             }
                         }
+                    }
+
+                    /**
+                     * Gradient of loss w.r.t. UV coordinates (s) from texture lookup.
+                     * Changing s shifts the bilinear sample point, changing both tex_colors and alpha_scaling_factor.
+                     * This propagates through the projective transform to v_ray_transforms.
+                     */
+                    if (texture_gradients && valid_texture > 0)
+                    {
+                        // Recover fractional UV position from precomputed bilerp_weights
+                        const S w_u = bilerp_weights[1] + bilerp_weights[3];
+                        const S w_v = bilerp_weights[2] + bilerp_weights[3];
+
+                        // d(bilerp_weights[i])/d(u) and d(bilerp_weights[i])/d(v)
+                        const S d_bw_du[4] = {-(S(1) - w_v), (S(1) - w_v), -w_v, w_v};
+                        const S d_bw_dv[4] = {-(S(1) - w_u), -w_u, (S(1) - w_u), w_u};
+
+                        // d(u)/d(s.x) and d(v)/d(s.y) from the bilinear::precompute mapping
+                        const S du_dsx = S(texture_res_x - 1) / (texture_range.x);
+                        const S dv_dsy = S(texture_res_y - 1) / (texture_range.y);
+
+                        vec2<S> v_s_tex = {S(0), S(0)};
+
+                        if (texture_color)
+                        {
+                            // Contribution from texture color channels changing with UV
+                            GSPLAT_PRAGMA_UNROLL
+                            for (uint32_t k = 0; k < COLOR_DIM; ++k)
+                            {
+                                const S v_tex_k = fac * v_render_c[k];
+                                for (uint32_t i = 0; i < 4; ++i)
+                                {
+                                    const S tex_val = textures[g][vcoords[i]][ucoords[i]][k];
+                                    v_s_tex.x += v_tex_k * d_bw_du[i] * tex_val * du_dsx;
+                                    v_s_tex.y += v_tex_k * d_bw_dv[i] * tex_val * dv_dsy;
+                                }
+                            }
+                        }
+
+                        // Contribution from texture alpha channel changing with UV (only when alpha is not clipped)
+                        if (texture_alpha && opac * vis * alpha_scaling_factor <= S(0.999))
+                        {
+                            const S v_asf = vis * opac * v_alpha;
+                            for (uint32_t i = 0; i < 4; ++i)
+                            {
+                                const S tex_val_a = textures[g][vcoords[i]][ucoords[i]][alpha_channel];
+                                v_s_tex.x += v_asf * d_bw_du[i] * tex_val_a * du_dsx;
+                                v_s_tex.y += v_asf * d_bw_dv[i] * tex_val_a * dv_dsy;
+                            }
+                        }
+
+                        // Backpropagate v_s_tex through the projective transform: s = ray_cross / ray_cross.z
+                        const S v_sx_pz = v_s_tex.x / ray_cross.z;
+                        const S v_sy_pz = v_s_tex.y / ray_cross.z;
+                        const vec3<S> v_ray_cross_tex = {
+                            v_sx_pz, v_sy_pz, -(v_sx_pz * s.x + v_sy_pz * s.y)};
+                        const vec3<S> v_h_u_tex = glm::cross(h_v, v_ray_cross_tex);
+                        const vec3<S> v_h_v_tex = glm::cross(v_ray_cross_tex, h_u);
+
+                        v_u_M_local.x += -v_h_u_tex.x;
+                        v_u_M_local.y += -v_h_u_tex.y;
+                        v_u_M_local.z += -v_h_u_tex.z;
+                        v_v_M_local.x += -v_h_v_tex.x;
+                        v_v_M_local.y += -v_h_v_tex.y;
+                        v_v_M_local.z += -v_h_v_tex.z;
+                        v_w_M_local.x += px * v_h_u_tex.x + py * v_h_v_tex.x;
+                        v_w_M_local.y += px * v_h_u_tex.y + py * v_h_v_tex.y;
+                        v_w_M_local.z += px * v_h_u_tex.z + py * v_h_v_tex.z;
                     }
 
                     /**
@@ -720,6 +793,9 @@ namespace gsplat
         const torch::Tensor &opacities,                 // [C, N] or [nnz]
         const torch::Tensor &textures,                  //
         const vec2<float> texture_range,                //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
+        const bool texture_gradients,                   //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
         const torch::Tensor &densify,                   //
         const at::optional<torch::Tensor> &backgrounds, // [C, 3]
@@ -835,8 +911,10 @@ namespace gsplat
                     opacities.data_ptr<float>(),
                     textures.packed_accessor32<const float, 4, at::RestrictPtrTraits>(),
                     texture_range,
-                    backgrounds.has_value() ? backgrounds.value().data_ptr<float>()
-                                            : nullptr,
+                    texture_color,
+                    texture_alpha,
+                    texture_gradients,
+                    backgrounds.has_value() ? backgrounds.value().data_ptr<float>() : nullptr,
                     masks.has_value() ? masks.value().data_ptr<bool>() : nullptr,
                     image_width,
                     image_height,
@@ -855,8 +933,7 @@ namespace gsplat
                     v_render_normals.data_ptr<float>(),
                     v_render_distort.data_ptr<float>(),
                     v_render_median.data_ptr<float>(),
-                    absgrad ? reinterpret_cast<vec2<float> *>(
-                                  v_means2d_abs.data_ptr<float>())
+                    absgrad ? reinterpret_cast<vec2<float> *>(v_means2d_abs.data_ptr<float>())
                             : nullptr,
                     reinterpret_cast<vec2<float> *>(v_means2d.data_ptr<float>()),
                     v_ray_transforms.data_ptr<float>(),
@@ -896,6 +973,9 @@ namespace gsplat
         const torch::Tensor &textures,                  //
         const float texture_range_x,                    //
         const float texture_range_y,                    //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
+        const bool texture_gradients,                   //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
         const torch::Tensor &densify,                   //
         const at::optional<torch::Tensor> &backgrounds, // [C, 3]
@@ -936,6 +1016,9 @@ namespace gsplat
             opacities,                                     \
             textures,                                      \
             vec2<float>(texture_range_x, texture_range_y), \
+            texture_color,                                 \
+            texture_alpha,                                 \
+            texture_gradients,                             \
             normals,                                       \
             densify,                                       \
             backgrounds,                                   \
