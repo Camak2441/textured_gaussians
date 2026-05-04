@@ -12,7 +12,6 @@ python simple_trainer_textured_gaussians.py mcmc \
     --init_num_pts=1966 \
     --strategy.cap-max=1966 \
     --alpha_loss \
-    --dist_loss \
     --normal_loss \
     --opac_loss \
     --opac_loss_fn="quad1" \
