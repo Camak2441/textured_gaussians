@@ -1,0 +1,2 @@
+backup/mip_nerf_360.sh tgss4_b2_g9999_ot01-0_ott03-0_sgc02_swc08_po_pswc08
+backup/nerf_synthetic.sh tgss4_b2_g9999_ot01-0_ott03-0_sgc02_swc08_po_pswc08

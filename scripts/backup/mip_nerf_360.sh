@@ -1,0 +1,9 @@
+backup/_.sh $1 bicycle
+backup/_.sh $1 bonsai
+backup/_.sh $1 counter
+backup/_.sh $1 flowers
+backup/_.sh $1 garden
+backup/_.sh $1 kitchen
+backup/_.sh $1 room
+backup/_.sh $1 stump
+backup/_.sh $1 treehill
