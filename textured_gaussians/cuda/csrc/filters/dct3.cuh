@@ -56,16 +56,22 @@ namespace gsplat::dct3
     {
         ucos[0] = T(1);
         vcos[0] = T(1);
+        ducos[0] = T(0);
+        dvcos[0] = T(0);
         T rsqrti;
         T pii = 0;
+        T piiu;
+        T piiv;
         for (int i = 1; i < texture_res; ++i)
         {
             rsqrti = rsqrt((T)(i + 1));
             pii += M_PI;
-            ucos[i] = dct_cos(pii * u) * rsqrti;
-            vcos[i] = dct_cos(pii * v) * rsqrti;
-            ducos[i] = pii * dct_cos(pii * u + 3 * M_PI_2) * rsqrti;
-            dvcos[i] = pii * dct_cos(pii * v + 3 * M_PI_2) * rsqrti;
+            piiu = pii * u;
+            piiv = pii * v;
+            ucos[i] = dct_cos(piiu) * rsqrti;
+            vcos[i] = dct_cos(piiv) * rsqrti;
+            ducos[i] = pii * dct_cos(piiu + M_PI_2) * rsqrti;
+            dvcos[i] = pii * dct_cos(piiv + M_PI_2) * rsqrti;
         }
     }
 
@@ -99,7 +105,7 @@ namespace gsplat::dct3
     // Helper function for trilinear interpolation coordinate and weight calculation
     template <uint32_t COLOR_DIM, typename T>
     inline __device__ void color_sample(
-        at::PackedTensorAccessor32<const T, 4, at::RestrictPtrTraits> textures, // [N, Texture_Resolution, Texture_Resolution, 4]
+        at::PackedTensorAccessor32<const T, 3, at::RestrictPtrTraits> textures, // [N, Texture_Resolution, Texture_Resolution, 4]
         int texture_res,
         uint32_t g,
         T u, // from 0 to 1
@@ -129,7 +135,7 @@ namespace gsplat::dct3
 
     template <typename T>
     inline __device__ void update(
-        at::PackedTensorAccessor32<T, 4, at::RestrictPtrTraits> v_textures, // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM]
+        at::PackedTensorAccessor32<T, 3, at::RestrictPtrTraits> v_textures, // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM]
         int texture_res,
         uint32_t g,
         T u, // u from 0 to 1
@@ -147,16 +153,16 @@ namespace gsplat::dct3
             for (int i = 0; i < texture_res - j; ++i)
             {
                 gpuAtomicAdd(&v_textures[g][index][k], delta * ucos[i] * vj);
+                index++;
             }
-            index++;
         }
         return;
     }
 
     template <uint32_t COLOR_DIM, typename T>
     inline __device__ void color_sample_and_update(
-        at::PackedTensorAccessor32<const T, 4, at::RestrictPtrTraits> textures, // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM]
-        at::PackedTensorAccessor32<T, 4, at::RestrictPtrTraits> v_textures,     // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM]
+        at::PackedTensorAccessor32<const T, 3, at::RestrictPtrTraits> textures, // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM]
+        at::PackedTensorAccessor32<T, 3, at::RestrictPtrTraits> v_textures,     // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM]
         int texture_res,
         uint32_t g,
         T u, // u from 0 to 1
@@ -180,6 +186,85 @@ namespace gsplat::dct3
                 {
                     gpuAtomicAdd(&v_textures[g][index][k], deltas[k] * uivj);
                     col[k] += textures[g][index][k] * uivj;
+                }
+                index++;
+            }
+        }
+        return;
+    }
+    template <typename T>
+    inline __device__ void sample_grad(
+        at::PackedTensorAccessor32<const T, 3, at::RestrictPtrTraits> textures, // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM]
+        int texture_res,
+        uint32_t g,
+        T u, // u from 0 to 1
+        T v, // v from 0 to 1
+        T *ucos,
+        T *vcos,
+        T *ducos,
+        T *dvcos,
+        uint32_t k,
+        vec2<T> *v_s_tex,
+        T v_ck)
+    {
+        T vj;
+        T dvj;
+        T duivj;
+        T uidvj;
+        int index = 0;
+        for (int j = 0; j < texture_res; ++j)
+        {
+            vj = vcos[j];
+            dvj = dvcos[j];
+            for (int i = 0; i < texture_res - j; ++i)
+            {
+                duivj = ducos[i] * vj;
+                uidvj = ucos[i] * dvj;
+                const T v_tex_k = v_ck;
+                const T tex_val = textures[g][j][i][k];
+                v_s_tex->x += duivj * tex_val * v_tex_k;
+                v_s_tex->y += uidvj * tex_val * v_tex_k;
+                index++;
+            }
+        }
+        return;
+    }
+
+    template <uint32_t COLOR_DIM, typename T>
+    inline __device__ void color_sample_grad(
+        at::PackedTensorAccessor32<const T, 3, at::RestrictPtrTraits> textures, // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM]
+        int texture_res,
+        uint32_t g,
+        T u, // u from 0 to 1
+        T v, // v from 0 to 1
+        T *ucos,
+        T *vcos,
+        T *ducos,
+        T *dvcos,
+        vec2<T> *v_s_tex,
+        T *v_render_c,
+        T fac)
+    {
+        T vj;
+        T dvj;
+        T duivj;
+        T uidvj;
+        int index = 0;
+        for (int j = 0; j < texture_res; ++j)
+        {
+            vj = vcos[j];
+            dvj = dvcos[j];
+            for (int i = 0; i < texture_res - j; ++i)
+            {
+                duivj = ducos[i] * vj;
+                uidvj = ucos[i] * dvj;
+                GSPLAT_PRAGMA_UNROLL
+                for (int k = 0; k < COLOR_DIM; ++k)
+                {
+                    const T v_tex_k = fac * v_render_c[k];
+                    const T tex_val = textures[g][j][i][k];
+                    v_s_tex->x += duivj * tex_val * v_tex_k;
+                    v_s_tex->y += uidvj * tex_val * v_tex_k;
                 }
                 index++;
             }

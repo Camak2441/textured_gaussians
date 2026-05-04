@@ -8,14 +8,14 @@ python simple_trainer_textured_gaussians.py mcmc \
     --init_extent 1 \
     --init_type=pretrained \
     --background_mode "white" \
-    --model_type=dtgs \
+    --model_type=tgs \
     --init_num_pts=10000 \
     --strategy.cap-max=10000 \
     --strategy.refine-start-iter=1000000000000 \
+    --filtering=dct \
     --alpha_loss \
     --texture_resolution 8 \
     --saved_texture_resolution 64 \
     --textured_rgb \
     --textured_alpha \
-    --freeze_geometry=20000 \
     --port 6070

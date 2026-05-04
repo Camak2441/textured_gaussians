@@ -33,6 +33,8 @@ namespace gsplat
         const S *__restrict__ opacities,                                        // [C, N] or [nnz]                        // Gaussian opacities that support per-view values.
         at::PackedTensorAccessor32<const S, 4, at::RestrictPtrTraits> textures, // [N, Texture_Resolution, Texture_Resolution, 4]
         const vec2<S> texture_range,                                            //
+        const bool texture_color,                                               //
+        const bool texture_alpha,                                               //
         const S *__restrict__ normals,                                          // [C, N, 3] or [nnz, 3]                  // The normals in camera space.
         const S *__restrict__ backgrounds,                                      // [C, COLOR_DIM]                         // Background colors on camera basis
         const bool *__restrict__ masks,                                         // [C, tile_height, tile_width]            // Optional tile mask to skip rendering GS to masked tiles.
@@ -45,6 +47,7 @@ namespace gsplat
                                                   // gives the interval that our gaussians are gonna use.
         const int32_t *__restrict__ flatten_ids,  // [n_isects]                      // The global flatten indices in [C * N] or [nnz] from  `isect_tiles()`.
         const S gs_contrib_threshold,             // The threshold for gaussian opacity contribution.
+        const S g_weight,
 
         // outputs
         S *__restrict__ render_colors,    // [C, image_height, image_width, COLOR_DIM]
@@ -99,6 +102,8 @@ namespace gsplat
         {
             masks += camera_id * tile_height * tile_width;
         }
+
+        const uint32_t alpha_channel = texture_color ? COLOR_DIM : 0;
 
         // find the center of the pixel
         S px = (S)j + S(0.5);
@@ -318,7 +323,10 @@ namespace gsplat
                 if (valid_texture > 0)
                 {
                     dct::precompute(texture_res_x, texture_res_y, u, v, ucos, vcos);
-                    alpha_scaling_factor = min(max(S(0), dct::sample(textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, 3)), S(1));
+                    if (texture_alpha)
+                    {
+                        alpha_scaling_factor = min(max(S(0), dct::sample(textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, alpha_channel)), S(1));
+                    }
                 }
                 else
                 {
@@ -340,7 +348,7 @@ namespace gsplat
 
                 const S sigma = S(0.5) * gauss_weight;
                 // evaluation of the gaussian exponential term
-                S alpha = min(S(0.999), opac * exp(-sigma) * alpha_scaling_factor);
+                S alpha = min(S(0.999), opac * (S(0.998) - g_weight + g_weight * exp(-sigma)) * alpha_scaling_factor);
 
                 // ignore transparent gaussians
                 if (sigma < S(0) || alpha < S(1) / S(255))
@@ -359,7 +367,7 @@ namespace gsplat
                 const S vis = alpha * T;
                 const S *c_ptr = colors + g * COLOR_DIM;
                 S tex_color[COLOR_DIM] = {S(0)};
-                if (valid_texture > 0)
+                if (texture_color && valid_texture > 0)
                 {
                     dct::color_sample<COLOR_DIM, S>(textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, tex_color);
                 }
@@ -462,6 +470,8 @@ namespace gsplat
         const torch::Tensor &opacities,                 // [C, N]  or [nnz]
         const torch::Tensor &textures,                  //
         const vec2<float> texture_range,                //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
         const torch::Tensor &normals,                   // [C, N, 3]
         const at::optional<torch::Tensor> &backgrounds, // [C, channels]
         const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
@@ -473,7 +483,8 @@ namespace gsplat
         const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
         const torch::Tensor &flatten_ids,  // [n_isects]
         // additional parameters
-        const float gs_contrib_threshold)
+        const float gs_contrib_threshold,
+        const float g_weight)
     {
         GSPLAT_DEVICE_GUARD(means2d);
         GSPLAT_CHECK_INPUT(means2d);
@@ -570,6 +581,8 @@ namespace gsplat
                 opacities.data_ptr<float>(),
                 textures.packed_accessor32<const float, 4, at::RestrictPtrTraits>(),
                 texture_range,
+                texture_color,
+                texture_alpha,
                 normals.data_ptr<float>(),
                 backgrounds.has_value() ? backgrounds.value().data_ptr<float>()
                                         : nullptr,
@@ -582,6 +595,7 @@ namespace gsplat
                 tile_offsets.data_ptr<int32_t>(),
                 flatten_ids.data_ptr<int32_t>(),
                 gs_contrib_threshold, // added
+                g_weight,
                 renders.data_ptr<float>(),
                 alphas.data_ptr<float>(),
                 render_normals.data_ptr<float>(),
@@ -623,6 +637,8 @@ namespace gsplat
         const torch::Tensor &textures,                  //
         const float texture_range_x,                    //
         const float texture_range_y,                    //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
         const at::optional<torch::Tensor> &backgrounds, // [C, channels]
         const at::optional<torch::Tensor> &masks,       // [C, tile_height, tile_width]
@@ -634,7 +650,8 @@ namespace gsplat
         const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
         const torch::Tensor &flatten_ids,  // [n_isects]
         // additional parameters
-        const float gs_contrib_threshold)
+        const float gs_contrib_threshold,
+        const float g_weight)
     {
         GSPLAT_CHECK_INPUT(colors);
         uint32_t channels = colors.size(-1);
@@ -648,6 +665,8 @@ namespace gsplat
             opacities,                                     \
             textures,                                      \
             vec2<float>(texture_range_x, texture_range_y), \
+            texture_color,                                 \
+            texture_alpha,                                 \
             normals,                                       \
             backgrounds,                                   \
             masks,                                         \
@@ -656,7 +675,8 @@ namespace gsplat
             tile_size,                                     \
             tile_offsets,                                  \
             flatten_ids,                                   \
-            gs_contrib_threshold);
+            gs_contrib_threshold,                          \
+            g_weight);
         // TODO: an optimization can be done by passing the actual number of
         // channels into the kernel functions and avoid necessary global memory
         // writes. This requires moving the channel padding from python to C side.

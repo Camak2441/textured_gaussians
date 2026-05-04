@@ -41,7 +41,7 @@ from utils import (
     remove_from_kwargs,
 )
 
-from textured_gaussians.utils import num_color_channels
+from textured_gaussians.utils import Filtering, num_color_channels
 from textured_gaussians.rendering import (
     rasterization_2dgs,
     rasterization_2dss,
@@ -56,6 +56,55 @@ from textured_gaussians.strategy import DefaultStrategy, MCMCStrategy
 from textured_gaussians.cuda._wrapper import (
     rasterize_dct_textures,
 )
+
+
+def texture_sizes(cfg: Config) -> list[int]:
+    if cfg.filtering in (
+        "bilinear",
+        "bilinear_bwd2",
+        "bilinear2",
+        "bilinear3",
+        "bilinear3_bwd2",
+        "bilinear4",
+        "bilinear4_bwd2",
+        "mipmapped",
+        "mipmapped2",
+        "anisotropic",
+        "anisotropic_bilinear",
+        "anisotropic_bilinear2",
+        "dct",
+        "dct_bwd2",
+    ):
+        return [cfg.texture_height, cfg.texture_width]
+
+
+def initialise_textures(cfg: Config, textures: torch.Tensor):
+    if cfg.filtering in (
+        "bilinear",
+        "bilinear_bwd2",
+        "bilinear2",
+        "bilinear3",
+        "bilinear3_bwd2",
+        "bilinear4",
+        "bilinear4_bwd2",
+        "mipmapped",
+        "mipmapped2",
+        "anisotropic",
+        "anisotropic_bilinear",
+        "anisotropic_bilinear2",
+    ):
+        if cfg.textured_rgb:
+            textures[..., :3] = 0.1
+            if cfg.textured_alpha:
+                textures[..., 3] = 1.0
+        elif cfg.textured_alpha:
+            textures[..., 0] = 1.0
+    elif cfg.filtering in ("dct", "dct_bwd2"):
+        textures[...] = 0.1  # init to having no frequencies
+        alpha_channel = 3 if cfg.textured_rgb else 0
+        textures[..., 0, 0, alpha_channel] = (
+            cfg.texture_height * cfg.texture_width
+        )  # init alpha to flat opaque
 
 
 def create_splats_with_optimizers(
@@ -171,15 +220,10 @@ def create_splats_with_optimizers(
             else:
                 textures = torch.ones(
                     points.shape[0],
-                    cfg.texture_height,
-                    cfg.texture_width,
+                    *texture_sizes(cfg),
                     num_color_channels(cfg.textured_rgb, cfg.textured_alpha),
                 )
-                if cfg.textured_rgb:
-                    textures[..., :3] = 0.1  # init color to low value
-                if cfg.textured_alpha:
-                    alpha_channel = 3 if cfg.textured_rgb else 0
-                    textures[..., alpha_channel] = 1.0  # init alpha to 1.0
+                initialise_textures(cfg, textures)
             params.append(("textures", torch.nn.Parameter(textures), 2.5e-3))
         case "dtgs":
             if init_type == "pretrained" and "textures" in ckpt:

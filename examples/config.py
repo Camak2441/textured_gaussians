@@ -231,7 +231,6 @@ class Config:
         "2dss",
         "2dgss",
         "tgs",
-        "dtgs",
         "itgs",
         "tss",
         "tgss",
@@ -292,6 +291,8 @@ class Config:
         "anisotropic",
         "anisotropic_bilinear",
         "anisotropic_bilinear2",
+        "dct",
+        "dct_bwd2",
     ] = "bilinear"
 
     def adjust_steps(self, factor: float):

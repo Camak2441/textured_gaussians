@@ -5,7 +5,6 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor
 
-
 type Filtering = Literal[
     "bilinear",
     "bilinear_bwd2",
@@ -19,6 +18,8 @@ type Filtering = Literal[
     "anisotropic",
     "anisotropic_bilinear",
     "anisotropic_bilinear2",
+    "dct",
+    "dct_bwd2",
 ]
 type TextureGrads = Literal["dev", "cpu", "checkpoint"]
 type TextureInputType = Literal["gaussian", "world", "world_and_view"]
@@ -37,6 +38,8 @@ FILTER_TEXTURE_DIMS: dict[Filtering, int] = {
     "anisotropic": 4,
     "anisotropic_bilinear": 4,
     "anisotropic_bilinear2": 4,
+    "dct": 4,
+    "dct_bwd2": 4,
 }
 
 

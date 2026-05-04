@@ -31,6 +31,9 @@ namespace gsplat
         const S *__restrict__ opacities,                                        // [C, N] or [nnz]                        // Gaussian opacities that support per-view values.
         at::PackedTensorAccessor32<const S, 4, at::RestrictPtrTraits> textures, // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM] // Gaussian textures or ND features.
         const vec2<S> texture_range,                                            //
+        const bool texture_color,                                               //
+        const bool texture_alpha,                                               //
+        const bool texture_gradients,                                           //
         const S *__restrict__ backgrounds,                                      // [C, COLOR_DIM]                         // Background colors on camera basis
         const bool *__restrict__ masks,                                         // [C, tile_height, tile_width]           // Optional tile mask to skip rendering GS to masked tiles.
 
@@ -41,6 +44,7 @@ namespace gsplat
         const uint32_t tile_height,
         const int32_t *__restrict__ tile_offsets, // [C, tile_height, tile_width]
         const int32_t *__restrict__ flatten_ids,  // [n_isects]
+        const S g_weight,
 
         // fwd outputs
         const S *__restrict__ render_colors,    // [C, image_height, image_width,
@@ -114,6 +118,8 @@ namespace gsplat
             return;
         }
 
+        const uint32_t alpha_channel = texture_color ? COLOR_DIM : 0;
+
         const S px = (S)j + S(0.5);
         const S py = (S)i + S(0.5);
         // clamp this value to the last pixel
@@ -157,6 +163,9 @@ namespace gsplat
 
         S *ucos = (S *)(&normals_batch[block_size * 3]);
         S *vcos = (S *)(&ucos[block_size * texture_res_x]);
+
+        S *ducos = (S *)(&vcos[block_size * texture_res_y]);
+        S *dvcos = (S *)(&ducos[block_size * texture_res_x]);
 
         // this is the T AFTER the last gaussian in this pixel
         S T_final = S(1) - render_alphas[pix_id];
@@ -221,8 +230,12 @@ namespace gsplat
         // each thread loads one gaussian at a time before rasterizing
         const uint32_t tr = block.thread_rank();
 
-        ucos += tr * texture_res_x;
-        vcos += tr * texture_res_y;
+        // Column-major (transposed) layout: thread tr owns element [i * block_size + tr].
+        // A warp reading coefficient i hits 32 consecutive banks → zero bank conflicts.
+        ucos += tr;
+        vcos += tr;
+        ducos += tr;
+        dvcos += tr;
 
         cg::thread_block_tile<32> warp = cg::tiled_partition<32>(block);
 
@@ -313,6 +326,7 @@ namespace gsplat
                 S alpha;           // for the currently processed gaussian, per pixel
                 S opac;            // opacity of the currently processed gaussian, per pixel
                 S vis;             // visibility of the currently processed gaussian (the pure gaussian weight, not multiplied by opacity), per pixel
+                S gaussian_kernel; // raw Gaussian exponential exp(-sigma)
                 S gauss_weight_3d; // 3D gaussian weight (using the proper intersection of UV space), per pixel
                 S gauss_weight_2d; // 2D gaussian weight (using the projected 2D mean), per pixel
                 S gauss_weight;    // minimum of 3D and 2D gaussian weights, per pixel
@@ -373,9 +387,16 @@ namespace gsplat
                     // computer alpha scaling factor
                     if (valid_texture > 0)
                     {
-                        dct::precompute(texture_res_x, texture_res_y, u, v, ucos, vcos);
-                        alpha_scaling_factor = S(0);
-                        alpha_scaling_factor = min(max(S(0), dct::sample(textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, 3)), S(1));
+                        dct::grad_precompute(texture_res_x, texture_res_y, u, v, ucos, vcos, ducos, dvcos);
+                        if (texture_alpha)
+                        {
+                            alpha_scaling_factor = S(0);
+                            alpha_scaling_factor = min(max(S(0), dct::sample(textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, alpha_channel)), S(1));
+                        }
+                        else
+                        {
+                            alpha_scaling_factor = S(1);
+                        }
                     }
                     else
                     {
@@ -393,7 +414,8 @@ namespace gsplat
 
                     // visibility and alpha
                     const S sigma = S(0.5) * gauss_weight;
-                    vis = exp(-sigma);
+                    gaussian_kernel = exp(-sigma);
+                    vis = S(0.998) - g_weight + g_weight * gaussian_kernel;
                     alpha = min(S(0.999), opac * vis * alpha_scaling_factor); // clipped alpha
 
                     // gaussian throw out
@@ -478,7 +500,7 @@ namespace gsplat
                         v_rgb_local[k] += deltas[k];
                     }
 
-                    if (valid_texture > 0)
+                    if (texture_color && valid_texture > 0)
                     {
                         dct::color_sample_and_update<COLOR_DIM, S>(textures, v_textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, tex_colors, deltas);
                     }
@@ -565,8 +587,8 @@ namespace gsplat
 
                             // derivative of G_i w.r.t. ray-primitive intersection uv coordinates
                             const vec2<S> v_s = {
-                                v_G * -vis * s.x + v_depth * w_M.x,
-                                v_G * -vis * s.y + v_depth * w_M.y};
+                                v_G * -gaussian_kernel * s.x + v_depth * w_M.x,
+                                v_G * -gaussian_kernel * s.y + v_depth * w_M.y};
 
                             // backward through the projective transform
                             // @see rasterize_to_pixels_2dgs_fwd.cu to understand what is going on here
@@ -591,8 +613,8 @@ namespace gsplat
                         else
                         {
                             // computing the derivative of G_i w.r.t. 2d projected gaussian parameters (trivial)
-                            const S v_G_ddelx = -vis * FILTER_INV_SQUARE * d.x;
-                            const S v_G_ddely = -vis * FILTER_INV_SQUARE * d.y;
+                            const S v_G_ddelx = -gaussian_kernel * FILTER_INV_SQUARE * d.x;
+                            const S v_G_ddely = -gaussian_kernel * FILTER_INV_SQUARE * d.y;
                             v_xy_local = {v_G * v_G_ddelx, v_G * v_G_ddely};
                             if (v_means2d_abs != nullptr)
                             {
@@ -603,10 +625,65 @@ namespace gsplat
                         v_opacity_local = vis * v_alpha * alpha_scaling_factor;
 
                         // update alpha scaling factor gradients
-                        if (valid_texture > 0)
+                        if (texture_alpha && valid_texture > 0)
                         {
-                            dct::update(v_textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, 3, vis * opac * v_alpha);
+                            dct::update(v_textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, alpha_channel, vis * opac * v_alpha);
                         }
+                    }
+
+                    /**
+                     * Gradient of loss w.r.t. UV coordinates (s) from texture lookup.
+                     * Changing s shifts the bilinear sample point, changing both tex_colors and alpha_scaling_factor.
+                     * This propagates through the projective transform to v_ray_transforms.
+                     */
+                    if (texture_gradients && valid_texture > 0)
+                    {
+                        // d(u)/d(s.x) and d(v)/d(s.y) from the bilinear::precompute mapping
+                        const S du_dsx = (texture_res_x - 2) / (texture_range.x * 2) / texture_res_x;
+                        const S dv_dsy = (texture_res_y - 2) / (texture_range.y * 2) / texture_res_y;
+
+                        vec2<S> v_s_tex = {S(0), S(0)};
+
+                        if (texture_color)
+                        {
+                            dct::color_sample_grad<COLOR_DIM, S>(
+                                textures, texture_res_x, texture_res_y,
+                                g, u, v,
+                                ucos, vcos, ducos, dvcos,
+                                &v_s_tex, v_render_c, fac);
+                        }
+
+                        // Contribution from texture alpha channel changing with UV (only when alpha is not clipped)
+                        if (texture_alpha && opac * vis * alpha_scaling_factor <= S(0.999))
+                        {
+                            const S v_asf = vis * opac * v_alpha;
+                            dct::sample_grad<S>(
+                                textures, texture_res_x, texture_res_y,
+                                g, u, v, // v from 0 to 1
+                                ucos, vcos, ducos, dvcos,
+                                alpha_channel, &v_s_tex, v_asf);
+                        }
+
+                        v_s_tex.x *= du_dsx;
+                        v_s_tex.y *= dv_dsy;
+
+                        // Backpropagate v_s_tex through the projective transform: s = ray_cross / ray_cross.z
+                        const S v_sx_pz = v_s_tex.x / ray_cross.z;
+                        const S v_sy_pz = v_s_tex.y / ray_cross.z;
+                        const vec3<S> v_ray_cross_tex = {
+                            v_sx_pz, v_sy_pz, -(v_sx_pz * s.x + v_sy_pz * s.y)};
+                        const vec3<S> v_h_u_tex = glm::cross(h_v, v_ray_cross_tex);
+                        const vec3<S> v_h_v_tex = glm::cross(v_ray_cross_tex, h_u);
+
+                        v_u_M_local.x += -v_h_u_tex.x;
+                        v_u_M_local.y += -v_h_u_tex.y;
+                        v_u_M_local.z += -v_h_u_tex.z;
+                        v_v_M_local.x += -v_h_v_tex.x;
+                        v_v_M_local.y += -v_h_v_tex.y;
+                        v_v_M_local.z += -v_h_v_tex.z;
+                        v_w_M_local.x += px * v_h_u_tex.x + py * v_h_v_tex.x;
+                        v_w_M_local.y += px * v_h_u_tex.y + py * v_h_v_tex.y;
+                        v_w_M_local.z += px * v_h_u_tex.z + py * v_h_v_tex.z;
                     }
 
                     /**
@@ -721,6 +798,9 @@ namespace gsplat
         const torch::Tensor &opacities,                 // [C, N] or [nnz]
         const torch::Tensor &textures,                  //
         const vec2<float> texture_range,                //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
+        const bool texture_gradients,                   //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
         const torch::Tensor &densify,                   //
         const at::optional<torch::Tensor> &backgrounds, // [C, 3]
@@ -732,6 +812,7 @@ namespace gsplat
         // ray_crossions
         const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
         const torch::Tensor &flatten_ids,  // [n_isects]
+        const float g_weight,              //
         // forward outputs
         const torch::Tensor
             &render_colors,                 // [C, image_height, image_width, COLOR_DIM]
@@ -813,7 +894,7 @@ namespace gsplat
                 (sizeof(int32_t) + sizeof(vec3<float>) + sizeof(vec3<float>) +
                  sizeof(vec3<float>) + sizeof(vec3<float>) +
                  sizeof(float) * COLOR_DIM + sizeof(float) * 3 +
-                 sizeof(float) * (texture_res_x + texture_res_y));
+                 sizeof(float) * (texture_res_x + texture_res_y) * 2);
             at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
 
             if (cudaFuncSetAttribute(
@@ -839,6 +920,9 @@ namespace gsplat
                     opacities.data_ptr<float>(),
                     textures.packed_accessor32<const float, 4, at::RestrictPtrTraits>(),
                     texture_range,
+                    texture_color,
+                    texture_alpha,
+                    texture_gradients,
                     backgrounds.has_value() ? backgrounds.value().data_ptr<float>()
                                             : nullptr,
                     masks.has_value() ? masks.value().data_ptr<bool>() : nullptr,
@@ -849,6 +933,7 @@ namespace gsplat
                     tile_height,
                     tile_offsets.data_ptr<int32_t>(),
                     flatten_ids.data_ptr<int32_t>(),
+                    g_weight,
                     render_colors.data_ptr<float>(),
                     render_alphas.data_ptr<float>(),
                     last_ids.data_ptr<int32_t>(),
@@ -899,6 +984,9 @@ namespace gsplat
         const torch::Tensor &textures,                  //
         const float texture_range_x,                    //
         const float texture_range_y,                    //
+        const bool texture_color,                       //
+        const bool texture_alpha,                       //
+        const bool texture_gradients,                   //
         const torch::Tensor &normals,                   // [C, N, 3] or [nnz, 3]
         const torch::Tensor &densify,                   //
         const at::optional<torch::Tensor> &backgrounds, // [C, 3]
@@ -910,6 +998,7 @@ namespace gsplat
         // ray_crossions
         const torch::Tensor &tile_offsets, // [C, tile_height, tile_width]
         const torch::Tensor &flatten_ids,  // [n_isects]
+        const float g_weight,              //
         // forward outputs
         const torch::Tensor
             &render_colors,                 // [C, image_height, image_width, COLOR_DIM]
@@ -938,6 +1027,9 @@ namespace gsplat
             opacities,                                     \
             textures,                                      \
             vec2<float>(texture_range_x, texture_range_y), \
+            texture_color,                                 \
+            texture_alpha,                                 \
+            texture_gradients,                             \
             normals,                                       \
             densify,                                       \
             backgrounds,                                   \
@@ -947,6 +1039,7 @@ namespace gsplat
             tile_size,                                     \
             tile_offsets,                                  \
             flatten_ids,                                   \
+            g_weight,                                      \
             render_colors,                                 \
             render_alphas,                                 \
             last_ids,                                      \

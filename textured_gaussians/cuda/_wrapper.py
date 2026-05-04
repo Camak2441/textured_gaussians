@@ -1821,6 +1821,8 @@ tgs_fns = {
         f"{PRE}bwd_aniso_bilinear{TGSPOST}",
         False,
     ),
+    "dct": (f"{PRE}fwd_dct{TGSPOST}", f"{PRE}bwd_dct{TGSPOST}", False),
+    "dct_bwd2": (f"{PRE}fwd_dct{TGSPOST}", f"{PRE}bwd_dct{TGSPOST}", True),
 }
 
 
@@ -2219,7 +2221,7 @@ def rasterize_to_samples(
     num_texture_samples: int,
     opac_threshold: float,
 ) -> Tuple[Tensor, Tensor, Tensor]:
-    (sample_counts, sample_gaussian_ids, texture_inputs) = _make_lazy_cuda_func(
+    sample_counts, sample_gaussian_ids, texture_inputs = _make_lazy_cuda_func(
         "rasterize_to_samples_fwd_textured_gaussians"
     )(
         means2d,
@@ -2252,7 +2254,7 @@ def rasterize_to_world_samples(
     num_texture_samples: int,
     opac_threshold: float,
 ) -> Tuple[Tensor, Tensor, Tensor]:
-    (sample_counts, sample_gaussian_ids, texture_inputs) = _make_lazy_cuda_func(
+    sample_counts, sample_gaussian_ids, texture_inputs = _make_lazy_cuda_func(
         "rasterize_to_samples_world_fwd_textured_gaussians"
     )(
         means2d,
@@ -2287,7 +2289,7 @@ def rasterize_to_world_and_view_samples(
     num_texture_samples: int,
     opac_threshold: float,
 ) -> Tuple[Tensor, Tensor, Tensor]:
-    (sample_counts, sample_gaussian_ids, texture_inputs) = _make_lazy_cuda_func(
+    sample_counts, sample_gaussian_ids, texture_inputs = _make_lazy_cuda_func(
         "rasterize_to_samples_world_and_view_fwd_textured_gaussians"
     )(
         means2d,

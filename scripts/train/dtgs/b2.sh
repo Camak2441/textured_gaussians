@@ -12,7 +12,7 @@ python simple_trainer_textured_gaussians.py mcmc \
     --init_num_pts=10000 \
     --strategy.cap-max=10000 \
     --strategy.refine-start-iter=1000000000000 \
-    --filtering=dct \
+    --filtering=dct_bwd2 \
     --alpha_loss \
     --texture_resolution 16 \
     --saved_texture_resolution 64 \

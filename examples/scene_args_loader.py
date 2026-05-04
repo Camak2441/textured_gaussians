@@ -325,7 +325,8 @@ def process_config(cfg: Config):
                     or cfg.model_type == "tgss"
                 ):
                     args.append(f"sw{cfg.sigmoid_factor}")
-                if cfg.texture_width != 64 or cfg.texture_height != 64:
+                default_t = {"dct": 16, "dct_b2": 16}.get(cfg.filtering, 64)
+                if cfg.texture_width != default_t or cfg.texture_height != default_t:
                     if cfg.texture_width == cfg.texture_height:
                         args.append(f"t{cfg.texture_width}")
                     else:
@@ -349,8 +350,10 @@ def process_config(cfg: Config):
                     "mipmapped": "mip_",
                     "mipmapped2": "mip2_",
                     "anisotropic": "aniso_",
-                    "anisotropic_bilinear": "aniso_bilinear",
-                    "anisotropic_bilinear": "aniso_bilinear2",
+                    "anisotropic_bilinear": "aniso_bilinear_",
+                    "anisotropic_bilinear2": "aniso_bilinear2_",
+                    "dct": "d",
+                    "dct_bwd2": "d",
                 }
                 path_suffixes = {
                     "bilinear": "",
@@ -360,6 +363,7 @@ def process_config(cfg: Config):
                     "bilinear3_bwd2": "3_b2",
                     "bilinear4": "4",
                     "bilinear4_bwd2": "4_b2",
+                    "dct_bwd2": "_b2",
                 }
                 if cfg.filtering in path_prefixes or cfg.filtering in path_suffixes:
                     args_suffix = create_args_suffix()
