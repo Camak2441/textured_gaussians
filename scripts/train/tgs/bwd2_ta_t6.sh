@@ -11,6 +11,7 @@ python simple_trainer_textured_gaussians.py mcmc \
     --init_num_pts=10000 \
     --strategy.cap-max=10000 \
     --strategy.refine-start-iter=1000000000000 \
+    --filtering=bilinear_bwd2 \
     --alpha_loss \
     --dist_loss \
     --normal_loss \
