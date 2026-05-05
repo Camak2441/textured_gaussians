@@ -293,6 +293,8 @@ class Config:
         "anisotropic_bilinear2",
         "dct",
         "dct_bwd2",
+        "dct3",
+        "dct3_bwd2",
     ] = "bilinear"
 
     def adjust_steps(self, factor: float):

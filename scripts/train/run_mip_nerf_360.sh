@@ -1,0 +1,9 @@
+bash $1 bicycle
+bash $1 bonsai
+bash $1 counter
+bash $1 flowers
+bash $1 garden
+bash $1 kitchen
+bash $1 room
+bash $1 stump
+bash $1 treehill

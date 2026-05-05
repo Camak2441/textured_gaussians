@@ -49,12 +49,12 @@ from textured_gaussians.rendering import (
     rasterization_textured_gaussians,
     rasterization_textured_gausssigs,
     rasterization_textured_sigmoids,
-    rasterization_dct_textured_gaussians,
     rasterization_implicit_textured_gaussians,
 )
 from textured_gaussians.strategy import DefaultStrategy, MCMCStrategy
 from textured_gaussians.cuda._wrapper import (
     rasterize_dct_textures,
+    rasterize_dct3_textures,
 )
 
 
@@ -76,6 +76,8 @@ def texture_sizes(cfg: Config) -> list[int]:
         "dct_bwd2",
     ):
         return [cfg.texture_height, cfg.texture_width]
+    elif cfg.filtering in ("dct3", "dct3_bwd2"):
+        return [cfg.texture_width * (cfg.texture_width + 1) // 2]
 
 
 def initialise_textures(cfg: Config, textures: torch.Tensor):
@@ -103,6 +105,12 @@ def initialise_textures(cfg: Config, textures: torch.Tensor):
         textures[...] = 0.1  # init to having no frequencies
         alpha_channel = 3 if cfg.textured_rgb else 0
         textures[..., 0, 0, alpha_channel] = (
+            cfg.texture_height * cfg.texture_width
+        )  # init alpha to flat opaque
+    elif cfg.filtering in ("dct3", "dct3_bwd2"):
+        textures[...] = 0.1  # init to having no frequencies
+        alpha_channel = 3 if cfg.textured_rgb else 0
+        textures[..., 0, alpha_channel] = (
             cfg.texture_height * cfg.texture_width
         )  # init alpha to flat opaque
 
@@ -225,18 +233,6 @@ def create_splats_with_optimizers(
                 )
                 initialise_textures(cfg, textures)
             params.append(("textures", torch.nn.Parameter(textures), 2.5e-3))
-        case "dtgs":
-            if init_type == "pretrained" and "textures" in ckpt:
-                textures = ckpt["textures"][sampled_pts_idx]
-            else:
-                textures = torch.ones(
-                    points.shape[0], cfg.texture_height, cfg.texture_width, 4
-                )
-                textures[:, :, :, :] = 0.1  # init to having no frequencies
-                textures[:, 0, 0, 3] = (
-                    cfg.texture_height * cfg.texture_width
-                )  # init alpha to flat opaque
-            params.append(("textures", torch.nn.Parameter(textures), 1.5e-3))
         case "itgs":
             texture_model_name = canonical_model_name(cfg.texture_model)
             print(f"Loading model {texture_model_name}")
@@ -398,7 +394,6 @@ class Runner:
             "tgs",
             "tss",
             "tgss",
-            "dtgs",
             "itgs",
         ]:
             key_for_gradient = "gradient_2dgs"
@@ -572,70 +567,113 @@ class Runner:
                     colors = colors.unsqueeze(-1).unsqueeze(-1)  # [N, 4, 1, 1]
 
                 textures = self.get_textures()  # [N, H, W, 4]
-                if not self.cfg.textured_rgb and self.cfg.textured_alpha:
-                    textures = torch.cat(
-                        [
-                            torch.ones_like(textures),
-                            torch.ones_like(textures),
-                            torch.ones_like(textures),
+                if self.cfg.filtering in (
+                    "bilinear",
+                    "bilinear_bwd2",
+                    "bilinear2",
+                    "bilinear3",
+                    "bilinear3_bwd2",
+                    "bilinear4",
+                    "bilinear4_bwd2",
+                    "mipmapped",
+                    "mipmapped2",
+                    "anisotropic",
+                    "anisotropic_bilinear",
+                    "anisotropic_bilinear2",
+                ):
+                    if not self.cfg.textured_rgb and self.cfg.textured_alpha:
+                        textures = torch.cat(
+                            [
+                                torch.zeros_like(textures),
+                                torch.zeros_like(textures),
+                                torch.zeros_like(textures),
+                                textures,
+                            ],
+                            dim=-1,
+                        )
+                    elif self.cfg.textured_rgb and not self.cfg.textured_alpha:
+                        textures = torch.cat(
+                            [textures, torch.ones_like(textures[..., 0])], dim=-1
+                        )
+
+                    texture_height = textures.shape[1]
+                    texture_width = textures.shape[2]
+                    textures = textures.permute(0, 3, 1, 2)  # [N, 4, H, W]
+                    if self.cfg.textured_rgb and self.cfg.textured_alpha:
+                        textures += colors
+                    elif self.cfg.textured_rgb:
+                        textures += colors[:, :3, :, :]
+                    elif self.cfg.textured_alpha:
+                        textures += colors[:, 3:, :, :]
+
+                    if texture_height >= height and texture_width >= width:
+                        textures = F.interpolate(
+                            textures, size=(height, width), mode="nearest"
+                        )
+                    else:
+                        textures = F.interpolate(
                             textures,
-                        ],
-                        dim=-1,
-                    )
-                if self.cfg.textured_rgb and not self.cfg.textured_alpha:
-                    textures = torch.cat(
-                        [textures, torch.ones_like(textures[..., 0])], dim=-1
-                    )
+                            size=(height, width),
+                            mode="bilinear",
+                            align_corners=False,
+                        )
+                    return textures.permute(0, 2, 3, 1)  # [N, H, W, 4]
+                elif self.cfg.filtering in ("dct", "dct_bwd2"):
+                    rendered = rasterize_dct_textures(textures, height, width, 16)
+                    if not self.cfg.textured_rgb and self.cfg.textured_alpha:
+                        rendered = torch.cat(
+                            [
+                                torch.zeros_like(rendered),
+                                torch.zeros_like(rendered),
+                                torch.zeros_like(rendered),
+                                rendered,
+                            ],
+                            dim=-1,
+                        )
+                    elif self.cfg.textured_rgb and not self.cfg.textured_alpha:
+                        rendered = torch.cat(
+                            [rendered, torch.ones_like(rendered[..., 0])], dim=-1
+                        )
 
-                texture_height = textures.shape[1]
-                texture_width = textures.shape[2]
-                textures = textures.permute(0, 3, 1, 2)  # [N, 4, H, W]
-                if self.cfg.textured_rgb and self.cfg.textured_alpha:
-                    textures += colors
-                elif self.cfg.textured_rgb:
-                    textures += colors[:, :3, :, :]
-                elif self.cfg.textured_alpha:
-                    textures += colors[:, 3:, :, :]
+                    rendered = rendered.permute(0, 3, 1, 2)  # [N, 4, H, W]
+                    if self.cfg.textured_rgb and self.cfg.textured_alpha:
+                        rendered += colors
+                    elif self.cfg.textured_rgb:
+                        rendered += colors[:, :3, :, :]
+                    elif self.cfg.textured_alpha:
+                        rendered += colors[:, 3:, :, :]
+                    if self.cfg.textured_rgb and self.cfg.textured_alpha:
+                        rendered += colors
+                    elif self.cfg.textured_rgb:
+                        rendered = colors[:, :3, :, :]
+                    elif self.cfg.textured_alpha:
+                        rendered += colors[:, 3:, :, :]
+                    return rendered.permute(0, 2, 3, 1)  # [N, H, W, 4]
+                elif self.cfg.filtering in ("dct3", "dct3_bwd2"):
+                    rendered = rasterize_dct3_textures(textures, height, width, 16)
+                    if not self.cfg.textured_rgb and self.cfg.textured_alpha:
+                        rendered = torch.cat(
+                            [
+                                torch.zeros_like(rendered),
+                                torch.zeros_like(rendered),
+                                torch.zeros_like(rendered),
+                                rendered,
+                            ],
+                            dim=-1,
+                        )
+                    elif self.cfg.textured_rgb and not self.cfg.textured_alpha:
+                        rendered = torch.cat(
+                            [rendered, torch.ones_like(rendered[..., 0])], dim=-1
+                        )
 
-                if texture_height >= height and texture_width >= width:
-                    textures = F.interpolate(
-                        textures, size=(height, width), mode="nearest"
-                    )
-                else:
-                    textures = F.interpolate(
-                        textures,
-                        size=(height, width),
-                        mode="bilinear",
-                        align_corners=False,
-                    )
-                return textures.permute(0, 2, 3, 1)  # [N, H, W, 4]
-            case "dtgs":
-                if self.cfg.app_opt:
-                    colors = self.splats["colors"]
-                    colors = torch.sigmoid(colors)
-                    colors = colors.unsqueeze(-1).unsqueeze(-1)  # [N, 4, 1, 1]
-                else:
-                    colors = self.splats["sh0"].squeeze(1)
-                    colors = torch.cat(
-                        [
-                            colors,
-                            torch.zeros(colors.shape[0], 1, device=colors.get_device()),
-                        ],
-                        dim=1,
-                    )
-                    colors = colors.unsqueeze(-1).unsqueeze(-1)  # [N, 4, 1, 1]
-
-                textures = self.get_textures()  # [N, H, W, 4]
-                rendered = rasterize_dct_textures(textures, height, width, 16)
-
-                rendered = rendered.permute(0, 3, 1, 2)  # [N, 4, H, W]
-                if self.cfg.textured_rgb and self.cfg.textured_alpha:
-                    rendered += colors
-                elif self.cfg.textured_rgb:
-                    rendered += colors[:, :3, :, :]
-                elif self.cfg.textured_alpha:
-                    rendered += colors[:, 3:, :, :]
-                return rendered.permute(0, 2, 3, 1)  # [N, H, W, 4]
+                    rendered = rendered.permute(0, 3, 1, 2)  # [N, 4, H, W]
+                    if self.cfg.textured_rgb and self.cfg.textured_alpha:
+                        rendered += colors
+                    elif self.cfg.textured_rgb:
+                        rendered += colors[:, :3, :, :]
+                    elif self.cfg.textured_alpha:
+                        rendered += colors[:, 3:, :, :]
+                    return rendered.permute(0, 2, 3, 1)  # [N, H, W, 4]
             case "itgs":
                 match self.cfg.texture_input_type:
                     case "gaussian":
@@ -688,11 +726,11 @@ class Runner:
                 opt = self.optimizers["textures"]
                 opt.param_groups[0]["params"] = [self.splats["textures"]]
                 opt.state.clear()
-            case "dtgs":
-                print("DCT texture resizing is not yet supported.")
 
     @torch.no_grad()
-    def render_textures_video(self, width: int, height: int, step: int):
+    def render_textures_video(
+        self, rendered: torch.Tensor, width: int, height: int, step: int
+    ):
         """Render all Gaussian textures into a video (RGB only).
 
         Args:
@@ -704,7 +742,6 @@ class Runner:
             "tgs",
             "tss",
             "tgss",
-            "dtgs",
             "itgs",
         ):
             print("No textures to render for model type:", self.model_type)
@@ -718,48 +755,16 @@ class Runner:
         writer = imageio.get_writer(video_path, fps=30)
 
         if self.model_type in ("tgs", "tss", "tgss"):
-            all_textures = self.get_textures()  # [N, L, L, 4]
-            if not self.cfg.textured_rgb and self.cfg.textured_alpha:
-                all_textures = torch.cat(
-                    [
-                        torch.ones_like(all_textures),
-                        torch.ones_like(all_textures),
-                        torch.ones_like(all_textures),
-                        all_textures,
-                    ],
-                    dim=-1,
-                )
-            if self.cfg.textured_rgb and not self.cfg.textured_alpha:
-                all_textures = torch.cat(
-                    [all_textures, torch.ones_like(all_textures[..., 0])], dim=-1
-                )
+            all_textures = rendered
 
             batch_size = 4096
             for start in tqdm.trange(0, N, batch_size, desc="Rendering texture video"):
                 end = min(start + batch_size, N)
-                batch = all_textures[start:end].permute(0, 3, 1, 2)  # [B, 4, L, L]
-                batch = F.interpolate(
-                    batch, size=(height, width), mode="bilinear", align_corners=False
-                )
-                batch = batch.permute(0, 2, 3, 1)  # [B, H, W, 4]
+                batch = all_textures[start:end]
                 for j in range(end - start):
                     frame = (batch[j, :, :, :3].clamp(0, 1).cpu().numpy() * 255).astype(
                         np.uint8
                     )
-                    writer.append_data(frame)
-        elif self.model_type == "dtgs":
-            all_textures = self.get_textures()  # [N, L, L, 4]
-            batch_size = 4096
-            for start in tqdm.trange(0, N, batch_size, desc="Rendering texture video"):
-                end = min(start + batch_size, N)
-                batch = all_textures[start:end]  # [B, L, L, 4]
-                rendered = rasterize_dct_textures(
-                    batch, height, width, 16
-                )  # [B, H, W, 4]
-                for j in range(end - start):
-                    frame = (
-                        rendered[j, :, :, :3].clamp(0, 1).cpu().numpy() * 255
-                    ).astype(np.uint8)
                     writer.append_data(frame)
         elif self.model_type == "itgs":
             match self.cfg.texture_input_type:
@@ -799,7 +804,9 @@ class Runner:
         print(f"Texture video saved to {video_path}")
 
     @torch.no_grad()
-    def save_texture_images(self, width: int, height: int, step: int):
+    def save_texture_images(
+        self, rendered: torch.Tensor, width: int, height: int, step: int
+    ):
         """Save each Gaussian's texture as an individual image.
 
         Args:
@@ -811,7 +818,6 @@ class Runner:
             "tgs",
             "tss",
             "tgss",
-            "dtgs",
             "itgs",
         ):
             return
@@ -821,7 +827,7 @@ class Runner:
         texture_zip = f"{self.cfg.result_dir}/textures{width}x{height}/step_{step}.zip"
         os.makedirs(os.path.dirname(texture_zip), exist_ok=True)
 
-        textures = self.render_textures(width, height)  # [N, H, W, 4]
+        textures = rendered  # [N, H, W, 4]
         if textures is None:
             return
 
@@ -1160,50 +1166,6 @@ class Runner:
                     scales=scales,
                     opacities=opacities,
                     steepnesses=steepnesses,
-                    colors=colors,
-                    textures=textures,
-                    viewmats=torch.linalg.inv(camtoworlds),  # [C, 4, 4]
-                    Ks=Ks,  # [C, 3, 3]
-                    width=width,
-                    height=height,
-                    packed=self.cfg.packed,
-                    absgrad=self.cfg.absgrad,
-                    sparse_grad=self.cfg.sparse_grad,
-                    norm_rot_grad=self.cfg.norm_rot_grad,
-                    **kwargs,
-                )
-            case "dtgs":
-                remove_from_kwargs(
-                    kwargs,
-                    {
-                        "num_texture_samples",
-                        "sample_alpha_threshold",
-                        "filtering",
-                        "texture_batch_size",
-                        "texture_grad_method",
-                        "texture_input_type",
-                        "coord_center",
-                        "coord_scale",
-                        "s_weight",
-                        "g_weight",
-                    },
-                )
-                textures = self.get_textures()
-                (
-                    render_colors,
-                    render_alphas,
-                    render_normals,
-                    normals_from_depth,
-                    render_distort,
-                    render_median,
-                    _,
-                    _,
-                    info,
-                ) = rasterization_dct_textured_gaussians(
-                    means=means,
-                    quats=quats,
-                    scales=scales,
-                    opacities=opacities,
                     colors=colors,
                     textures=textures,
                     viewmats=torch.linalg.inv(camtoworlds),  # [C, 4, 4]
@@ -1605,7 +1567,11 @@ class Runner:
                 steepness_loss = self.steepness_loss(scales, steepnesses)
                 loss += steepness_loss * curr_steepness_lambda
 
-            if cfg.freq_loss and cfg.model_type == "dtgs":
+            if (
+                cfg.freq_loss
+                and cfg.model_type == "tgs"
+                and cfg.filtering in ("dct", "dct_bwd2")
+            ):
                 textures = self.splats["textures"]  # [N, L_y, L_x, 4]
                 L_y, L_x = textures.shape[1], textures.shape[2]
                 freq_i = torch.arange(L_x, device=textures.device, dtype=textures.dtype)
@@ -1705,7 +1671,11 @@ class Runner:
                 desc += f"tex opac loss={tex_opac_loss.item():.6f}| "
             if cfg.steepness_loss and step > cfg.steepness_loss_start_iter:
                 desc += f"steepness loss={steepness_loss.item():.6f}| "
-            if cfg.freq_loss and cfg.model_type == "dtgs":
+            if (
+                cfg.freq_loss
+                and cfg.model_type == "tgs"
+                and cfg.filtering in ("dct", "dct_bwd2")
+            ):
                 desc += f"freq loss={freqloss.item():.6f}| "
             if use_freq_guidance:
                 desc += f"freq guidance={freq_guidance_loss.item():.6f}| "
@@ -1745,7 +1715,11 @@ class Runner:
                     self.writer.add_scalar(
                         "train/steepness_loss", steepness_loss.item(), step
                     )
-                if cfg.freq_loss and cfg.model_type == "dtgs":
+                if (
+                    cfg.freq_loss
+                    and cfg.model_type == "tgs"
+                    and cfg.filtering in ("dct", "dct_bwd2")
+                ):
                     self.writer.add_scalar("train/freqloss", freqloss.item(), step)
                 if use_freq_guidance:
                     self.writer.add_scalar(
@@ -1946,12 +1920,17 @@ class Runner:
                 self.render_traj(step)
 
             if step + 1 in cfg.render_texture_steps or step + 1 == max_steps:
+                rendered = self.render_textures(
+                    width=cfg.saved_texture_width, height=cfg.saved_texture_height
+                )
                 self.render_textures_video(
+                    rendered,
                     width=cfg.saved_texture_width,
                     height=cfg.saved_texture_height,
                     step=step,
                 )
                 self.save_texture_images(
+                    rendered,
                     width=cfg.saved_texture_width,
                     height=cfg.saved_texture_height,
                     step=step,
@@ -2421,12 +2400,17 @@ def main(cfg: Config):
             runner.gaussian_factor = ckpt["gaussian_factor"]
         runner.eval(step=ckpt["step"])
         runner.render_traj(step=ckpt["step"])
+        rendered = runner.render_textures(
+            width=cfg.saved_texture_width, height=cfg.saved_texture_height
+        )
         runner.render_textures_video(
+            rendered,
             width=cfg.saved_texture_width,
             height=cfg.saved_texture_height,
             step=ckpt["step"],
         )
         runner.save_texture_images(
+            rendered,
             width=cfg.saved_texture_width,
             height=cfg.saved_texture_height,
             step=ckpt["step"],

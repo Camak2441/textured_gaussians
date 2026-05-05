@@ -206,7 +206,7 @@ def process_config(cfg: Config):
 
     if cfg.texture_range == None:
         match cfg.model_type:
-            case "tgs" | "dtgs":
+            case "tgs":
                 cfg.texture_range = 3.0
             case "tss" | "tgss":
                 cfg.texture_range = 1.5
@@ -325,7 +325,12 @@ def process_config(cfg: Config):
                     or cfg.model_type == "tgss"
                 ):
                     args.append(f"sw{cfg.sigmoid_factor}")
-                default_t = {"dct": 16, "dct_b2": 16}.get(cfg.filtering, 64)
+                default_t = {
+                    "dct": 16,
+                    "dct_bwd2": 16,
+                    "dct3": 16,
+                    "dct3_bwd2": 16,
+                }.get(cfg.filtering, 64)
                 if cfg.texture_width != default_t or cfg.texture_height != default_t:
                     if cfg.texture_width == cfg.texture_height:
                         args.append(f"t{cfg.texture_width}")
@@ -340,12 +345,16 @@ def process_config(cfg: Config):
                         args.append(f"tr{display_trw}")
                     else:
                         args.append(f"tr{display_trw}x{display_trh}")
-                if cfg.textured_rgb_clamp != "clamp":
-                    args.append(f"rgb{cfg.textured_rgb_clamp}")
-                if cfg.textured_alpha_clamp != "normalize":
-                    args.append(f"a{cfg.textured_alpha_clamp}")
-                if cfg.freeze_geometry != None:
-                    args.append(f"to{cfg.freeze_geometry}")
+                if cfg.filtering in ("dct", "dct_bwd2", "dct3", "dct3_bwd2"):
+                    cfg.textured_rgb_clamp = "none"
+                    cfg.textured_alpha_clamp = "none"
+                else:
+                    if cfg.textured_rgb_clamp != "clamp":
+                        args.append(f"rgb{cfg.textured_rgb_clamp}")
+                    if cfg.textured_alpha_clamp != "normalize":
+                        args.append(f"a{cfg.textured_alpha_clamp}")
+                    if cfg.freeze_geometry != None:
+                        args.append(f"to{cfg.freeze_geometry}")
                 path_prefixes = {
                     "mipmapped": "mip_",
                     "mipmapped2": "mip2_",
@@ -354,6 +363,8 @@ def process_config(cfg: Config):
                     "anisotropic_bilinear2": "aniso_bilinear2_",
                     "dct": "d",
                     "dct_bwd2": "d",
+                    "dct3": "d",
+                    "dct3_bwd2": "d",
                 }
                 path_suffixes = {
                     "bilinear": "",
@@ -364,6 +375,8 @@ def process_config(cfg: Config):
                     "bilinear4": "4",
                     "bilinear4_bwd2": "4_b2",
                     "dct_bwd2": "_b2",
+                    "dct3_bwd2": "3",
+                    "dct3_bwd2": "3_b2",
                 }
                 if cfg.filtering in path_prefixes or cfg.filtering in path_suffixes:
                     args_suffix = create_args_suffix()
@@ -390,21 +403,6 @@ def process_config(cfg: Config):
                     cfg.result_dir = (
                         f"{_RESULTS_DIR}/itgs{args_suffix}/{scene_args["result_dir"]}"
                     )
-
-            case "dtgs":
-                if cfg.texture_width != 16 or cfg.texture_height != 16:
-                    if cfg.texture_width == cfg.texture_height:
-                        args.append(f"t{cfg.texture_width}")
-                    else:
-                        args.append(f"t{cfg.texture_width}x{cfg.texture_height}")
-                if cfg.freeze_geometry != None:
-                    args.append(f"to{cfg.freeze_geometry}")
-
-                args_suffix = create_args_suffix()
-                if cfg.result_dir is None:
-                    cfg.result_dir = f"{_RESULTS_DIR}/{cfg.model_type}{args_suffix}/{scene_args["result_dir"]}"
-                cfg.textured_rgb_clamp = "none"
-                cfg.textured_alpha_clamp = "none"
 
             case "2dgss":
                 args.append(f"sw{cfg.sigmoid_factor}")

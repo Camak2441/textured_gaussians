@@ -171,9 +171,20 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
         "rasterize_to_pixels_bwd_dct_textured_gaussians",
         &gsplat::rasterize_to_pixels_bwd_dct_textured_gaussians_tensor);
 
+    // DCT Textured Gaussians
+    m.def(
+        "rasterize_to_pixels_fwd_dct3_textured_gaussians",
+        &gsplat::rasterize_to_pixels_fwd_dct3_textured_gaussians_tensor);
+    m.def(
+        "rasterize_to_pixels_bwd_dct3_textured_gaussians",
+        &gsplat::rasterize_to_pixels_bwd_dct3_textured_gaussians_tensor);
+
     m.def(
         "rasterize_dct_textures",
         &gsplat::rasterize_dct_textures_tensor);
+    m.def(
+        "rasterize_dct3_textures",
+        &gsplat::rasterize_dct3_textures_tensor);
 
     m.def(
         "generate_mipmap_fwd",

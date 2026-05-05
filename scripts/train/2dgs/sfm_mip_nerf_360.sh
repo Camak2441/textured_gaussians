@@ -1,9 +1,1 @@
-bash train/2dgs/sfm.sh bicycle
-bash train/2dgs/sfm.sh bonsai
-bash train/2dgs/sfm.sh counter
-bash train/2dgs/sfm.sh flowers
-bash train/2dgs/sfm.sh garden
-bash train/2dgs/sfm.sh kitchen
-bash train/2dgs/sfm.sh room
-bash train/2dgs/sfm.sh stump
-bash train/2dgs/sfm.sh treehill
+bash train/run_mip_nerf_360.sh "train/2dgs/sfm.sh"

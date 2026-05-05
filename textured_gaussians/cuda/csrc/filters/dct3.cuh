@@ -221,7 +221,7 @@ namespace gsplat::dct3
                 duivj = ducos[i] * vj;
                 uidvj = ucos[i] * dvj;
                 const T v_tex_k = v_ck;
-                const T tex_val = textures[g][j][i][k];
+                const T tex_val = textures[g][index][k];
                 v_s_tex->x += duivj * tex_val * v_tex_k;
                 v_s_tex->y += uidvj * tex_val * v_tex_k;
                 index++;
@@ -262,7 +262,7 @@ namespace gsplat::dct3
                 for (int k = 0; k < COLOR_DIM; ++k)
                 {
                     const T v_tex_k = fac * v_render_c[k];
-                    const T tex_val = textures[g][j][i][k];
+                    const T tex_val = textures[g][index][k];
                     v_s_tex->x += duivj * tex_val * v_tex_k;
                     v_s_tex->y += uidvj * tex_val * v_tex_k;
                 }

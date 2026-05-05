@@ -1,9 +1,1 @@
-bash train/2dgss/o.sh bicycle
-bash train/2dgss/o.sh bonsai
-bash train/2dgss/o.sh counter
-bash train/2dgss/o.sh flowers
-bash train/2dgss/o.sh garden
-bash train/2dgss/o.sh kitchen
-bash train/2dgss/o.sh room
-bash train/2dgss/o.sh stump
-bash train/2dgss/o.sh treehill
+bash train/run_mip_nerf_360.sh "train/2dgss/o.sh"

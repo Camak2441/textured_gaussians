@@ -20,6 +20,8 @@ type Filtering = Literal[
     "anisotropic_bilinear2",
     "dct",
     "dct_bwd2",
+    "dct3",
+    "dct3_bwd2",
 ]
 type TextureGrads = Literal["dev", "cpu", "checkpoint"]
 type TextureInputType = Literal["gaussian", "world", "world_and_view"]
@@ -40,6 +42,8 @@ FILTER_TEXTURE_DIMS: dict[Filtering, int] = {
     "anisotropic_bilinear2": 4,
     "dct": 4,
     "dct_bwd2": 4,
+    "dct3": 3,
+    "dct3_bwd2": 3,
 }
 
 
