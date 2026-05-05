@@ -104,15 +104,11 @@ def initialise_textures(cfg: Config, textures: torch.Tensor):
     elif cfg.filtering in ("dct", "dct_bwd2"):
         textures[...] = 0.1  # init to having no frequencies
         alpha_channel = 3 if cfg.textured_rgb else 0
-        textures[..., 0, 0, alpha_channel] = (
-            cfg.texture_height * cfg.texture_width
-        )  # init alpha to flat opaque
+        textures[..., 0, 0, alpha_channel] = 1.0  # init alpha to flat opaque
     elif cfg.filtering in ("dct3", "dct3_bwd2"):
         textures[...] = 0.1  # init to having no frequencies
         alpha_channel = 3 if cfg.textured_rgb else 0
-        textures[..., 0, alpha_channel] = (
-            cfg.texture_height * cfg.texture_width
-        )  # init alpha to flat opaque
+        textures[..., 0, alpha_channel] = 1.0  # init alpha to flat opaque
 
 
 def create_splats_with_optimizers(
@@ -762,9 +758,21 @@ class Runner:
                 end = min(start + batch_size, N)
                 batch = all_textures[start:end]
                 for j in range(end - start):
-                    frame = (batch[j, :, :, :3].clamp(0, 1).cpu().numpy() * 255).astype(
-                        np.uint8
-                    )
+                    t = batch[j].clamp(0, 1).cpu()
+                    if self.cfg.textured_rgb and self.cfg.textured_alpha:
+                        rgb = t[..., :3]
+                        alpha = t[..., 3:4]
+                        frame = ((rgb * alpha + (1 - alpha)).numpy() * 255).astype(
+                            np.uint8
+                        )
+                    elif self.cfg.textured_rgb:
+                        frame = (t[..., :3].numpy() * 255).astype(np.uint8)
+                    elif self.cfg.textured_alpha:
+                        frame = (t[..., 3:4].expand(-1, -1, 3).numpy() * 255).astype(
+                            np.uint8
+                        )
+                    else:
+                        frame = np.zeros((height, width, 3), dtype=np.uint8)
                     writer.append_data(frame)
         elif self.model_type == "itgs":
             match self.cfg.texture_input_type:
@@ -795,9 +803,12 @@ class Runner:
                             B, height, width, 4
                         )
                         for j in range(B):
-                            frame = (
-                                outputs[j, :, :, :3].clamp(0, 1).cpu().numpy() * 255
-                            ).astype(np.uint8)
+                            t = outputs[j].clamp(0, 1).cpu()
+                            rgb = t[..., :3]
+                            alpha = t[..., 3:4]
+                            frame = ((rgb * alpha + (1 - alpha)).numpy() * 255).astype(
+                                np.uint8
+                            )
                             writer.append_data(frame)
 
         writer.close()
@@ -834,9 +845,21 @@ class Runner:
         N = textures.shape[0]
         with zipfile.ZipFile(texture_zip, "w", compression=zipfile.ZIP_STORED) as zf:
             for i in tqdm.trange(N, desc="Saving texture images"):
-                rgba = (textures[i].clamp(0, 1).cpu().numpy() * 255).astype(np.uint8)
+                t = textures[i].clamp(0, 1).cpu()
+                if self.model_type == "itgs":
+                    img = (t.numpy() * 255).astype(np.uint8)  # RGBA from model
+                elif self.cfg.textured_rgb and self.cfg.textured_alpha:
+                    img = (t.numpy() * 255).astype(np.uint8)  # RGBA
+                elif self.cfg.textured_rgb:
+                    img = (t[..., :3].numpy() * 255).astype(np.uint8)  # RGB
+                elif self.cfg.textured_alpha:
+                    img = (t[..., 3:4].expand(-1, -1, 3).numpy() * 255).astype(
+                        np.uint8
+                    )  # alpha as grayscale
+                else:
+                    img = np.zeros((t.shape[0], t.shape[1], 3), dtype=np.uint8)
                 buf = io.BytesIO()
-                imageio.imwrite(buf, rgba, format="png")
+                imageio.imwrite(buf, img, format="png")
                 zf.writestr(f"{i:06d}.png", buf.getvalue())
 
         print(f"Saved {N} texture images to {texture_zip}")

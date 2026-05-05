@@ -353,8 +353,8 @@ def process_config(cfg: Config):
                         args.append(f"rgb{cfg.textured_rgb_clamp}")
                     if cfg.textured_alpha_clamp != "normalize":
                         args.append(f"a{cfg.textured_alpha_clamp}")
-                    if cfg.freeze_geometry != None:
-                        args.append(f"to{cfg.freeze_geometry}")
+                if cfg.freeze_geometry != None:
+                    args.append(f"to{cfg.freeze_geometry}")
                 path_prefixes = {
                     "mipmapped": "mip_",
                     "mipmapped2": "mip2_",
@@ -375,7 +375,7 @@ def process_config(cfg: Config):
                     "bilinear4": "4",
                     "bilinear4_bwd2": "4_b2",
                     "dct_bwd2": "_b2",
-                    "dct3_bwd2": "3",
+                    "dct3": "3",
                     "dct3_bwd2": "3_b2",
                 }
                 if cfg.filtering in path_prefixes or cfg.filtering in path_suffixes:
