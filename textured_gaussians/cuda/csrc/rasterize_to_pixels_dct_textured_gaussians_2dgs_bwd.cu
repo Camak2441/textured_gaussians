@@ -146,6 +146,8 @@ namespace gsplat
          * Memory Allocation
          * Memory is laid out as:
          * | pix_x : pix_y : opac | u_M : v_M : w_M | rgb : normal |
+         * ucos/vcos/ducos/dvcos are stored column-major: [coefficient][thread]
+         * so all threads reading coefficient i simultaneously hit consecutive banks.
          * ==============================
          */
 
@@ -161,11 +163,12 @@ namespace gsplat
         S *rgbs_batch = (S *)&w_Ms_batch[block_size];           // [block_size * COLOR_DIM]
         S *normals_batch = &rgbs_batch[block_size * COLOR_DIM]; // [block_size * 3]
 
-        S *ucos = (S *)(&normals_batch[block_size * 3]);
-        S *vcos = (S *)(&ucos[block_size * texture_res_x]);
-
-        S *ducos = (S *)(&vcos[block_size * texture_res_y]);
-        S *dvcos = (S *)(&ducos[block_size * texture_res_x]);
+        // Column-major layout: ucos[i * block_size + tr] — no bank conflicts when all
+        // warp threads read the same coefficient index i in the warp-reduction loops.
+        S *ucos  = (S *)(&normals_batch[block_size * 3]);        // [texture_res_x * block_size]
+        S *vcos  = (S *)(&ucos[block_size * texture_res_x]);     // [texture_res_y * block_size]
+        S *ducos = (S *)(&vcos[block_size * texture_res_y]);     // [texture_res_x * block_size]
+        S *dvcos = (S *)(&ducos[block_size * texture_res_x]);    // [texture_res_y * block_size]
 
         // this is the T AFTER the last gaussian in this pixel
         S T_final = S(1) - render_alphas[pix_id];
@@ -230,10 +233,11 @@ namespace gsplat
         // each thread loads one gaussian at a time before rasterizing
         const uint32_t tr = block.thread_rank();
 
-        ucos += tr * texture_res_x;
-        vcos += tr * texture_res_y;
-        ducos += tr * texture_res_x;
-        dvcos += tr * texture_res_y;
+        // Per-thread column-major offset: coefficient i lives at ucos[i * block_size + tr]
+        ucos  += tr;
+        vcos  += tr;
+        ducos += tr;
+        dvcos += tr;
 
         cg::thread_block_tile<32> warp = cg::tiled_partition<32>(block);
 
@@ -385,11 +389,12 @@ namespace gsplat
                     // computer alpha scaling factor
                     if (valid_texture > 0)
                     {
-                        dct::grad_precompute(texture_res_x, texture_res_y, u, v, ucos, vcos, ducos, dvcos);
+                        // Write ucos/vcos/ducos/dvcos with column-major stride = block_size
+                        dct::grad_precompute(texture_res_x, texture_res_y, u, v, ucos, vcos, ducos, dvcos, block_size, block_size);
                         if (texture_alpha)
                         {
                             alpha_scaling_factor = S(0);
-                            alpha_scaling_factor = min(max(S(0), dct::sample(textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, alpha_channel)), S(1));
+                            alpha_scaling_factor = min(max(S(0), dct::sample(textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, alpha_channel, block_size, block_size)), S(1));
                         }
                         else
                         {
@@ -456,40 +461,36 @@ namespace gsplat
                 // opacity gradients
                 S v_opacity_local = S(0);
 
-                // initialize everything to 0, only set if the lane is valid
                 /**
                  * ==================================================
-                 * Calculating Derivatives w.r.t current primitive / gaussian
+                 * Hoisted variables shared across Part A, the warp passes, and Part B
+                 * ==================================================
+                 */
+                S tex_colors[COLOR_DIM] = {S(0)};  // sampled texture color contribution
+                vec2<S> v_s_tex = {S(0), S(0)};    // UV gradient from texture lookup
+                S deltas[COLOR_DIM] = {S(0)};       // fac * v_render_c[k]
+                S ra = S(0), fac = S(0);
+                bool clip = false;
+                S v_asf = S(0);                     // vis * opac * v_alpha, for alpha texture grad
+
+                /**
+                 * ==================================================
+                 * Part A: transmittance update and per-channel deltas
                  * ==================================================
                  */
                 if (valid)
                 {
-
                     // gradient contribution from median depth
                     if (batch_end - t == median_idx)
                     {
-                        // v_median is a special gradient input from forward pass
-                        // not yet clear what this is for
                         v_rgb_local[COLOR_DIM - 1] += v_median;
                     }
 
-                    /**
-                     * d(img)/d(rgb) and d(img)/d(alpha)
-                     */
-
-                    // compute the current T for this gaussian
-                    // since the output T = coprod (1 - alpha_i), we have T_(i-1) = T_i * 1/(1 - alpha_(i-1))
-                    // potential numerical stability issue if alpha -> 1
-                    S ra = S(1) / (S(1) - alpha);
+                    ra = S(1) / (S(1) - alpha);
                     T *= ra;
 
-                    // update v_rgb for this gaussian
-                    // because the weight is computed as: c_i (a_i G_i) * T : T = prod{1, i-1}(1 - a_j G_j)
-                    // we have d(img)/d(c_i) = (a_i G_i) * T
-                    // where alpha_i is a_i * G_i
-                    const S fac = alpha * T;
-                    S tex_colors[COLOR_DIM] = {S(0)};
-                    S deltas[COLOR_DIM];
+                    fac = alpha * T;
+                    clip = (opac * vis * alpha_scaling_factor <= S(0.999));
 
                     GSPLAT_PRAGMA_UNROLL
                     for (uint32_t k = 0; k < COLOR_DIM; ++k)
@@ -497,26 +498,78 @@ namespace gsplat
                         deltas[k] = fac * v_render_c[k];
                         v_rgb_local[k] += deltas[k];
                     }
+                }
 
-                    if (texture_color && valid_texture > 0)
+                /**
+                 * ==================================================
+                 * PASS 1 (warp-level): color texture
+                 *
+                 * All 32 threads in the warp iterate the same (tj, ti, tk) indices.
+                 * Invalid/out-of-texture threads contribute 0 via do_tex guard.
+                 * ucos/vcos are read with stride = block_size (column-major).
+                 * Each per-coefficient gradient is warp-reduced before one atomic write.
+                 * ==================================================
+                 */
+                if (texture_color)
+                {
+                    const bool do_tex = valid && (valid_texture > 0);
+                    for (uint32_t tj = 0; tj < texture_res_y; ++tj)
                     {
-                        dct::color_sample_and_update<COLOR_DIM, S>(textures, v_textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, tex_colors, deltas);
-                    }
+                        S vj = S(0), dvj = S(0);
+                        if (do_tex)
+                        {
+                            vj = vcos[tj * block_size];
+                            if (texture_gradients) dvj = dvcos[tj * block_size];
+                        }
+                        for (uint32_t ti = 0; ti < texture_res_x; ++ti)
+                        {
+                            S ui = S(0), dui = S(0);
+                            if (do_tex)
+                            {
+                                ui = ucos[ti * block_size];
+                                if (texture_gradients) dui = ducos[ti * block_size];
+                            }
+                            const S uivj  = ui * vj;
+                            const S duivj = dui * vj;
+                            const S uidvj = ui * dvj;
+                            GSPLAT_PRAGMA_UNROLL
+                            for (uint32_t tk = 0; tk < COLOR_DIM; ++tk)
+                            {
+                                const S c = textures[g][tj][ti][tk];
+                                if (do_tex) tex_colors[tk] += c * uivj;
 
+                                // warp-level reduction: 32 → 1 atomic per coefficient
+                                const S per_pix = do_tex ? deltas[tk] * uivj : S(0);
+                                const S wsum    = cg::reduce(warp, per_pix, cg::plus<S>());
+                                if (warp.thread_rank() == 0)
+                                    gpuAtomicAdd(&v_textures[g][tj][ti][tk], wsum);
+
+                                if (do_tex && texture_gradients)
+                                {
+                                    v_s_tex.x += duivj * c * deltas[tk];
+                                    v_s_tex.y += uidvj * c * deltas[tk];
+                                }
+                            }
+                        }
+                    }
+                }
+
+                /**
+                 * ==================================================
+                 * Part B: v_alpha, normal/alpha/distortion contributions,
+                 *         2DGS geometry gradients, buffer updates
+                 * ==================================================
+                 */
+                if (valid)
+                {
                     // contribution from this pixel to alpha
-                    // we have d(alpha)/d(c_i) = c_i * G_i * T + [grad contribution from following gaussians in T term]
-                    // this can be proven by symbolic differentiation of a_i with respect to c_out
                     S v_alpha = S(0);
                     for (uint32_t k = 0; k < COLOR_DIM; ++k)
                     {
-                        auto base_color = rgbs_batch[t * COLOR_DIM + k];
-                        auto full_color = tex_colors[k] + base_color;
+                        const S base_color = rgbs_batch[t * COLOR_DIM + k];
+                        const S full_color = tex_colors[k] + base_color;
                         v_alpha += (full_color * T - buffer[k] * ra) * v_render_c[k];
                     }
-
-                    /*
-                     * d(normal_out) / d(rgb) and d(normal_out) / d(alpha)
-                     */
 
                     // update v_normal for this gaussian
                     GSPLAT_PRAGMA_UNROLL
@@ -530,14 +583,8 @@ namespace gsplat
                         v_alpha += (normals_batch[t * 3 + k] * T - buffer_normals[k] * ra) * v_render_n[k];
                     }
 
-                    /*
-                     * d(alpha_out) / d(alpha)
-                     */
                     v_alpha += T_final * ra * v_render_a;
 
-                    // adjust the alpha gradients by background color
-                    // this prevents the background rendered in the fwd pass being considered as inaccuracies in primitives
-                    // this allows us to swtich background colors to prevent overfitting to particular backgrounds i.e. black
                     if (backgrounds != nullptr)
                     {
                         S accum = S(0);
@@ -549,47 +596,37 @@ namespace gsplat
                         v_alpha += -T_final * ra * accum;
                     }
 
-                    // contribution from distortion
                     if (v_render_distort != nullptr)
                     {
-                        // last channel of colors is depth
                         S depth = rgbs_batch[t * COLOR_DIM + COLOR_DIM - 1];
                         S dl_dw =
                             S(2) *
                             (S(2) * (depth * accum_w_buffer - accum_d_buffer) +
                              (accum_d - depth * accum_w));
-                        // df / d(alpha)
                         v_alpha += (dl_dw * T - distort_buffer * ra) * v_distort;
                         accum_d_buffer -= fac * depth;
                         accum_w_buffer -= fac;
                         distort_buffer += dl_dw * fac;
-                        // df / d(depth). put it in the last channel of v_rgb
                         v_rgb_local[COLOR_DIM - 1] +=
                             S(2) * fac * (S(2) - S(2) * T - accum_w + fac) *
                             v_distort;
                     }
 
                     /** ==================================================
-                     * 2DGS backward pass: compute gradients of d_out / d_G_i and d_G_i w.r.t geometry parameters
+                     * 2DGS backward pass
                      * ==================================================
                      */
-                    if (opac * vis * alpha_scaling_factor <= S(0.999))
+                    if (clip)
                     {
                         S v_depth = S(0);
-                        // d(a_i * G_i) / d(G_i) = a_i
                         const S v_G = opac * v_alpha * alpha_scaling_factor;
 
-                        // case 1: in the forward pass, the proper ray-primitive intersection is used
                         if (gauss_weight_3d <= gauss_weight_2d)
                         {
-
-                            // derivative of G_i w.r.t. ray-primitive intersection uv coordinates
                             const vec2<S> v_s = {
                                 v_G * -gaussian_kernel * s.x + v_depth * w_M.x,
                                 v_G * -gaussian_kernel * s.y + v_depth * w_M.y};
 
-                            // backward through the projective transform
-                            // @see rasterize_to_pixels_2dgs_fwd.cu to understand what is going on here
                             const vec3<S> v_z_w_M = {s.x, s.y, S(1)};
                             const S v_sx_pz = v_s.x / ray_cross.z;
                             const S v_sy_pz = v_s.y / ray_cross.z;
@@ -598,19 +635,15 @@ namespace gsplat
                             const vec3<S> v_h_u = glm::cross(h_v, v_ray_cross);
                             const vec3<S> v_h_v = glm::cross(v_ray_cross, h_u);
 
-                            // derivative of ray-primitive intersection uv coordinates w.r.t. transformation (geometry) coefficients
                             v_u_M_local = {-v_h_u.x, -v_h_u.y, -v_h_u.z};
                             v_v_M_local = {-v_h_v.x, -v_h_v.y, -v_h_v.z};
                             v_w_M_local = {
                                 px * v_h_u.x + py * v_h_v.x + v_depth * v_z_w_M.x,
                                 px * v_h_u.y + py * v_h_v.y + v_depth * v_z_w_M.y,
                                 px * v_h_u.z + py * v_h_v.z + v_depth * v_z_w_M.z};
-
-                            // case 2: in the forward pass, the 2D gaussian projected gaussian weight is used
                         }
                         else
                         {
-                            // computing the derivative of G_i w.r.t. 2d projected gaussian parameters (trivial)
                             const S v_G_ddelx = -gaussian_kernel * FILTER_INV_SQUARE * d.x;
                             const S v_G_ddely = -gaussian_kernel * FILTER_INV_SQUARE * d.y;
                             v_xy_local = {v_G * v_G_ddelx, v_G * v_G_ddely};
@@ -622,85 +655,102 @@ namespace gsplat
                         }
                         v_opacity_local = vis * v_alpha * alpha_scaling_factor;
 
-                        // update alpha scaling factor gradients
+                        // Store for PASS 2 (alpha texture gradient)
                         if (texture_alpha && valid_texture > 0)
                         {
-                            dct::update(v_textures, texture_res_x, texture_res_y, g, u, v, ucos, vcos, alpha_channel, vis * opac * v_alpha);
+                            v_asf = vis * opac * v_alpha;
                         }
                     }
 
-                    /**
-                     * Gradient of loss w.r.t. UV coordinates (s) from texture lookup.
-                     * Changing s shifts the bilinear sample point, changing both tex_colors and alpha_scaling_factor.
-                     * This propagates through the projective transform to v_ray_transforms.
-                     */
-                    if (texture_gradients && valid_texture > 0)
-                    {
-                        // d(u)/d(s.x) and d(v)/d(s.y) from the bilinear::precompute mapping
-                        const S du_dsx = (texture_res_x - 2) / (texture_range.x * 2) / texture_res_x;
-                        const S dv_dsy = (texture_res_y - 2) / (texture_range.y * 2) / texture_res_y;
-
-                        vec2<S> v_s_tex = {S(0), S(0)};
-
-                        if (texture_color)
-                        {
-                            dct::color_sample_grad<COLOR_DIM, S>(
-                                textures, texture_res_x, texture_res_y,
-                                g, u, v,
-                                ucos, vcos, ducos, dvcos,
-                                &v_s_tex, v_render_c, fac);
-                        }
-
-                        // Contribution from texture alpha channel changing with UV (only when alpha is not clipped)
-                        if (texture_alpha && opac * vis * alpha_scaling_factor <= S(0.999))
-                        {
-                            const S v_asf = vis * opac * v_alpha;
-                            dct::sample_grad<S>(
-                                textures, texture_res_x, texture_res_y,
-                                g, u, v, // v from 0 to 1
-                                ucos, vcos, ducos, dvcos,
-                                alpha_channel, &v_s_tex, v_asf);
-                        }
-
-                        v_s_tex.x *= du_dsx;
-                        v_s_tex.y *= dv_dsy;
-
-                        // Backpropagate v_s_tex through the projective transform: s = ray_cross / ray_cross.z
-                        const S v_sx_pz = v_s_tex.x / ray_cross.z;
-                        const S v_sy_pz = v_s_tex.y / ray_cross.z;
-                        const vec3<S> v_ray_cross_tex = {
-                            v_sx_pz, v_sy_pz, -(v_sx_pz * s.x + v_sy_pz * s.y)};
-                        const vec3<S> v_h_u_tex = glm::cross(h_v, v_ray_cross_tex);
-                        const vec3<S> v_h_v_tex = glm::cross(v_ray_cross_tex, h_u);
-
-                        v_u_M_local.x += -v_h_u_tex.x;
-                        v_u_M_local.y += -v_h_u_tex.y;
-                        v_u_M_local.z += -v_h_u_tex.z;
-                        v_v_M_local.x += -v_h_v_tex.x;
-                        v_v_M_local.y += -v_h_v_tex.y;
-                        v_v_M_local.z += -v_h_v_tex.z;
-                        v_w_M_local.x += px * v_h_u_tex.x + py * v_h_v_tex.x;
-                        v_w_M_local.y += px * v_h_u_tex.y + py * v_h_v_tex.y;
-                        v_w_M_local.z += px * v_h_u_tex.z + py * v_h_v_tex.z;
-                    }
-
-                    /**
-                     * Update the cumulative "later" gaussian contributions, used in derivatives of render with respect to alphas
-                     */
+                    // Buffer updates (must come after tex_colors and fac are known)
                     GSPLAT_PRAGMA_UNROLL
                     for (uint32_t k = 0; k < COLOR_DIM; ++k)
                     {
                         buffer[k] += (tex_colors[k] + rgbs_batch[t * COLOR_DIM + k]) * fac;
                     }
 
-                    /**
-                     * Update the cumulative "later" gaussian contributions, used in derivatives of output normals w.r.t. alphas
-                     */
                     GSPLAT_PRAGMA_UNROLL
                     for (uint32_t k = 0; k < 3; ++k)
                     {
                         buffer_normals[k] += normals_batch[t * 3 + k] * fac;
                     }
+                }
+
+                /**
+                 * ==================================================
+                 * PASS 2 (warp-level): alpha texture
+                 *
+                 * Same warp-reduction pattern as PASS 1 but for the single alpha channel.
+                 * Runs after v_alpha (and therefore v_asf) has been computed.
+                 * ==================================================
+                 */
+                if (texture_alpha)
+                {
+                    const bool do_alpha = valid && clip && (valid_texture > 0);
+                    for (uint32_t tj = 0; tj < texture_res_y; ++tj)
+                    {
+                        S vj = S(0), dvj = S(0);
+                        if (do_alpha)
+                        {
+                            vj = vcos[tj * block_size];
+                            if (texture_gradients) dvj = dvcos[tj * block_size];
+                        }
+                        for (uint32_t ti = 0; ti < texture_res_x; ++ti)
+                        {
+                            S ui = S(0), dui = S(0);
+                            if (do_alpha)
+                            {
+                                ui = ucos[ti * block_size];
+                                if (texture_gradients) dui = ducos[ti * block_size];
+                            }
+                            const S uivj = ui * vj;
+
+                            const S per_pix = do_alpha ? v_asf * uivj : S(0);
+                            const S wsum    = cg::reduce(warp, per_pix, cg::plus<S>());
+                            if (warp.thread_rank() == 0)
+                                gpuAtomicAdd(&v_textures[g][tj][ti][alpha_channel], wsum);
+
+                            if (do_alpha && texture_gradients)
+                            {
+                                const S c_alpha = textures[g][tj][ti][alpha_channel];
+                                const S duivj   = dui * vj;
+                                const S uidvj   = ui * dvj;
+                                v_s_tex.x += duivj * c_alpha * v_asf;
+                                v_s_tex.y += uidvj * c_alpha * v_asf;
+                            }
+                        }
+                    }
+                }
+
+                /**
+                 * ==================================================
+                 * Projective backprop: v_s_tex → v_ray_transforms
+                 * ==================================================
+                 */
+                if (valid && texture_gradients && valid_texture > 0)
+                {
+                    const S du_dsx = (texture_res_x - 2) / (texture_range.x * 2) / texture_res_x;
+                    const S dv_dsy = (texture_res_y - 2) / (texture_range.y * 2) / texture_res_y;
+
+                    v_s_tex.x *= du_dsx;
+                    v_s_tex.y *= dv_dsy;
+
+                    const S v_sx_pz = v_s_tex.x / ray_cross.z;
+                    const S v_sy_pz = v_s_tex.y / ray_cross.z;
+                    const vec3<S> v_ray_cross_tex = {
+                        v_sx_pz, v_sy_pz, -(v_sx_pz * s.x + v_sy_pz * s.y)};
+                    const vec3<S> v_h_u_tex = glm::cross(h_v, v_ray_cross_tex);
+                    const vec3<S> v_h_v_tex = glm::cross(v_ray_cross_tex, h_u);
+
+                    v_u_M_local.x += -v_h_u_tex.x;
+                    v_u_M_local.y += -v_h_u_tex.y;
+                    v_u_M_local.z += -v_h_u_tex.z;
+                    v_v_M_local.x += -v_h_v_tex.x;
+                    v_v_M_local.y += -v_h_v_tex.y;
+                    v_v_M_local.z += -v_h_v_tex.z;
+                    v_w_M_local.x += px * v_h_u_tex.x + py * v_h_v_tex.x;
+                    v_w_M_local.y += px * v_h_u_tex.y + py * v_h_v_tex.y;
+                    v_w_M_local.z += px * v_h_u_tex.z + py * v_h_v_tex.z;
                 }
 
                 /**
