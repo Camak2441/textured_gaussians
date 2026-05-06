@@ -1,10 +1,2 @@
-transfer/_.sh tgs bicycle
-transfer/_.sh tgs bonsai
-transfer/_.sh tgs counter
-transfer/_.sh tgs flowers
-transfer/_.sh tgs garden
-transfer/_.sh tgs kitchen
-transfer/_.sh tgs room
-transfer/_.sh tgs stump
-transfer/_.sh tgs treehill
-
+bash train/run_mip_nerf_360.sh "transfer/_.sh tgs"
+bash train/run_nerf_synthetic.sh "transfer/_.sh tgs"
