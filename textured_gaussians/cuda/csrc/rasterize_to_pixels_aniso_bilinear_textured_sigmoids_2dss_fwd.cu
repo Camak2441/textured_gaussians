@@ -37,9 +37,9 @@ namespace gsplat
         const vec2<S> texture_range,                                            //
         const bool texture_color,
         const bool texture_alpha,
-        const S *__restrict__ normals,                                          // [C, N, 3] or [nnz, 3]                  // The normals in camera space.
-        const S *__restrict__ backgrounds,                                      // [C, COLOR_DIM]                         // Background colors on camera basis
-        const bool *__restrict__ masks,                                         // [C, tile_height, tile_width]            // Optional tile mask to skip rendering GS to masked tiles.
+        const S *__restrict__ normals,     // [C, N, 3] or [nnz, 3]                  // The normals in camera space.
+        const S *__restrict__ backgrounds, // [C, COLOR_DIM]                         // Background colors on camera basis
+        const bool *__restrict__ masks,    // [C, tile_height, tile_width]            // Optional tile mask to skip rendering GS to masked tiles.
         const uint32_t image_width,
         const uint32_t image_height,
         const uint32_t tile_size,
@@ -105,7 +105,7 @@ namespace gsplat
             masks += camera_id * tile_height * tile_width;
         }
 
-        const uint32_t alpha_channel = texture_color ? COLOR_DIM : 0;
+        const uint32_t alpha_channel = textures.size(-1) - 1;
 
         // find the center of the pixel
         S px = (S)j + S(0.5);

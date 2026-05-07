@@ -118,7 +118,7 @@ namespace gsplat
             return;
         }
 
-        const uint32_t alpha_channel = texture_color ? COLOR_DIM : 0;
+        const uint32_t alpha_channel = textures.size(-1) - 1;
 
         const S px = (S)j + S(0.5);
         const S py = (S)i + S(0.5);
@@ -165,10 +165,10 @@ namespace gsplat
 
         // Column-major layout: ucos[i * block_size + tr] — no bank conflicts when all
         // warp threads read the same coefficient index i in the warp-reduction loops.
-        S *ucos  = (S *)(&normals_batch[block_size * 3]);        // [texture_res_x * block_size]
-        S *vcos  = (S *)(&ucos[block_size * texture_res_x]);     // [texture_res_y * block_size]
-        S *ducos = (S *)(&vcos[block_size * texture_res_y]);     // [texture_res_x * block_size]
-        S *dvcos = (S *)(&ducos[block_size * texture_res_x]);    // [texture_res_y * block_size]
+        S *ucos = (S *)(&normals_batch[block_size * 3]);      // [texture_res_x * block_size]
+        S *vcos = (S *)(&ucos[block_size * texture_res_x]);   // [texture_res_y * block_size]
+        S *ducos = (S *)(&vcos[block_size * texture_res_y]);  // [texture_res_x * block_size]
+        S *dvcos = (S *)(&ducos[block_size * texture_res_x]); // [texture_res_y * block_size]
 
         // this is the T AFTER the last gaussian in this pixel
         S T_final = S(1) - render_alphas[pix_id];
@@ -234,8 +234,8 @@ namespace gsplat
         const uint32_t tr = block.thread_rank();
 
         // Per-thread column-major offset: coefficient i lives at ucos[i * block_size + tr]
-        ucos  += tr;
-        vcos  += tr;
+        ucos += tr;
+        vcos += tr;
         ducos += tr;
         dvcos += tr;
 
@@ -466,12 +466,12 @@ namespace gsplat
                  * Hoisted variables shared across Part A, the warp passes, and Part B
                  * ==================================================
                  */
-                S tex_colors[COLOR_DIM] = {S(0)};  // sampled texture color contribution
-                vec2<S> v_s_tex = {S(0), S(0)};    // UV gradient from texture lookup
-                S deltas[COLOR_DIM] = {S(0)};       // fac * v_render_c[k]
+                S tex_colors[COLOR_DIM] = {S(0)}; // sampled texture color contribution
+                vec2<S> v_s_tex = {S(0), S(0)};   // UV gradient from texture lookup
+                S deltas[COLOR_DIM] = {S(0)};     // fac * v_render_c[k]
                 S ra = S(0), fac = S(0);
                 bool clip = false;
-                S v_asf = S(0);                     // vis * opac * v_alpha, for alpha texture grad
+                S v_asf = S(0); // vis * opac * v_alpha, for alpha texture grad
 
                 /**
                  * ==================================================
@@ -519,7 +519,8 @@ namespace gsplat
                         if (do_tex)
                         {
                             vj = vcos[tj * block_size];
-                            if (texture_gradients) dvj = dvcos[tj * block_size];
+                            if (texture_gradients)
+                                dvj = dvcos[tj * block_size];
                         }
                         for (uint32_t ti = 0; ti < texture_res_x; ++ti)
                         {
@@ -527,20 +528,22 @@ namespace gsplat
                             if (do_tex)
                             {
                                 ui = ucos[ti * block_size];
-                                if (texture_gradients) dui = ducos[ti * block_size];
+                                if (texture_gradients)
+                                    dui = ducos[ti * block_size];
                             }
-                            const S uivj  = ui * vj;
+                            const S uivj = ui * vj;
                             const S duivj = dui * vj;
                             const S uidvj = ui * dvj;
                             GSPLAT_PRAGMA_UNROLL
                             for (uint32_t tk = 0; tk < COLOR_DIM; ++tk)
                             {
                                 const S c = textures[g][tj][ti][tk];
-                                if (do_tex) tex_colors[tk] += c * uivj;
+                                if (do_tex)
+                                    tex_colors[tk] += c * uivj;
 
                                 // warp-level reduction: 32 → 1 atomic per coefficient
                                 const S per_pix = do_tex ? deltas[tk] * uivj : S(0);
-                                const S wsum    = cg::reduce(warp, per_pix, cg::plus<S>());
+                                const S wsum = cg::reduce(warp, per_pix, cg::plus<S>());
                                 if (warp.thread_rank() == 0)
                                     gpuAtomicAdd(&v_textures[g][tj][ti][tk], wsum);
 
@@ -693,7 +696,8 @@ namespace gsplat
                         if (do_alpha)
                         {
                             vj = vcos[tj * block_size];
-                            if (texture_gradients) dvj = dvcos[tj * block_size];
+                            if (texture_gradients)
+                                dvj = dvcos[tj * block_size];
                         }
                         for (uint32_t ti = 0; ti < texture_res_x; ++ti)
                         {
@@ -701,20 +705,21 @@ namespace gsplat
                             if (do_alpha)
                             {
                                 ui = ucos[ti * block_size];
-                                if (texture_gradients) dui = ducos[ti * block_size];
+                                if (texture_gradients)
+                                    dui = ducos[ti * block_size];
                             }
                             const S uivj = ui * vj;
 
                             const S per_pix = do_alpha ? v_asf * uivj : S(0);
-                            const S wsum    = cg::reduce(warp, per_pix, cg::plus<S>());
+                            const S wsum = cg::reduce(warp, per_pix, cg::plus<S>());
                             if (warp.thread_rank() == 0)
                                 gpuAtomicAdd(&v_textures[g][tj][ti][alpha_channel], wsum);
 
                             if (do_alpha && texture_gradients)
                             {
                                 const S c_alpha = textures[g][tj][ti][alpha_channel];
-                                const S duivj   = dui * vj;
-                                const S uidvj   = ui * dvj;
+                                const S duivj = dui * vj;
+                                const S uidvj = ui * dvj;
                                 v_s_tex.x += duivj * c_alpha * v_asf;
                                 v_s_tex.y += uidvj * c_alpha * v_asf;
                             }

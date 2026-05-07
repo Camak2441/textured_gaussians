@@ -103,7 +103,7 @@ namespace gsplat
             masks += camera_id * tile_height * tile_width;
         }
 
-        const uint32_t alpha_channel = texture_color ? COLOR_DIM : 0;
+        const uint32_t alpha_channel = textures.size(-1) - 1;
 
         // find the center of the pixel
         S px = (S)j + S(0.5);
@@ -658,8 +658,8 @@ namespace gsplat
             opacities,                                     \
             textures,                                      \
             vec2<float>(texture_range_x, texture_range_y), \
-            texture_color,                                  \
-            texture_alpha,                                  \
+            texture_color,                                 \
+            texture_alpha,                                 \
             normals,                                       \
             backgrounds,                                   \
             masks,                                         \
