@@ -85,7 +85,7 @@ namespace gsplat
         if (masks != nullptr)
             masks += camera_id * tile_height * tile_width;
 
-        const uint32_t alpha_channel = textures.size(-1) - 1;
+        const uint32_t alpha_channel = textures.size(3) - 1;
 
         S px = (S)j + S(0.5);
         S py = (S)i + S(0.5);

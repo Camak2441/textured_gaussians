@@ -1,0 +1,1 @@
+python compile_latex_table.py --models tgs_b2_ta_t6 dtgs3_b2_ta_t8 --datasets ns

@@ -105,7 +105,7 @@ namespace gsplat
             masks += camera_id * tile_height * tile_width;
         }
 
-        const uint32_t alpha_channel = textures.size(-1) - 1;
+        const uint32_t alpha_channel = textures.size(3) - 1;
 
         // find the center of the pixel
         S px = (S)j + S(0.5);

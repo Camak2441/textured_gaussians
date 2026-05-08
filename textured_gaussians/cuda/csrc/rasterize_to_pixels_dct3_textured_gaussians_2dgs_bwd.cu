@@ -96,7 +96,7 @@ namespace gsplat
         if (masks != nullptr && !masks[tile_id])
             return;
 
-        const uint32_t alpha_channel = textures.size(-1) - 1;
+        const uint32_t alpha_channel = textures.size(2) - 1;
 
         const S px = (S)j + S(0.5);
         const S py = (S)i + S(0.5);

@@ -115,7 +115,7 @@ namespace gsplat
             return;
         }
 
-        const uint32_t alpha_channel = textures.size(-1) - 1;
+        const uint32_t alpha_channel = textures.size(3) - 1;
 
         const S px = (S)j + S(0.5);
         const S py = (S)i + S(0.5);

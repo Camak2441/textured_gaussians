@@ -589,18 +589,13 @@ class Runner:
                         )
                     elif self.cfg.textured_rgb and not self.cfg.textured_alpha:
                         textures = torch.cat(
-                            [textures, torch.ones_like(textures[..., 0])], dim=-1
+                            [textures, torch.ones_like(textures[..., :1])], dim=-1
                         )
 
                     texture_height = textures.shape[1]
                     texture_width = textures.shape[2]
                     textures = textures.permute(0, 3, 1, 2)  # [N, 4, H, W]
-                    if self.cfg.textured_rgb and self.cfg.textured_alpha:
-                        textures += colors
-                    elif self.cfg.textured_rgb:
-                        textures += colors[:, :3, :, :]
-                    elif self.cfg.textured_alpha:
-                        textures += colors[:, 3:, :, :]
+                    textures += colors
 
                     if texture_height >= height and texture_width >= width:
                         textures = F.interpolate(
