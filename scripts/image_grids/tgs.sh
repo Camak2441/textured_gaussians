@@ -5,12 +5,13 @@ python image_grid.py \
     --border_lw 0.6 --rect_lw 0.4 \
     --models gt tgs_psfm tgs_b2_psfm tgss4_b2_g9999_ot01-0_ott03-0_sgc02_swc08_psfm_po_pswc08 \
     --col_labels "gt=Ground Truth" "tgs_psfm=TGS" "tgs_b2_psfm=TGS w/ TexGrad" "tgss4_b2_g9999_ot01-0_ott03-0_sgc02_swc08_psfm_po_pswc08=TGSS" \
-    --scenes bonsai counter garden room chair drums mic ship \
-    --val_nums 5 9 1 29 12 3 3 5 \
+    --scenes bonsai counter garden room chair drums lego mic ship \
+    --val_nums 5 9 1 29 12 3 5 3 5 \
     --row_labels "bonsai,5=Bonsai" "counter,9=Counter" "garden,1=Garden" "room,29=Room" \
-    "chair,12=Chair" "drums,3=Drums" "mic,3=Mic" "ship,5=Ship" \
+    "chair,12=Chair" "drums,3=Drums" "lego,5=Lego" "mic,3=Mic" "ship,5=Ship" \
     --row_models "chair,12,gt,tgs_g2000,tgs_b2_g2000,tgss4_b2_g1999_ot01-0_ott03-0_sgc02_swc08_po_pswc08" \
     --row_models "drums,3,gt,tgs_g2000,tgs_b2_g2000,tgss4_b2_g1999_ot01-0_ott03-0_sgc02_swc08_po_pswc08" \
+    --row_models "lego,5,gt,tgs_g2000,tgs_b2_g2000,tgss4_b2_g1999_ot01-0_ott03-0_sgc02_swc08_po_pswc08" \
     --row_models "mic,3,gt,tgs_g2000,tgs_b2_g2000,tgss4_b2_g1999_ot01-0_ott03-0_sgc02_swc08_po_pswc08" \
     --row_models "ship,5,gt,tgs_g2000,tgs_b2_g2000,tgss4_b2_g1999_ot01-0_ott03-0_sgc02_swc08_po_pswc08" \
     --inset "bonsai,5,*,200,100,300,250,left,1.0" \
@@ -27,6 +28,9 @@ python image_grid.py \
     --inset "chair,12,*,350,360,450,500,right,1.0" \
     --zoom "drums,3,*,50,50,750,750" \
     --inset "drums,3,*,150,375,300,525,right,1.0" \
+    --zoom "lego,5,*,25,100,750,650" \
+    --inset "lego,5,*,100,250,200,550,left,1.0" \
+    --inset "lego,5,*,300,150,450,500,right,1.0" \
     --zoom "mic,3,*,0,0,650,700" \
     --inset "mic,3,*,500,0,600,200,left,1.0" \
     --inset "mic,3,*,500,500,575,700,right,1.0" \
