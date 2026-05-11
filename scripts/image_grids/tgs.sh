@@ -12,10 +12,10 @@ python image_grid.py \
     --row_models "drums,3,gt,tgs_g2000,tgs_b2_g2000,tgss4_b2_g1999_ot01-0_ott03-0_sgc02_swc08_po_pswc08" \
     --row_models "mic,3,gt,tgs_g2000,tgs_b2_g2000,tgss4_b2_g1999_ot01-0_ott03-0_sgc02_swc08_po_pswc08" \
     --row_models "ship,5,gt,tgs_g2000,tgs_b2_g2000,tgss4_b2_g1999_ot01-0_ott03-0_sgc02_swc08_po_pswc08" \
-    --inset "bonsai,5,*,175,100,300,250,left,1.0" \
+    --inset "bonsai,5,*,200,100,300,250,left,1.0" \
     --zoom "counter,9,*,0,0,500,1000" \
     --inset "counter,9,*,75,250,150,390,left,1.0" \
-    --inset "counter,9,*,350,360,450,500,right,1.0" \
+    --inset "counter,9,*,360,350,450,500,right,1.0" \
     --zoom "garden,1,*,250,0,1100,750" \
     --inset "garden,1,*,500,25,700,350,left,1.0" \
     --inset "garden,1,*,500,400,650,700,right,1.0" \
@@ -26,6 +26,10 @@ python image_grid.py \
     --inset "chair,12,*,350,360,450,500,right,1.0" \
     --zoom "drums,3,*,50,50,750,750" \
     --inset "drums,3,*,150,375,300,525,right,1.0" \
+    --zoom "mic,3,*,0,0,650,700" \
+    --inset "mic,3,*,500,0,600,200,left,1.0" \
+    --inset "mic,3,*,500,500,575,700,right,1.0" \
+    --zoom "ship,5,*,100,100,725,650" \
+    --inset "ship,5,*,100,250,250,550,left,1.0" \
+    --inset "ship,5,*,500,250,650,500,right,1.0" \
     --output ../results/images/tgs.png
-
-#   --zoom "counter,9,*,0,150,500,550" \

@@ -212,14 +212,20 @@ def draw_cell(
             ry1 -= zoom[1]
             rx2 -= zoom[0]
             ry2 -= zoom[1]
-        main_ax.indicate_inset(
-            [rx1, ry1, rx2 - rx1, ry2 - ry1],
+        # imshow data coords are in resampled-image pixels, so scale by cscale
+        _, connectors = main_ax.indicate_inset(
+            [rx1 * cscale, ry1 * cscale, (rx2 - rx1) * cscale, (ry2 - ry1) * cscale],
             ins_ax,
             edgecolor=rect_color,
             facecolor="none",
             alpha=1.0,
             linewidth=_RECT_LW,
         )
+        # Clip connectors to the main image so they never draw over the inset
+        for conn in connectors:
+            if conn is not None:
+                conn.set_clip_on(True)
+                conn.set_clip_path(main_ax.patch)
 
     # --- left insets ---
     x_cursor = 0.0
