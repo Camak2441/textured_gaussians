@@ -149,6 +149,8 @@ def draw_cell(
     rect_color: str,
     col_width: int,
     row_main_h: int,
+    border_lw: float = _BORDER_LW,
+    rect_lw: float = _RECT_LW,
 ) -> None:
     """
     Populate a grid cell using matplotlib inset axes.
@@ -213,16 +215,21 @@ def draw_cell(
             rx2 -= zoom[0]
             ry2 -= zoom[1]
         # imshow data coords are in resampled-image pixels, so scale by cscale
-        _, connectors = main_ax.indicate_inset(
+        indicator = main_ax.indicate_inset(
             [rx1 * cscale, ry1 * cscale, (rx2 - rx1) * cscale, (ry2 - ry1) * cscale],
             ins_ax,
             edgecolor=rect_color,
             facecolor="none",
             alpha=1.0,
-            linewidth=_RECT_LW,
+            linewidth=rect_lw,
         )
-        # Clip connectors to the main image so they never draw over the inset
-        for conn in connectors:
+        # In matplotlib 3.10 the InsetIndicator bundles rectangle + connectors
+        # into a compound PathPatch via update_from(rectangle).  Setting clip on
+        # the rectangle propagates to that PathPatch; we also clip each connector
+        # individually for the case where they are drawn separately.
+        indicator.rectangle.set_clip_on(True)
+        indicator.rectangle.set_clip_path(main_ax.patch)
+        for conn in indicator.connectors or []:
             if conn is not None:
                 conn.set_clip_on(True)
                 conn.set_clip_path(main_ax.patch)
@@ -233,7 +240,7 @@ def draw_cell(
     for spec, (iw, ih) in zip(left_insets, left_dims):
         crop = _safe_crop(base_img, *spec["region"])
         ins_ax = _place(crop, x_cursor, iw, ih)
-        _style_inset_ax(ins_ax, border_color, _BORDER_LW)
+        _style_inset_ax(ins_ax, border_color, border_lw)
         pending_indicate.append((spec, ins_ax))
         x_cursor += iw * cscale + _SEP_PX * cscale
 
@@ -252,7 +259,7 @@ def draw_cell(
         x_cursor += _SEP_PX * cscale
         crop = _safe_crop(base_img, *spec["region"])
         ins_ax = _place(crop, x_cursor, iw, ih)
-        _style_inset_ax(ins_ax, border_color, _BORDER_LW)
+        _style_inset_ax(ins_ax, border_color, border_lw)
         _indicate(spec, ins_ax)
         x_cursor += iw * cscale
 
@@ -450,6 +457,8 @@ def make_grid(
     rect_color: str,
     col_labels: dict[str, str] | None,
     row_labels: dict[tuple[str, int], str] | None,
+    border_lw: float = _BORDER_LW,
+    rect_lw: float = _RECT_LW,
     row_model_overrides: dict[tuple[str, int], list[str]] | None = None,
     cell_width_in: float = 3.0,
     fig_width_in: float | None = None,
@@ -581,6 +590,8 @@ def make_grid(
                     rect_color,
                     col_width=col_widths[c],
                     row_main_h=row_heights[r],
+                    border_lw=border_lw,
+                    rect_lw=rect_lw,
                 )
 
             if r == 0:
@@ -734,6 +745,20 @@ def main() -> None:
         metavar="COLOR",
         help=f"Colour of the border drawn around each inset panel (default: {_BORDER_COLOR_DEFAULT!r}).",
     )
+    parser.add_argument(
+        "--border_lw",
+        type=float,
+        default=_BORDER_LW,
+        metavar="W",
+        help=f"Line width for inset panel borders (default: {_BORDER_LW}).",
+    )
+    parser.add_argument(
+        "--rect_lw",
+        type=float,
+        default=_RECT_LW,
+        metavar="W",
+        help=f"Line width for the source rectangle and its connectors (default: {_RECT_LW}).",
+    )
     # --- labels / style ---
     parser.add_argument(
         "--col_labels",
@@ -869,6 +894,8 @@ def main() -> None:
         rect_color=args.inset_rect_color,
         col_labels=col_labels,
         row_labels=row_labels,
+        border_lw=args.border_lw,
+        rect_lw=args.rect_lw,
         row_model_overrides=row_model_overrides,
         cell_width_in=args.cell_width,
         fig_width_in=args.fig_width / 25.4,

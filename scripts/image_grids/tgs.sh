@@ -2,6 +2,7 @@
 
 python image_grid.py \
     --dpi 900 --cell_gap 0 --font_size 9 --inset_rect \
+    --border_lw 0.6 --rect_lw 0.4 \
     --models gt tgs_psfm tgs_b2_psfm tgss4_b2_g9999_ot01-0_ott03-0_sgc02_swc08_psfm_po_pswc08 \
     --col_labels "gt=Ground Truth" "tgs_psfm=TGS" "tgs_b2_psfm=TGS w/ TexGrad" "tgss4_b2_g9999_ot01-0_ott03-0_sgc02_swc08_psfm_po_pswc08=TGSS" \
     --scenes bonsai counter garden room chair drums mic ship \
