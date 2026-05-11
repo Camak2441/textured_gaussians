@@ -1,1 +1,6 @@
-python compile_latex_table.py --models tgs_b2_ta_t6 dtgs3_b2_ta_t8 --datasets ns
+python compile_latex_table.py \
+    --models tgs_b2_ta_t6 dtgs3_b2_ta_t8 \
+    --datasets ns \
+    --font-size footnotesize \
+    --smaller-models \
+    --smaller-metrics 

@@ -52,9 +52,14 @@ import zipfile
 from pathlib import Path
 
 import matplotlib
+import matplotlib.gridspec as mgridspec
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
+
+matplotlib.rcParams["mathtext.fontset"] = "stix"
+matplotlib.rcParams["font.family"] = "STIXGeneral"
+
 
 RESULTS_DIR = Path(__file__).parent.parent / "results"
 DATA_DIR = Path(__file__).parent.parent / "data"
@@ -62,7 +67,7 @@ DATA_DIR = Path(__file__).parent.parent / "data"
 # Pixel gap between main image and each inset panel (in source-image pixel units).
 # This gap is reserved in the column-width budget so layout is correct.
 _SEP_PX = 8
-_BORDER_COLOR_DEFAULT = "lightgray"
+_BORDER_COLOR_DEFAULT = "red"
 _RECT_COLOR_DEFAULT = "red"
 # Line width (pts) for inset spine borders and indicate_inset rectangles
 _BORDER_LW = 0.8
@@ -72,6 +77,7 @@ _RECT_LW = 1.0
 # ---------------------------------------------------------------------------
 # Image helpers
 # ---------------------------------------------------------------------------
+
 
 def apply_white_bg(img: np.ndarray) -> np.ndarray:
     """Composite an RGBA image onto a white background; pass RGB through."""
@@ -102,6 +108,7 @@ def _scale_to_height(img: np.ndarray, target_h: int) -> np.ndarray:
 # Cell drawing — matplotlib inset axes
 # ---------------------------------------------------------------------------
 
+
 def _panel_dims(spec: dict, main_h: int) -> tuple[int, int]:
     """Return (inner_w, inner_h) in pixels for an inset panel."""
     rx1, ry1, rx2, ry2 = spec["region"]
@@ -122,9 +129,7 @@ def _right_budget(insets: list[dict], ref_h: int) -> int:
     return sum(_SEP_PX + _panel_dims(s, ref_h)[0] for s in insets)
 
 
-def _style_inset_ax(
-    ax: plt.Axes, border_color: str, border_lw: float
-) -> None:
+def _style_inset_ax(ax: plt.Axes, border_color: str, border_lw: float) -> None:
     ax.set_xticks([])
     ax.set_yticks([])
     for spine in ax.spines.values():
@@ -142,25 +147,34 @@ def draw_cell(
     draw_rects: bool,
     border_color: str,
     rect_color: str,
-    col_left_budget: int,
-    col_main_w: int,
-    col_right_budget: int,
+    col_width: int,
     row_main_h: int,
 ) -> None:
     """
     Populate a grid cell using matplotlib inset axes.
 
-    Column-level layout (pixels):
-        [col_left_budget] [col_main_w] [col_right_budget]
-
-    The main image is centred inside col_main_w × row_main_h.
-    Insets are scaled relative to row_main_h so every row is consistent.
+    The full group (left insets + main image + right insets) is scaled uniformly
+    so that it fills col_width exactly, then centred vertically in row_main_h.
     All region coordinates are in the original (unzoomed) source image.
     """
-    col_total_w = col_left_budget + col_main_w + col_right_budget
-
     main = _safe_crop(base_img, *zoom) if zoom else base_img[:, :, :3]
     actual_h, actual_w = main.shape[:2]
+
+    # Native group dimensions at this cell's own pixel scale
+    left_dims = [_panel_dims(s, actual_h) for s in left_insets]
+    right_dims = [_panel_dims(s, actual_h) for s in right_insets]
+    native_group_w = (
+        sum(iw + _SEP_PX for iw, _ in left_dims)
+        + actual_w
+        + sum(_SEP_PX + iw for iw, _ in right_dims)
+    )
+    native_group_h = max([actual_h] + [ih for _, ih in left_dims + right_dims])
+
+    # Scale group to fill the column width exactly
+    cscale = col_width / max(1, native_group_w)
+    disp_group_h = native_group_h * cscale
+    # Vertical offset to centre group in the row
+    y_top = (row_main_h - disp_group_h) / 2
 
     # Container: invisible coordinate frame
     container.set_facecolor("white")
@@ -169,42 +183,35 @@ def draw_cell(
     for sp in container.spines.values():
         sp.set_visible(False)
 
-    # Main image: centred within the column's main zone
-    main_x0_px = col_left_budget + (col_main_w - actual_w) / 2
-    main_y0_px = (row_main_h - actual_h) / 2
-    main_ax = container.inset_axes([
-        main_x0_px / col_total_w,
-        main_y0_px / row_main_h,
-        actual_w / col_total_w,
-        actual_h / row_main_h,
-    ])
-    main_ax.imshow(main[:, :, :3])
-    main_ax.set_xticks([])
-    main_ax.set_yticks([])
-    for sp in main_ax.spines.values():
-        sp.set_visible(False)
-
-    def _add_panel(spec: dict, x0_px: int) -> plt.Axes:
-        iw, ih = _panel_dims(spec, row_main_h)
-        y0_px = (row_main_h - ih) / 2
-        ins_ax = container.inset_axes([
-            x0_px / col_total_w,
-            y0_px / row_main_h,
-            iw / col_total_w,
-            ih / row_main_h,
-        ])
-        crop = _safe_crop(base_img, *spec["region"])
-        ins_ax.imshow(_scale_to_height(crop[:, :, :3], ih))
-        _style_inset_ax(ins_ax, border_color, _BORDER_LW)
-        return ins_ax
+    def _place(
+        img: np.ndarray, x0: float, native_w: float, native_h: float
+    ) -> plt.Axes:
+        disp_w = native_w * cscale
+        disp_h = native_h * cscale
+        y0 = y_top + (disp_group_h - disp_h) / 2
+        ax = container.inset_axes(
+            [
+                x0 / col_width,
+                y0 / row_main_h,
+                disp_w / col_width,
+                disp_h / row_main_h,
+            ]
+        )
+        resized = _scale_to_height(img[:, :, :3], max(1, round(disp_h)))
+        ax.imshow(resized)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        return ax
 
     def _indicate(spec: dict, ins_ax: plt.Axes) -> None:
         if not draw_rects:
             return
         rx1, ry1, rx2, ry2 = spec["region"]
         if zoom:
-            rx1 -= zoom[0]; ry1 -= zoom[1]
-            rx2 -= zoom[0]; ry2 -= zoom[1]
+            rx1 -= zoom[0]
+            ry1 -= zoom[1]
+            rx2 -= zoom[0]
+            ry2 -= zoom[1]
         main_ax.indicate_inset(
             [rx1, ry1, rx2 - rx1, ry2 - ry1],
             ins_ax,
@@ -214,24 +221,40 @@ def draw_cell(
             linewidth=_RECT_LW,
         )
 
-    # Left panels start at x=0 and fill toward the main zone
-    x_cursor = 0
-    for spec in left_insets:
-        ins_ax = _add_panel(spec, x_cursor)
-        _indicate(spec, ins_ax)
-        x_cursor += _panel_dims(spec, row_main_h)[0] + _SEP_PX
+    # --- left insets ---
+    x_cursor = 0.0
+    pending_indicate: list[tuple[dict, plt.Axes]] = []
+    for spec, (iw, ih) in zip(left_insets, left_dims):
+        crop = _safe_crop(base_img, *spec["region"])
+        ins_ax = _place(crop, x_cursor, iw, ih)
+        _style_inset_ax(ins_ax, border_color, _BORDER_LW)
+        pending_indicate.append((spec, ins_ax))
+        x_cursor += iw * cscale + _SEP_PX * cscale
 
-    # Right panels start at the column-level main zone boundary (not image boundary)
-    x_cursor = col_left_budget + col_main_w + _SEP_PX
-    for spec in right_insets:
-        ins_ax = _add_panel(spec, x_cursor)
+    # --- main image (main_ax must exist before _indicate is called) ---
+    main_ax = _place(main, x_cursor, actual_w, actual_h)
+    for sp in main_ax.spines.values():
+        sp.set_visible(False)
+    x_cursor += actual_w * cscale
+
+    # indicate left insets now that main_ax exists
+    for spec, ins_ax in pending_indicate:
         _indicate(spec, ins_ax)
-        x_cursor += _panel_dims(spec, row_main_h)[0] + _SEP_PX
+
+    # --- right insets ---
+    for spec, (iw, ih) in zip(right_insets, right_dims):
+        x_cursor += _SEP_PX * cscale
+        crop = _safe_crop(base_img, *spec["region"])
+        ins_ax = _place(crop, x_cursor, iw, ih)
+        _style_inset_ax(ins_ax, border_color, _BORDER_LW)
+        _indicate(spec, ins_ax)
+        x_cursor += iw * cscale
 
 
 # ---------------------------------------------------------------------------
 # Spec parsing & matching
 # ---------------------------------------------------------------------------
+
 
 def _parse_inset(s: str) -> dict:
     """scene,val,model,x1,y1,x2,y2,left|right[,scale]  (* = wildcard)"""
@@ -242,7 +265,9 @@ def _parse_inset(s: str) -> dict:
         )
     side = parts[7].lower()
     if side not in ("left", "right"):
-        raise argparse.ArgumentTypeError(f"inset side must be 'left' or 'right'; got {side!r}")
+        raise argparse.ArgumentTypeError(
+            f"inset side must be 'left' or 'right'; got {side!r}"
+        )
     return dict(
         scene=parts[0],
         val=parts[1],
@@ -274,14 +299,19 @@ def _matches(spec_val: str, actual) -> bool:
 
 def _zoom_for(scene, val_num, model, zoom_specs) -> tuple | None:
     for z in reversed(zoom_specs):  # last match wins
-        if _matches(z["scene"], scene) and _matches(z["val"], val_num) and _matches(z["model"], model):
+        if (
+            _matches(z["scene"], scene)
+            and _matches(z["val"], val_num)
+            and _matches(z["model"], model)
+        ):
             return z["region"]
     return None
 
 
 def _insets_for(scene, val_num, model, inset_specs, side) -> list[dict]:
     return [
-        s for s in inset_specs
+        s
+        for s in inset_specs
         if s["side"] == side
         and _matches(s["scene"], scene)
         and _matches(s["val"], val_num)
@@ -293,6 +323,7 @@ def _insets_for(scene, val_num, model, inset_specs, side) -> list[dict]:
 # Zip / dataset image retrieval
 # ---------------------------------------------------------------------------
 
+
 def _find_step_zip(renders_dir: Path, step: int | None) -> Path | None:
     zips = list(renders_dir.glob("step_*.zip"))
     if not zips:
@@ -300,9 +331,11 @@ def _find_step_zip(renders_dir: Path, step: int | None) -> Path | None:
     if step is not None:
         target = renders_dir / f"step_{step}.zip"
         return target if target.exists() else None
+
     def _step_num(p):
         m = re.search(r"step_(\d+)\.zip$", p.name)
         return int(m.group(1)) if m else -1
+
     return max(zips, key=_step_num)
 
 
@@ -332,7 +365,8 @@ def _gt_from_dataset(scene: str, val_num: int, data_dir: Path) -> np.ndarray | N
         if not img_dir.exists():
             continue
         imgs = sorted(
-            p for p in img_dir.iterdir()
+            p
+            for p in img_dir.iterdir()
             if p.suffix.lower() in {".jpg", ".jpeg", ".png"}
             and ":Zone.Identifier" not in p.name
         )
@@ -394,6 +428,7 @@ def get_image(
 # Grid layout
 # ---------------------------------------------------------------------------
 
+
 def make_grid(
     models: list[str],
     scenes: list[str],
@@ -409,30 +444,46 @@ def make_grid(
     rect_color: str,
     col_labels: dict[str, str] | None,
     row_labels: dict[tuple[str, int], str] | None,
+    row_model_overrides: dict[tuple[str, int], list[str]] | None = None,
     cell_width_in: float = 3.0,
+    fig_width_in: float | None = None,
+    cell_gap: float = 0.3,
+    font_size: float = 11.0,
     title: str | None = None,
     dpi: int = 150,
     output: str | None = None,
 ) -> None:
-    rows = [(s, v) for s in scenes for v in val_nums]
-    n_rows, n_cols = len(rows), len(models)
-    gt_fallback = next((m for m in models if m != "gt"), None)
+    rows = list(zip(scenes, val_nums))
+
+    # Columns are always the canonical --models list; row overrides substitute
+    # model names at the same column positions (validated to have equal length).
+    all_models: list[str] = models
+    n_rows, n_cols = len(rows), len(all_models)
 
     # --- load base images and resolve zoom/insets per cell ---
     # cell_data[r][c] = (base_img | None, zoom, left_insets, right_insets)
     cell_data: list[list] = []
     for r, (scene, val_num) in enumerate(rows):
+        fetch_models = (row_model_overrides or {}).get((scene, val_num), models)
+        gt_fallback = next((m for m in fetch_models if m != "gt"), None)
         row_data = []
-        for c, model in enumerate(models):
+        for c in range(n_cols):
+            fetch_model = fetch_models[c]
             base = get_image(
-                model, scene, val_num, step,
-                results_dir, gt_source, data_dir, gt_fallback,
+                fetch_model,
+                scene,
+                val_num,
+                step,
+                results_dir,
+                gt_source,
+                data_dir,
+                gt_fallback,
             )
             if base is not None:
                 base = apply_white_bg(base)
-            zoom = _zoom_for(scene, val_num, model, zoom_specs)
-            left = _insets_for(scene, val_num, model, inset_specs, "left")
-            right = _insets_for(scene, val_num, model, inset_specs, "right")
+            zoom = _zoom_for(scene, val_num, fetch_model, zoom_specs)
+            left = _insets_for(scene, val_num, fetch_model, inset_specs, "left")
+            right = _insets_for(scene, val_num, fetch_model, inset_specs, "right")
             row_data.append((base, zoom, left, right))
         cell_data.append(row_data)
 
@@ -442,84 +493,135 @@ def make_grid(
         if base is None:
             return (1, 1)
         if zoom:
-            return zoom[2] - zoom[0], zoom[3] - zoom[1]
+            img_h, img_w = base.shape[:2]
+            x1, y1, x2, y2 = zoom
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(img_w, x2), min(img_h, y2)
+            return max(1, x2 - x1), max(1, y2 - y1)
         return base.shape[1], base.shape[0]
 
-    # Row heights and column widths driven only by the main image, not insets
-    main_row_heights = [max(_main_wh(r, c)[1] for c in range(n_cols)) for r in range(n_rows)]
-    main_col_widths  = [max(_main_wh(r, c)[0] for r in range(n_rows)) for c in range(n_cols)]
+    # Native group dimensions per cell: the full (insets + main image) group
+    # at the cell's own pixel scale, before any column-level scaling.
+    def _cell_group(r: int, c: int) -> tuple[int, int]:
+        """Return (native_group_w, native_group_h) in source pixels."""
+        mw, mh = _main_wh(r, c)
+        left_insets = cell_data[r][c][2]
+        right_insets = cell_data[r][c][3]
+        gw = _left_budget(left_insets, mh) + mw + _right_budget(right_insets, mh)
+        all_insets = left_insets + right_insets
+        gh = max([mh] + [_panel_dims(s, mh)[1] for s in all_insets])
+        return gw, gh
 
-    # Per-column inset budgets (max across rows, using each row's canonical height)
-    max_left_budgets  = [
-        max(_left_budget(cell_data[r][c][2], main_row_heights[r]) for r in range(n_rows))
-        for c in range(n_cols)
+    cell_gw = [[_cell_group(r, c)[0] for c in range(n_cols)] for r in range(n_rows)]
+    cell_gh = [[_cell_group(r, c)[1] for c in range(n_cols)] for r in range(n_rows)]
+
+    # Column width = max native group width across rows (ignore degenerate cells).
+    col_widths = [max(cell_gw[r][c] for r in range(n_rows)) for c in range(n_cols)]
+
+    # Each cell's scale factor stretches its group to fill the column width.
+    def _cscale(r: int, c: int) -> float:
+        return col_widths[c] / max(1, cell_gw[r][c])
+
+    # Row height = max scaled group height across columns.
+    row_heights = [
+        max(cell_gh[r][c] * _cscale(r, c) for c in range(n_cols)) for r in range(n_rows)
     ]
-    max_right_budgets = [
-        max(_right_budget(cell_data[r][c][3], main_row_heights[r]) for r in range(n_rows))
-        for c in range(n_cols)
-    ]
 
-    col_widths  = [max_left_budgets[c] + main_col_widths[c] + max_right_budgets[c] for c in range(n_cols)]
-    row_heights = main_row_heights
-
-    # Single pixel-per-inch keeps both axes identical → preserves image aspect ratio
-    px_per_in = min(col_widths) / cell_width_in
+    # Single pixel-per-inch keeps both axes identical → preserves image aspect ratio.
+    # fig_width_in fixes the total figure width; cell_width_in is the fallback that
+    # sizes the narrowest column to a given width.
+    if fig_width_in is not None:
+        px_per_in = sum(col_widths) / fig_width_in
+    else:
+        # Exclude degenerate (all-missing) columns from the scale reference to avoid
+        # astronomically large figures when a model directory doesn't exist.
+        ref_widths = [w for w in col_widths if w > 1] or col_widths
+        px_per_in = min(ref_widths) / cell_width_in
     fig_w = sum(col_widths) / px_per_in
     fig_h = sum(row_heights) / px_per_in
 
-    fig, axes = plt.subplots(
-        n_rows, n_cols,
+    fig, axes_arr = plt.subplots(
+        n_rows,
+        n_cols,
         figsize=(fig_w, fig_h),
         gridspec_kw={"width_ratios": col_widths, "height_ratios": row_heights},
         squeeze=False,
     )
+    axes: list[list[plt.Axes]] = axes_arr.tolist()
 
     if title:
-        fig.suptitle(title, fontsize=14)
+        fig.suptitle(title, fontsize=font_size + 3)
 
     for r, (scene, val_num) in enumerate(rows):
-        for c, model in enumerate(models):
+        for c, model in enumerate(all_models):
             ax = axes[r][c]
             base, zoom, left, right = cell_data[r][c]
 
             if base is None:
-                ax.set_facecolor("#222222")
-                ax.text(
-                    0.5, 0.5, "missing",
-                    transform=ax.transAxes,
-                    ha="center", va="center",
-                    color="white", fontsize=9,
-                )
+                ax.set_facecolor("white")
                 ax.set_xticks([])
                 ax.set_yticks([])
                 for sp in ax.spines.values():
                     sp.set_visible(False)
             else:
                 draw_cell(
-                    ax, base, zoom, left, right,
-                    draw_rects, border_color, rect_color,
-                    col_left_budget=max_left_budgets[c],
-                    col_main_w=main_col_widths[c],
-                    col_right_budget=max_right_budgets[c],
-                    row_main_h=main_row_heights[r],
+                    ax,
+                    base,
+                    zoom,
+                    left,
+                    right,
+                    draw_rects,
+                    border_color,
+                    rect_color,
+                    col_width=col_widths[c],
+                    row_main_h=row_heights[r],
                 )
 
             if r == 0:
                 label = (col_labels or {}).get(model, model)
-                ax.set_title(label, fontsize=11, pad=4)
+                ax.set_title(label, fontsize=font_size, pad=4)
 
             if c == 0:
                 if row_labels and (scene, val_num) in row_labels:
                     ylabel = row_labels[(scene, val_num)]
-                elif len(val_nums) > 1:
+                elif len(set(scenes)) < len(scenes):
                     ylabel = f"{scene}\nval {val_num:04d}"
                 else:
                     ylabel = scene
                 ax.set_ylabel(
-                    ylabel, fontsize=10, labelpad=6, rotation=0, ha="right", va="center"
+                    ylabel,
+                    fontsize=font_size,
+                    labelpad=6,
+                    rotation=90,
+                    ha="center",
+                    va="center",
                 )
 
-    fig.tight_layout(pad=0.3)
+    fig.tight_layout(pad=cell_gap, h_pad=0, w_pad=0)
+
+    # Zero out wspace so adjacent columns share a border — no whitespace between
+    # inset panels.  hspace is kept from tight_layout because setting it to zero
+    # displaces inset_axes / indicate_inset artists and causes bbox_inches='tight'
+    # to balloon the saved image.
+    sp = fig.subplotpars
+    fig.subplots_adjust(
+        left=sp.left,
+        right=sp.right,
+        top=sp.top,
+        bottom=sp.bottom,
+        wspace=0,
+        hspace=sp.hspace,
+    )
+
+    if fig_width_in is not None:
+        # tight_layout shrinks the subplot region in both x and y to make room
+        # for labels.  Rescale x so the axes content area is exactly fig_width_in
+        # wide, and independently rescale y so the content height equals the
+        # original intended height (fig_h).
+        x_frac = sp.right - sp.left
+        y_frac = sp.top - sp.bottom
+        if x_frac > 0 and y_frac > 0:
+            fig.set_size_inches(fig_width_in / x_frac, fig_h / y_frac)
 
     if output:
         fig.savefig(output, dpi=dpi, bbox_inches="tight")
@@ -534,6 +636,7 @@ def make_grid(
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Render an image grid across models, scenes, and val frames.",
@@ -541,39 +644,56 @@ def main() -> None:
         epilog=__doc__,
     )
     parser.add_argument(
-        "--models", nargs="+", required=True,
+        "--models",
+        nargs="+",
+        required=True,
         help='Model directory names under results/. Use "gt" for ground truth.',
     )
     parser.add_argument(
-        "--scenes", nargs="+", required=True,
+        "--scenes",
+        nargs="+",
+        required=True,
         help="Scene names.",
     )
     parser.add_argument(
-        "--val_nums", nargs="+", type=int, default=[0], metavar="N",
+        "--val_nums",
+        nargs="+",
+        type=int,
+        default=[0],
+        metavar="N",
         help="Validation frame indices (default: 0).",
     )
     parser.add_argument(
-        "--step", type=int, default=None,
+        "--step",
+        type=int,
+        default=None,
         help="Training step to use (default: latest step zip).",
     )
     parser.add_argument(
-        "--gt_source", choices=["zip", "dataset"], default="zip",
+        "--gt_source",
+        choices=["zip", "dataset"],
+        default="zip",
         help=(
             '"zip": extract GT from the left half of a model render zip (default). '
             '"dataset": load from data/mip_nerf_360 or data/nerf_synthetic.'
         ),
     )
     parser.add_argument(
-        "--results_dir", default=str(RESULTS_DIR),
+        "--results_dir",
+        default=str(RESULTS_DIR),
         help="Path to results directory.",
     )
     parser.add_argument(
-        "--data_dir", default=str(DATA_DIR),
+        "--data_dir",
+        default=str(DATA_DIR),
         help="Path to dataset root (used when --gt_source=dataset).",
     )
     # --- zoom / inset ---
     parser.add_argument(
-        "--zoom", action="append", default=[], metavar="SPEC",
+        "--zoom",
+        action="append",
+        default=[],
+        metavar="SPEC",
         help=(
             "Crop the main display image: SCENE,VAL,MODEL,X1,Y1,X2,Y2. "
             "Use * as wildcard. Repeat for multiple cells. "
@@ -581,7 +701,10 @@ def main() -> None:
         ),
     )
     parser.add_argument(
-        "--inset", action="append", default=[], metavar="SPEC",
+        "--inset",
+        action="append",
+        default=[],
+        metavar="SPEC",
         help=(
             "Add a detail panel: SCENE,VAL,MODEL,X1,Y1,X2,Y2,left|right[,SCALE]. "
             "SCALE is panel height relative to main (default 1.0). "
@@ -589,39 +712,99 @@ def main() -> None:
         ),
     )
     parser.add_argument(
-        "--inset_rect", action="store_true",
+        "--inset_rect",
+        action="store_true",
         help="Draw a rectangle on the main image at each inset's source region.",
     )
     parser.add_argument(
-        "--inset_rect_color", default=_RECT_COLOR_DEFAULT, metavar="COLOR",
+        "--inset_rect_color",
+        default=_RECT_COLOR_DEFAULT,
+        metavar="COLOR",
         help=f"Colour of the inset source rectangle (default: {_RECT_COLOR_DEFAULT!r}).",
     )
     parser.add_argument(
-        "--inset_border_color", default=_BORDER_COLOR_DEFAULT, metavar="COLOR",
+        "--inset_border_color",
+        default=_BORDER_COLOR_DEFAULT,
+        metavar="COLOR",
         help=f"Colour of the border drawn around each inset panel (default: {_BORDER_COLOR_DEFAULT!r}).",
     )
     # --- labels / style ---
     parser.add_argument(
-        "--col_labels", nargs="+", metavar="MODEL=LABEL",
+        "--col_labels",
+        nargs="+",
+        metavar="MODEL=LABEL",
         help='Override column labels, e.g. --col_labels tgs="TGS (ours)" 2dgs=2DGS',
     )
     parser.add_argument(
-        "--title", default=None,
+        "--row_labels",
+        nargs="+",
+        metavar="SCENE,VAL=LABEL",
+        help='Override row labels, e.g. --row_labels counter,9="Counter"',
+    )
+    parser.add_argument(
+        "--row_models",
+        action="append",
+        default=[],
+        metavar="SCENE,VAL,model1,model2,...",
+        help=(
+            "Override models for a specific row: SCENE,VAL,model1,model2,... "
+            "Rows without an override use --models. Repeat for multiple rows."
+        ),
+    )
+    parser.add_argument(
+        "--title",
+        default=None,
         help="Optional figure title.",
     )
     parser.add_argument(
-        "--cell_width", type=float, default=3.0, metavar="W",
+        "--fig_width",
+        type=float,
+        default=160.0,
+        metavar="MM",
+        help=(
+            "Total figure width in mm (default: 160, i.e. A4 with 25 mm margins). "
+            "All columns are scaled proportionally to fit this width. "
+            "When set, --cell_width is ignored."
+        ),
+    )
+    parser.add_argument(
+        "--cell_width",
+        type=float,
+        default=3.0,
+        metavar="W",
         help=(
             "Width of the narrowest column in inches (default: 3.0). "
+            "Used only when --fig_width is not set. "
             "Row height is derived automatically to preserve pixel aspect ratios."
         ),
     )
     parser.add_argument(
-        "--dpi", type=int, default=150,
+        "--cell_gap",
+        type=float,
+        default=0.3,
+        metavar="G",
+        help=(
+            "Spacing between cells in font-size units (default: 0.3). "
+            "Set to 0 for no gap between images."
+        ),
+    )
+    parser.add_argument(
+        "--font_size",
+        type=float,
+        default=11.0,
+        metavar="PT",
+        help="Font size in points for column/row labels (default: 11). Title is font_size + 3.",
+    )
+    parser.add_argument(
+        "--dpi",
+        type=int,
+        default=150,
         help="Output DPI (default: 150).",
     )
     parser.add_argument(
-        "--output", "-o", default=None,
+        "--output",
+        "-o",
+        default=None,
         help="Output image path (PNG/PDF). Omit to display interactively.",
     )
     args = parser.parse_args()
@@ -632,6 +815,35 @@ def main() -> None:
         for item in args.col_labels:
             k, _, v = item.partition("=")
             col_labels[k] = v or k
+
+    row_labels: dict[tuple[str, int], str] | None = None
+    if args.row_labels:
+        row_labels = {}
+        for item in args.row_labels:
+            key_part, _, label = item.partition("=")
+            parts = key_part.rsplit(",", 1)
+            if len(parts) != 2:
+                raise SystemExit(
+                    f"--row_labels: expected SCENE,VAL=LABEL, got {item!r}"
+                )
+            row_labels[(parts[0], int(parts[1]))] = label
+
+    row_model_overrides: dict[tuple[str, int], list[str]] | None = None
+    if args.row_models:
+        row_model_overrides = {}
+        for item in args.row_models:
+            parts = item.split(",")
+            if len(parts) < 3:
+                raise SystemExit(
+                    f"--row_models: expected SCENE,VAL,model1,..., got {item!r}"
+                )
+            override_models = [m.strip() for m in parts[2:]]
+            if len(override_models) != len(args.models):
+                raise SystemExit(
+                    f"--row_models {parts[0]},{parts[1]}: got {len(override_models)} model(s) "
+                    f"but --models has {len(args.models)}. Counts must match so columns align."
+                )
+            row_model_overrides[(parts[0], int(parts[1]))] = override_models
 
     zoom_specs = [_parse_zoom(s) for s in args.zoom]
     inset_specs = [_parse_inset(s) for s in args.inset]
@@ -650,8 +862,12 @@ def main() -> None:
         border_color=args.inset_border_color,
         rect_color=args.inset_rect_color,
         col_labels=col_labels,
-        row_labels=None,
+        row_labels=row_labels,
+        row_model_overrides=row_model_overrides,
         cell_width_in=args.cell_width,
+        fig_width_in=args.fig_width / 25.4,
+        cell_gap=args.cell_gap,
+        font_size=args.font_size,
         title=args.title,
         dpi=args.dpi,
         output=args.output,
