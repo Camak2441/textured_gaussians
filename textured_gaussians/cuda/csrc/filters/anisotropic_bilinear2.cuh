@@ -24,37 +24,18 @@ namespace gsplat::anisotropic_bilinear2
     inline __device__ bool edge_normal(vec2<T> s0, vec2<T> s01, vec2<T> center, vec2<T> *n01)
     {
         if (s01.x == 0 && s01.y == 0)
-        {
             *n01 = s0 - center;
-        }
         else
-        {
             *n01 = vec2<T>(s01.y, -s01.x);
-        }
         T l = glm::length(*n01);
-        if (l == 0)
-            return false;
+        if (l == 0) return false;
         *n01 /= l;
         return true;
     }
 
-    template <typename T>
-    inline __device__ T max4(T v0, T v1, T v2, T v3)
-    {
-        return max(max(v0, v1), max(v2, v3));
-    }
+    template <typename T> inline __device__ T max4(T v0, T v1, T v2, T v3) { return max(max(v0,v1),max(v2,v3)); }
+    template <typename T> inline __device__ T min4(T v0, T v1, T v2, T v3) { return min(min(v0,v1),min(v2,v3)); }
 
-    template <typename T>
-    inline __device__ T min4(T v0, T v1, T v2, T v3)
-    {
-        return min(min(v0, v1), min(v2, v3));
-    }
-
-    // Clips the gaussian quad against the unit pixel [uv, uv+(1,1)] using
-    // Sutherland-Hodgman, then computes polygon moments in pixel-local coords.
-    // Fast path: if pixel centre is fully inside the gaussian, moments are set
-    // analytically (A=1, Sx=0.5, Sy=0.5, Sxy=0.25) and returns true immediately.
-    // Returns false when the clipped polygon has fewer than 3 vertices.
     template <typename T>
     inline __device__ bool clip_and_compute_moments(
         vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
@@ -63,124 +44,66 @@ namespace gsplat::anisotropic_bilinear2
         vec2<T> uv,
         T *A, T *Sx, T *Sy, T *Sxy)
     {
-        // Fast path: pixel entirely inside gaussian
         vec2<T> s_center = uv + vec2<T>(T(0.5), T(0.5));
         if (glm::dot(s0 - s_center, n01) >= n01max &&
             glm::dot(s1 - s_center, n12) >= n12max &&
             glm::dot(s2 - s_center, n23) >= n23max &&
             glm::dot(s3 - s_center, n30) >= n30max)
         {
-            *A = T(1);
-            *Sx = T(0.5);
-            *Sy = T(0.5);
-            *Sxy = T(0.25);
+            *A = T(1); *Sx = T(0.5); *Sy = T(0.5); *Sxy = T(0.25);
             return true;
         }
 
-        // Sutherland-Hodgman clip against [0,1]x[0,1] in pixel-local coords
         vec2<T> poly[8], tmp[8];
         int n = 4;
-        poly[0] = s0 - uv;
-        poly[1] = s1 - uv;
-        poly[2] = s2 - uv;
-        poly[3] = s3 - uv;
+        poly[0] = s0 - uv; poly[1] = s1 - uv; poly[2] = s2 - uv; poly[3] = s3 - uv;
 
-        // Clip x >= 0
         int m = 0;
-        for (int i = 0; i < n; i++)
-        {
-            vec2<T> a = poly[i], b = poly[(i + 1) % n];
-            bool a_in = (a.x >= T(0)), b_in = (b.x >= T(0));
-            if (a_in)
-                tmp[m++] = a;
-            if (a_in != b_in)
-            {
-                T t = a.x / (a.x - b.x);
-                tmp[m++] = vec2<T>(T(0), a.y + t * (b.y - a.y));
-            }
+        for (int i = 0; i < n; i++) {
+            vec2<T> a = poly[i], b = poly[(i+1)%n];
+            bool ai = (a.x >= T(0)), bi = (b.x >= T(0));
+            if (ai) tmp[m++] = a;
+            if (ai != bi) { T t = a.x/(a.x-b.x); tmp[m++] = vec2<T>(T(0), a.y+t*(b.y-a.y)); }
         }
-        n = m;
-        if (n < 3)
-            return false;
+        n = m; if (n < 3) return false;
 
-        // Clip x <= 1
         m = 0;
-        for (int i = 0; i < n; i++)
-        {
-            vec2<T> a = tmp[i], b = tmp[(i + 1) % n];
-            bool a_in = (a.x <= T(1)), b_in = (b.x <= T(1));
-            if (a_in)
-                poly[m++] = a;
-            if (a_in != b_in)
-            {
-                T t = (a.x - T(1)) / (a.x - b.x);
-                poly[m++] = vec2<T>(T(1), a.y + t * (b.y - a.y));
-            }
+        for (int i = 0; i < n; i++) {
+            vec2<T> a = tmp[i], b = tmp[(i+1)%n];
+            bool ai = (a.x <= T(1)), bi = (b.x <= T(1));
+            if (ai) poly[m++] = a;
+            if (ai != bi) { T t = (a.x-T(1))/(a.x-b.x); poly[m++] = vec2<T>(T(1), a.y+t*(b.y-a.y)); }
         }
-        n = m;
-        if (n < 3)
-            return false;
+        n = m; if (n < 3) return false;
 
-        // Clip y >= 0
         m = 0;
-        for (int i = 0; i < n; i++)
-        {
-            vec2<T> a = poly[i], b = poly[(i + 1) % n];
-            bool a_in = (a.y >= T(0)), b_in = (b.y >= T(0));
-            if (a_in)
-                tmp[m++] = a;
-            if (a_in != b_in)
-            {
-                T t = a.y / (a.y - b.y);
-                tmp[m++] = vec2<T>(a.x + t * (b.x - a.x), T(0));
-            }
+        for (int i = 0; i < n; i++) {
+            vec2<T> a = poly[i], b = poly[(i+1)%n];
+            bool ai = (a.y >= T(0)), bi = (b.y >= T(0));
+            if (ai) tmp[m++] = a;
+            if (ai != bi) { T t = a.y/(a.y-b.y); tmp[m++] = vec2<T>(a.x+t*(b.x-a.x), T(0)); }
         }
-        n = m;
-        if (n < 3)
-            return false;
+        n = m; if (n < 3) return false;
 
-        // Clip y <= 1
         m = 0;
-        for (int i = 0; i < n; i++)
-        {
-            vec2<T> a = tmp[i], b = tmp[(i + 1) % n];
-            bool a_in = (a.y <= T(1)), b_in = (b.y <= T(1));
-            if (a_in)
-                poly[m++] = a;
-            if (a_in != b_in)
-            {
-                T t = (a.y - T(1)) / (a.y - b.y);
-                poly[m++] = vec2<T>(a.x + t * (b.x - a.x), T(1));
-            }
+        for (int i = 0; i < n; i++) {
+            vec2<T> a = tmp[i], b = tmp[(i+1)%n];
+            bool ai = (a.y <= T(1)), bi = (b.y <= T(1));
+            if (ai) poly[m++] = a;
+            if (ai != bi) { T t = (a.y-T(1))/(a.y-b.y); poly[m++] = vec2<T>(a.x+t*(b.x-a.x), T(1)); }
         }
-        n = m;
-        if (n < 3)
-            return false;
+        n = m; if (n < 3) return false;
 
-        // Single-pass polygon moment computation
-        // A   = 1/2  * sum c_i
-        // Sx  = 1/6  * sum c_i*(x_i + x_{i+1})
-        // Sy  = 1/6  * sum c_i*(y_i + y_{i+1})
-        // Sxy = 1/24 * sum c_i*(2*x_i*y_i + x_i*y_{i+1} + x_{i+1}*y_i + 2*x_{i+1}*y_{i+1})
-        // where c_i = cross2d(p_i, p_{i+1})
-        *A = T(0);
-        *Sx = T(0);
-        *Sy = T(0);
-        *Sxy = T(0);
-        for (int i = 0; i < n; i++)
-        {
-            vec2<T> a = poly[i], b = poly[(i + 1) % n];
+        *A = T(0); *Sx = T(0); *Sy = T(0); *Sxy = T(0);
+        for (int i = 0; i < n; i++) {
+            vec2<T> a = poly[i], b = poly[(i+1)%n];
             T c = cross2d(a, b);
             *A += c;
             *Sx += c * (a.x + b.x);
             *Sy += c * (a.y + b.y);
-            *Sxy += c * (T(2) * a.x * a.y + a.x * b.y + b.x * a.y + T(2) * b.x * b.y);
+            *Sxy += c * (T(2)*a.x*a.y + a.x*b.y + b.x*a.y + T(2)*b.x*b.y);
         }
-        *A *= T(0.5);
-        *Sx *= T(1) / T(6);
-        *Sy *= T(1) / T(6);
-        *Sxy *= T(1) / T(24);
-
+        *A *= T(0.5); *Sx *= T(1)/T(6); *Sy *= T(1)/T(6); *Sxy *= T(1)/T(24);
         return true;
     }
 
@@ -192,51 +115,105 @@ namespace gsplat::anisotropic_bilinear2
         int32_t *minu, int32_t *minv, int32_t *maxu, int32_t *maxv,
         int texture_res_x, int texture_res_y)
     {
-        vec2<T> s01 = *s1 - *s0;
-        vec2<T> s12 = *s2 - *s1;
-        vec2<T> s23 = *s3 - *s2;
-        vec2<T> s30 = *s0 - *s3;
-
+        vec2<T> s01 = *s1-*s0, s12 = *s2-*s1, s23 = *s3-*s2, s30 = *s0-*s3;
         T area = T(0.5) * (cross2d(s01, s12) + cross2d(s23, s30));
-        if (area < 0)
-        {
+        if (area < 0) {
             area *= -1;
-            vec2<T> temp = *s1;
-            *s1 = *s3;
-            *s3 = temp;
-            s01 = *s1 - *s0;
-            s12 = *s2 - *s1;
-            s23 = *s3 - *s2;
-            s30 = *s0 - *s3;
+            vec2<T> temp = *s1; *s1 = *s3; *s3 = temp;
+            s01 = *s1-*s0; s12 = *s2-*s1; s23 = *s3-*s2; s30 = *s0-*s3;
         }
 
-        *minu = max(-texture_res_y + 1, (int32_t)floor(min4(s0->x, s1->x, s2->x, s3->x)));
-        *maxu = min(2 * texture_res_x - 2, (int32_t)ceil(max4(s0->x, s1->x, s2->x, s3->x)));
-        *minv = max(-texture_res_y + 1, (int32_t)floor(min4(s0->y, s1->y, s2->y, s3->y)));
-        *maxv = min(2 * texture_res_y - 2, (int32_t)ceil(max4(s0->y, s1->y, s2->y, s3->y)));
+        *minu = max(0, (int32_t)floor(min4(s0->x, s1->x, s2->x, s3->x)));
+        *maxu = min(texture_res_x-1, (int32_t)ceil(max4(s0->x, s1->x, s2->x, s3->x)));
+        *minv = max(0, (int32_t)floor(min4(s0->y, s1->y, s2->y, s3->y)));
+        *maxv = min(texture_res_y-1, (int32_t)ceil(max4(s0->y, s1->y, s2->y, s3->y)));
 
         vec2<T> center = (*s0 + *s1 + *s2 + *s3) / T(4);
-
         edge_normal(*s0, s01, center, n01);
         edge_normal(*s1, s12, center, n12);
         edge_normal(*s2, s23, center, n23);
         edge_normal(*s3, s30, center, n30);
 
-        T n01c0 = abs(glm::dot(*n01, vec2<T>(T(0.5), T(0.5))));
-        T n01c1 = abs(glm::dot(*n01, vec2<T>(T(0.5), T(-0.5))));
-        T n12c0 = abs(glm::dot(*n12, vec2<T>(T(0.5), T(0.5))));
-        T n12c1 = abs(glm::dot(*n12, vec2<T>(T(0.5), T(-0.5))));
-        T n23c0 = abs(glm::dot(*n23, vec2<T>(T(0.5), T(0.5))));
-        T n23c1 = abs(glm::dot(*n23, vec2<T>(T(0.5), T(-0.5))));
-        T n30c0 = abs(glm::dot(*n30, vec2<T>(T(0.5), T(0.5))));
-        T n30c1 = abs(glm::dot(*n30, vec2<T>(T(0.5), T(-0.5))));
-
-        *n01max = max(n01c0, n01c1);
-        *n12max = max(n12c0, n12c1);
-        *n23max = max(n23c0, n23c1);
-        *n30max = max(n30c0, n30c1);
-
+        *n01max = max(abs(glm::dot(*n01, vec2<T>(T(0.5), T( 0.5)))), abs(glm::dot(*n01, vec2<T>(T(0.5), T(-0.5)))));
+        *n12max = max(abs(glm::dot(*n12, vec2<T>(T(0.5), T( 0.5)))), abs(glm::dot(*n12, vec2<T>(T(0.5), T(-0.5)))));
+        *n23max = max(abs(glm::dot(*n23, vec2<T>(T(0.5), T( 0.5)))), abs(glm::dot(*n23, vec2<T>(T(0.5), T(-0.5)))));
+        *n30max = max(abs(glm::dot(*n30, vec2<T>(T(0.5), T( 0.5)))), abs(glm::dot(*n30, vec2<T>(T(0.5), T(-0.5)))));
         return area;
+    }
+
+    template <typename T>
+    inline __device__ void strip_x_extent(
+        vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
+        int v, T *x_lo, T *x_hi)
+    {
+        const T y0 = T(v), y1 = T(v + 1);
+        T lo = T(1e30f), hi = T(-1e30f);
+        const vec2<T> verts[4] = {s0, s1, s2, s3};
+
+        GSPLAT_PRAGMA_UNROLL
+        for (int i = 0; i < 4; i++)
+        {
+            const vec2<T> a = verts[i], b = verts[(i + 1) & 3];
+            if (a.y >= y0 && a.y <= y1) { lo = min(lo, a.x); hi = max(hi, a.x); }
+            if (a.y != b.y)
+            {
+                const T inv_dy = T(1) / (b.y - a.y);
+                const T t0 = (y0 - a.y) * inv_dy;
+                if (t0 >= T(0) && t0 <= T(1)) { const T x = a.x + t0*(b.x-a.x); lo = min(lo,x); hi = max(hi,x); }
+                const T t1 = (y1 - a.y) * inv_dy;
+                if (t1 >= T(0) && t1 <= T(1)) { const T x = a.x + t1*(b.x-a.x); lo = min(lo,x); hi = max(hi,x); }
+            }
+        }
+        *x_lo = lo; *x_hi = hi;
+    }
+
+    template <typename T>
+    inline __device__ T tent_weight(
+        vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
+        vec2<T> n01, vec2<T> n12, vec2<T> n23, vec2<T> n30,
+        T n01max, T n12max, T n23max, T n30max,
+        int tu, int tv,
+        T lo_bot, T hi_bot, T lo_top, T hi_top)
+    {
+        T W = T(0);
+        T A, Sx, Sy, Sxy;
+        const T ftu = T(tu), ftu1 = T(tu+1), ftu_1 = T(tu-1);
+        const T ftv = T(tv), ftv_1 = T(tv-1);
+
+        if (ftu < hi_top && ftu1 > lo_top)
+            if (clip_and_compute_moments(s0,s1,s2,s3,n01,n12,n23,n30,n01max,n12max,n23max,n30max,
+                    vec2<T>(ftu,ftv),&A,&Sx,&Sy,&Sxy))
+                W += (A-Sx-Sy+Sxy);
+
+        if (ftu_1 < hi_top && ftu > lo_top)
+            if (clip_and_compute_moments(s0,s1,s2,s3,n01,n12,n23,n30,n01max,n12max,n23max,n30max,
+                    vec2<T>(ftu_1,ftv),&A,&Sx,&Sy,&Sxy))
+                W += (Sx-Sxy);
+
+        if (ftu < hi_bot && ftu1 > lo_bot)
+            if (clip_and_compute_moments(s0,s1,s2,s3,n01,n12,n23,n30,n01max,n12max,n23max,n30max,
+                    vec2<T>(ftu,ftv_1),&A,&Sx,&Sy,&Sxy))
+                W += (Sy-Sxy);
+
+        if (ftu_1 < hi_bot && ftu > lo_bot)
+            if (clip_and_compute_moments(s0,s1,s2,s3,n01,n12,n23,n30,n01max,n12max,n23max,n30max,
+                    vec2<T>(ftu_1,ftv_1),&A,&Sx,&Sy,&Sxy))
+                W += Sxy;
+
+        return W;
+    }
+
+    template <typename T>
+    inline __device__ void tu_range(
+        int minu, int maxu,
+        T lo_bot, T hi_bot, T lo_top, T hi_top,
+        int *tu_start, int *tu_end)
+    {
+        const T fmin = T(minu-2), fmax = T(maxu+2);
+        const T clo = max(fmin, min(fmax, min(lo_bot, lo_top)));
+        const T chi = max(fmin, min(fmax, max(hi_bot, hi_top)));
+        *tu_start = max(minu, (int)floor(clo));
+        *tu_end   = min(maxu, (int)ceil (chi));
     }
 
     template <typename T>
@@ -251,22 +228,23 @@ namespace gsplat::anisotropic_bilinear2
         int texture_res_x, int texture_res_y)
     {
         T value = T(0);
-        for (int v = minv; v < maxv; v++)
+        T lo_bot, hi_bot, lo_top, hi_top;
+        strip_x_extent(s0,s1,s2,s3, minv-1, &lo_bot, &hi_bot);
+        strip_x_extent(s0,s1,s2,s3, minv,   &lo_top, &hi_top);
+
+        for (int tv = minv; tv <= maxv; tv++)
         {
-            for (int u = minu; u < maxu; u++)
+            int tu_start, tu_end;
+            tu_range(minu, maxu, lo_bot, hi_bot, lo_top, hi_top, &tu_start, &tu_end);
+            for (int tu = tu_start; tu <= tu_end; tu++)
             {
-                T A, Sx, Sy, Sxy;
-                if (!clip_and_compute_moments(
-                        s0, s1, s2, s3, n01, n12, n23, n30,
-                        n01max, n12max, n23max, n30max,
-                        vec2<T>(T(u), T(v)), &A, &Sx, &Sy, &Sxy))
-                    continue;
-                int u0 = max(0, min(u, texture_res_x - 1));
-                int v0 = max(0, min(v, texture_res_y - 1));
-                int u1 = max(0, min(u + 1, texture_res_x - 1));
-                int v1 = max(0, min(u + 1, texture_res_y - 1));
-                value += textures[g][v0][u0][k] * (A - Sx - Sy + Sxy) + textures[g][v0][u1][k] * (Sx - Sxy) + textures[g][v1][u0][k] * (Sy - Sxy) + textures[g][v1][u1][k] * Sxy;
+                T W = tent_weight(s0,s1,s2,s3,n01,n12,n23,n30,n01max,n12max,n23max,n30max,
+                                  tu,tv,lo_bot,hi_bot,lo_top,hi_top);
+                if (W == T(0)) continue;
+                value += textures[g][tv][tu][k] * W;
             }
+            lo_bot = lo_top; hi_bot = hi_top;
+            strip_x_extent(s0,s1,s2,s3, tv+1, &lo_top, &hi_top);
         }
         return value * iarea;
     }
@@ -283,34 +261,28 @@ namespace gsplat::anisotropic_bilinear2
         int texture_res_x, int texture_res_y,
         T *alpha, T col[COLOR_DIM])
     {
-        for (int v = minv; v < maxv; v++)
+        const int alpha_k = textures.size(3) - 1;
+        T lo_bot, hi_bot, lo_top, hi_top;
+        strip_x_extent(s0,s1,s2,s3, minv-1, &lo_bot, &hi_bot);
+        strip_x_extent(s0,s1,s2,s3, minv,   &lo_top, &hi_top);
+
+        for (int tv = minv; tv <= maxv; tv++)
         {
-            for (int u = minu; u < maxu; u++)
+            int tu_start, tu_end;
+            tu_range(minu, maxu, lo_bot, hi_bot, lo_top, hi_top, &tu_start, &tu_end);
+            for (int tu = tu_start; tu <= tu_end; tu++)
             {
-                T A, Sx, Sy, Sxy;
-                if (!clip_and_compute_moments(
-                        s0, s1, s2, s3, n01, n12, n23, n30,
-                        n01max, n12max, n23max, n30max,
-                        vec2<T>(T(u), T(v)), &A, &Sx, &Sy, &Sxy))
-                    continue;
-
-                int u0 = max(0, min(u, texture_res_x - 1));
-                int v0 = max(0, min(v, texture_res_y - 1));
-                int u1 = max(0, min(u + 1, texture_res_x - 1));
-                int v1 = max(0, min(u + 1, texture_res_y - 1));
-                T w00 = (A - Sx - Sy + Sxy) * iarea;
-                T w10 = (Sx - Sxy) * iarea;
-                T w01 = (Sy - Sxy) * iarea;
-                T w11 = Sxy * iarea;
-
+                T W = tent_weight(s0,s1,s2,s3,n01,n12,n23,n30,n01max,n12max,n23max,n30max,
+                                  tu,tv,lo_bot,hi_bot,lo_top,hi_top);
+                if (W == T(0)) continue;
+                T wi = W * iarea;
                 GSPLAT_PRAGMA_UNROLL
                 for (int k = 0; k < COLOR_DIM; ++k)
-                {
-                    col[k] += textures[g][v0][u0][k] * w00 + textures[g][v0][u1][k] * w10 + textures[g][v1][u0][k] * w01 + textures[g][v1][u1][k] * w11;
-                }
-                const int alpha_k = textures.size(3) - 1;
-                *alpha += textures[g][v0][u0][alpha_k] * w00 + textures[g][v0][u1][alpha_k] * w10 + textures[g][v1][u0][alpha_k] * w01 + textures[g][v1][u1][alpha_k] * w11;
+                    col[k] += textures[g][tv][tu][k] * wi;
+                *alpha += textures[g][tv][tu][alpha_k] * wi;
             }
+            lo_bot = lo_top; hi_bot = hi_top;
+            strip_x_extent(s0,s1,s2,s3, tv+1, &lo_top, &hi_top);
         }
     }
 
@@ -326,32 +298,26 @@ namespace gsplat::anisotropic_bilinear2
         int texture_res_x, int texture_res_y,
         T col[COLOR_DIM])
     {
-        for (int v = minv; v < maxv; v++)
+        T lo_bot, hi_bot, lo_top, hi_top;
+        strip_x_extent(s0,s1,s2,s3, minv-1, &lo_bot, &hi_bot);
+        strip_x_extent(s0,s1,s2,s3, minv,   &lo_top, &hi_top);
+
+        for (int tv = minv; tv <= maxv; tv++)
         {
-            for (int u = minu; u < maxu; u++)
+            int tu_start, tu_end;
+            tu_range(minu, maxu, lo_bot, hi_bot, lo_top, hi_top, &tu_start, &tu_end);
+            for (int tu = tu_start; tu <= tu_end; tu++)
             {
-                T A, Sx, Sy, Sxy;
-                if (!clip_and_compute_moments(
-                        s0, s1, s2, s3, n01, n12, n23, n30,
-                        n01max, n12max, n23max, n30max,
-                        vec2<T>(T(u), T(v)), &A, &Sx, &Sy, &Sxy))
-                    continue;
-
-                int u0 = max(0, min(u, texture_res_x - 1));
-                int v0 = max(0, min(v, texture_res_y - 1));
-                int u1 = max(0, min(u + 1, texture_res_x - 1));
-                int v1 = max(0, min(u + 1, texture_res_y - 1));
-                T w00 = (A - Sx - Sy + Sxy) * iarea;
-                T w10 = (Sx - Sxy) * iarea;
-                T w01 = (Sy - Sxy) * iarea;
-                T w11 = Sxy * iarea;
-
+                T W = tent_weight(s0,s1,s2,s3,n01,n12,n23,n30,n01max,n12max,n23max,n30max,
+                                  tu,tv,lo_bot,hi_bot,lo_top,hi_top);
+                if (W == T(0)) continue;
+                T wi = W * iarea;
                 GSPLAT_PRAGMA_UNROLL
                 for (int k = 0; k < COLOR_DIM; ++k)
-                {
-                    col[k] += textures[g][v0][u0][k] * w00 + textures[g][v0][u1][k] * w10 + textures[g][v1][u0][k] * w01 + textures[g][v1][u1][k] * w11;
-                }
+                    col[k] += textures[g][tv][tu][k] * wi;
             }
+            lo_bot = lo_top; hi_bot = hi_top;
+            strip_x_extent(s0,s1,s2,s3, tv+1, &lo_top, &hi_top);
         }
     }
 
@@ -367,27 +333,23 @@ namespace gsplat::anisotropic_bilinear2
         int texture_res_x, int texture_res_y, T delta)
     {
         T ndelta = delta * iarea;
+        T lo_bot, hi_bot, lo_top, hi_top;
+        strip_x_extent(s0,s1,s2,s3, minv-1, &lo_bot, &hi_bot);
+        strip_x_extent(s0,s1,s2,s3, minv,   &lo_top, &hi_top);
 
-        for (int v = minv; v < maxv; v++)
+        for (int tv = minv; tv <= maxv; tv++)
         {
-            for (int u = minu; u < maxu; u++)
+            int tu_start, tu_end;
+            tu_range(minu, maxu, lo_bot, hi_bot, lo_top, hi_top, &tu_start, &tu_end);
+            for (int tu = tu_start; tu <= tu_end; tu++)
             {
-                T A, Sx, Sy, Sxy;
-                if (!clip_and_compute_moments(
-                        s0, s1, s2, s3, n01, n12, n23, n30,
-                        n01max, n12max, n23max, n30max,
-                        vec2<T>(T(u), T(v)), &A, &Sx, &Sy, &Sxy))
-                    continue;
-
-                int u0 = max(0, min(u, texture_res_x - 1));
-                int v0 = max(0, min(v, texture_res_y - 1));
-                int u1 = max(0, min(u + 1, texture_res_x - 1));
-                int v1 = max(0, min(u + 1, texture_res_y - 1));
-                gpuAtomicAdd(&v_textures[g][v0][u0][k], ndelta * (A - Sx - Sy + Sxy));
-                gpuAtomicAdd(&v_textures[g][v0][u1][k], ndelta * (Sx - Sxy));
-                gpuAtomicAdd(&v_textures[g][v1][u0][k], ndelta * (Sy - Sxy));
-                gpuAtomicAdd(&v_textures[g][v1][u1][k], ndelta * Sxy);
+                T W = tent_weight(s0,s1,s2,s3,n01,n12,n23,n30,n01max,n12max,n23max,n30max,
+                                  tu,tv,lo_bot,hi_bot,lo_top,hi_top);
+                if (W == T(0)) continue;
+                gpuAtomicAdd(&v_textures[g][tv][tu][k], ndelta * W);
             }
+            lo_bot = lo_top; hi_bot = hi_top;
+            strip_x_extent(s0,s1,s2,s3, tv+1, &lo_top, &hi_top);
         }
     }
 
@@ -407,40 +369,31 @@ namespace gsplat::anisotropic_bilinear2
         T ndeltas[COLOR_DIM];
         GSPLAT_PRAGMA_UNROLL
         for (int k = 0; k < COLOR_DIM; k++)
-        {
             ndeltas[k] = deltas[k] * iarea;
-        }
 
-        for (int v = minv; v < maxv; v++)
+        T lo_bot, hi_bot, lo_top, hi_top;
+        strip_x_extent(s0,s1,s2,s3, minv-1, &lo_bot, &hi_bot);
+        strip_x_extent(s0,s1,s2,s3, minv,   &lo_top, &hi_top);
+
+        for (int tv = minv; tv <= maxv; tv++)
         {
-            for (int u = minu; u < maxu; u++)
+            int tu_start, tu_end;
+            tu_range(minu, maxu, lo_bot, hi_bot, lo_top, hi_top, &tu_start, &tu_end);
+            for (int tu = tu_start; tu <= tu_end; tu++)
             {
-                T A, Sx, Sy, Sxy;
-                if (!clip_and_compute_moments(
-                        s0, s1, s2, s3, n01, n12, n23, n30,
-                        n01max, n12max, n23max, n30max,
-                        vec2<T>(T(u), T(v)), &A, &Sx, &Sy, &Sxy))
-                    continue;
-
-                int u0 = max(0, min(u, texture_res_x - 1));
-                int v0 = max(0, min(v, texture_res_y - 1));
-                int u1 = max(0, min(u + 1, texture_res_x - 1));
-                int v1 = max(0, min(u + 1, texture_res_y - 1));
-                T w00 = (A - Sx - Sy + Sxy);
-                T w10 = (Sx - Sxy);
-                T w01 = (Sy - Sxy);
-                T w11 = Sxy;
-
+                T W = tent_weight(s0,s1,s2,s3,n01,n12,n23,n30,n01max,n12max,n23max,n30max,
+                                  tu,tv,lo_bot,hi_bot,lo_top,hi_top);
+                if (W == T(0)) continue;
+                T wi = W * iarea;
                 GSPLAT_PRAGMA_UNROLL
                 for (int k = 0; k < COLOR_DIM; ++k)
                 {
-                    col[k] += (textures[g][v0][u0][k] * w00 + textures[g][v0][u1][k] * w10 + textures[g][v1][u0][k] * w01 + textures[g][v1][u1][k] * w11) * iarea;
-                    gpuAtomicAdd(&v_textures[g][v0][u0][k], ndeltas[k] * w00);
-                    gpuAtomicAdd(&v_textures[g][v0][u1][k], ndeltas[k] * w10);
-                    gpuAtomicAdd(&v_textures[g][v1][u0][k], ndeltas[k] * w01);
-                    gpuAtomicAdd(&v_textures[g][v1][u1][k], ndeltas[k] * w11);
+                    col[k] += textures[g][tv][tu][k] * wi;
+                    gpuAtomicAdd(&v_textures[g][tv][tu][k], ndeltas[k] * W);
                 }
             }
+            lo_bot = lo_top; hi_bot = hi_top;
+            strip_x_extent(s0,s1,s2,s3, tv+1, &lo_top, &hi_top);
         }
     }
 

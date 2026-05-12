@@ -416,7 +416,7 @@ namespace gsplat
 
                     // compute texture coordinates and bilinear interpolation weights
                     valid_texture = 1;
-                    if (area == 0 || minu == maxu || minv == maxv)
+                    if (area == 0 || minu > maxu || minv > maxv)
                     {
                         valid_texture = 0;
                     }

@@ -333,7 +333,7 @@ namespace gsplat
                     &minu, &minv, &maxu, &maxv, texture_res_x, texture_res_y);
 
                 int32_t valid_texture = 1;
-                if (area == 0 || minu == maxu || minv == maxv)
+                if (area == 0 || minu > maxu || minv > maxv)
                 {
                     valid_texture = 0;
                 }
