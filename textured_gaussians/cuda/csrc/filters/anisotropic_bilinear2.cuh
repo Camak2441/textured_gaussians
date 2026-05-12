@@ -308,7 +308,8 @@ namespace gsplat::anisotropic_bilinear2
                 {
                     col[k] += textures[g][v0][u0][k] * w00 + textures[g][v0][u1][k] * w10 + textures[g][v1][u0][k] * w01 + textures[g][v1][u1][k] * w11;
                 }
-                *alpha += textures[g][v0][u0][COLOR_DIM] * w00 + textures[g][v0][u1][COLOR_DIM] * w10 + textures[g][v1][u0][COLOR_DIM] * w01 + textures[g][v1][u1][COLOR_DIM] * w11;
+                const int alpha_k = textures.size(3) - 1;
+                *alpha += textures[g][v0][u0][alpha_k] * w00 + textures[g][v0][u1][alpha_k] * w10 + textures[g][v1][u0][alpha_k] * w01 + textures[g][v1][u1][alpha_k] * w11;
             }
         }
     }
@@ -433,7 +434,7 @@ namespace gsplat::anisotropic_bilinear2
                 GSPLAT_PRAGMA_UNROLL
                 for (int k = 0; k < COLOR_DIM; ++k)
                 {
-                    col[k] += textures[g][v0][u0][k] * w00 + textures[g][v0][u1][k] * w10 + textures[g][v1][u0][k] * w01 + textures[g][v1][u1][k] * w11;
+                    col[k] += (textures[g][v0][u0][k] * w00 + textures[g][v0][u1][k] * w10 + textures[g][v1][u0][k] * w01 + textures[g][v1][u1][k] * w11) * iarea;
                     gpuAtomicAdd(&v_textures[g][v0][u0][k], ndeltas[k] * w00);
                     gpuAtomicAdd(&v_textures[g][v0][u1][k], ndeltas[k] * w10);
                     gpuAtomicAdd(&v_textures[g][v1][u0][k], ndeltas[k] * w01);
