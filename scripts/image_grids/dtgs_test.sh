@@ -5,8 +5,8 @@ python image_grid.py \
     --border_lw 0.6 --rect_lw 0.4 \
     --models gt tgs_b2_ta_t6 dtgs3_b2_ta_t8 \
     --col_labels "gt=Ground Truth" "tgs_b2_ta_t6=TGS" "dtgs3_b2_ta_t8=DTGS" \
-    --scenes mic \
-    --val_nums 5 \
+    --scenes drums \
+    --val_nums 6 \
     --zoom "mic,5,*,25,100,650,700" \
     --inset "mic,5,*,100,400,250,625,left,1.0" \
     --inset "mic,5,*,500,100,600,300,right,1.0" \

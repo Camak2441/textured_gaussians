@@ -1846,7 +1846,7 @@ class Runner:
                     mem = max(max_mem, torch.cuda.max_memory_allocated() / 1024**3)
                     stats = {
                         "mem": mem,
-                        "ellipse_time": time.time() - global_tic,
+                        "elapsed_time": time.time() - global_tic,
                         "num_GS": len(self.splats["means"]),
                     }
                     # print("Step: ", step, stats)
@@ -1913,7 +1913,7 @@ class Runner:
                 mem = max(max_mem, torch.cuda.max_memory_allocated() / 1024**3)
                 stats = {
                     "mem": mem,
-                    "ellipse_time": time.time() - global_tic,
+                    "elapsed_time": time.time() - global_tic,
                     "num_GS": len(self.splats["means"]),
                 }
                 print("Step: ", step, stats)
@@ -1977,7 +1977,7 @@ class Runner:
         valloader = torch.utils.data.DataLoader(
             self.valset, batch_size=1, shuffle=False, num_workers=0
         )
-        ellipse_time = 0
+        elapsed = 0
         metrics = {"psnr": [], "ssim": [], "lpips": []}
         render_zip_path = f"{self.render_dir}/step_{step}.zip"
         render_zip = zipfile.ZipFile(
@@ -2047,7 +2047,7 @@ class Runner:
             colors = torch.clamp(colors, 0.0, 1.0)
 
             torch.cuda.synchronize()
-            ellipse_time += time.time() - tic
+            elapsed += time.time() - tic
 
             # write images
             canvas = torch.cat([pixels, colors], dim=2).squeeze(0).cpu().numpy()
@@ -2115,14 +2115,14 @@ class Runner:
         render_zip.close()
         print(f"Saved render images to {render_zip_path}")
 
-        ellipse_time /= len(valloader)
+        elapsed /= len(valloader)
 
         psnr = torch.stack(metrics["psnr"]).mean()
         ssim = torch.stack(metrics["ssim"]).mean()
         lpips = torch.stack(metrics["lpips"]).mean()
         print(
             f"PSNR: {psnr.item():.3f}, SSIM: {ssim.item():.4f}, LPIPS: {lpips.item():.3f} "
-            f"Time: {ellipse_time:.3f}s/image "
+            f"Time: {elapsed:.3f}s/image "
             f"Number of GS: {len(self.splats['means'])}"
         )
         # save stats as json
@@ -2130,7 +2130,7 @@ class Runner:
             "psnr": psnr.item(),
             "ssim": ssim.item(),
             "lpips": lpips.item(),
-            "ellipse_time": ellipse_time,
+            "elapsed_time": elapsed,
             "num_GS": len(self.splats["means"]),
         }
         with open(f"{self.stats_dir}/val_step{step:04d}.json", "w") as f:
@@ -2417,6 +2417,14 @@ def main(cfg: Config):
         if "gaussian_factor" in ckpt:
             runner.gaussian_factor = ckpt["gaussian_factor"]
         runner.eval(step=ckpt["step"])
+
+        mem = torch.cuda.max_memory_allocated() / 1024**3
+
+        # save mem json
+        stats = {"mem": mem}
+        with open(f"{runner.stats_dir}/mem_val_step{ckpt["step"]:04d}.json", "w") as f:
+            json.dump(stats, f)
+
         runner.render_traj(step=ckpt["step"])
         rendered = runner.render_textures(
             width=cfg.saved_texture_width, height=cfg.saved_texture_height

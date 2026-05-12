@@ -1,9 +1,1 @@
-bash train/tgss/4_g9999_t16_o_ot_po.sh bicycle
-bash train/tgss/4_g9999_t16_o_ot_po.sh bonsai
-bash train/tgss/4_g9999_t16_o_ot_po.sh counter
-bash train/tgss/4_g9999_t16_o_ot_po.sh flowers
-bash train/tgss/4_g9999_t16_o_ot_po.sh garden
-bash train/tgss/4_g9999_t16_o_ot_po.sh kitchen
-bash train/tgss/4_g9999_t16_o_ot_po.sh room
-bash train/tgss/4_g9999_t16_o_ot_po.sh stump
-bash train/tgss/4_g9999_t16_o_ot_po.sh treehill
+bash train/run_mip_nerf_360.sh "train/tgss/4_g9999_t16_o_ot_po.sh"

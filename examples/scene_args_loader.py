@@ -254,7 +254,7 @@ def process_config(cfg: Config):
 
     # Configure information based on the selected scene
     if cfg.scene is not None:
-        assert cfg.scene in SCENES
+        assert cfg.scene in SCENES, f"Unknown scene {cfg.scene}"
         scene_args = SCENES[cfg.scene]
         cfg.data_dir = _DATA_DIR + "/" + scene_args["data_dir"]
 
