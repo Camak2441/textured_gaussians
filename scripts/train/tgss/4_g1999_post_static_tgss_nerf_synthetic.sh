@@ -1,0 +1,1 @@
+bash train/run_nerf_synthetic.sh "train/tgss/4_g1999_post_static_tgss.sh"
