@@ -252,3 +252,58 @@ def generate_interpolated_path(
         points, n_interp * (points.shape[0] - 1), k=spline_degree, s=smoothness
     )
     return points_to_poses(new_points)
+
+
+def sort_poses_smoothly(
+    poses: np.ndarray,
+    pos_weight: float = 1.0,
+    rot_weight: float = 1.0,
+    start: int | None = None,
+    seed: int | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Order poses greedily to minimise total SE(3) path length.
+
+    Builds a complete graph with edge weights
+        pos_weight * ||Δt|| + rot_weight * geodesic_angle(ΔR)
+    then traverses it with nearest-neighbour from a random (or fixed) start.
+
+    Args:
+        poses: (N, 4, 4) array of c2w matrices.
+        pos_weight: weight applied to translational distance.
+        rot_weight: weight applied to rotational geodesic distance (radians).
+        start: index of the starting pose; if None a random one is chosen.
+        seed: RNG seed used when start is None.
+
+    Returns:
+        sorted_poses: (N, 4, 4) reordered poses.
+        order: (N,) integer index permutation such that sorted_poses = poses[order].
+    """
+    N = len(poses)
+
+    # Pairwise translational distances.
+    t = poses[:, :3, 3]
+    pos_dists = np.linalg.norm(t[:, None] - t[None, :], axis=-1)  # (N, N)
+
+    # Pairwise geodesic rotation distances: angle of R1^T R2.
+    R = poses[:, :3, :3]
+    traces = np.einsum("ikl,jkl->ij", R, R)  # trace(Ri^T Rj)
+    rot_dists = np.arccos(np.clip((traces - 1.0) / 2.0, -1.0, 1.0))  # (N, N)
+
+    dist_matrix = pos_weight * pos_dists + rot_weight * rot_dists
+
+    rng = np.random.default_rng(seed)
+    current = int(rng.integers(N)) if start is None else start
+
+    visited = np.zeros(N, dtype=bool)
+    order = [current]
+    visited[current] = True
+
+    for _ in range(N - 1):
+        d = dist_matrix[current].copy()
+        d[visited] = np.inf
+        current = int(np.argmin(d))
+        order.append(current)
+        visited[current] = True
+
+    order = np.array(order, dtype=np.intp)
+    return poses[order], order
