@@ -328,8 +328,6 @@ namespace gsplat
                 vec2<S> s1;
                 vec2<S> s2;
                 vec2<S> s3;
-                vec2<S> n01, n12, n23, n30;
-                S n01max, n12max, n23max, n30max;
                 int32_t minu, maxu, minv, maxv;
                 S area, iarea;
 
@@ -387,8 +385,7 @@ namespace gsplat
                         texture_res_x, texture_res_y, texture_range.x, texture_range.y);
 
                     area = anisotropic_bilinear::precompute(
-                        &s0, &s1, &s2, &s3, &n01, &n12, &n23, &n30,
-                        &n01max, &n12max, &n23max, &n30max,
+                        &s0, &s1, &s2, &s3,
                         &minu, &minv, &maxu, &maxv, texture_res_x, texture_res_y);
 
                     // compute texture coordinates and bilinear interpolation weights
@@ -406,8 +403,7 @@ namespace gsplat
                     if (texture_alpha && valid_texture > 0)
                     {
                         alpha_scaling_factor = anisotropic_bilinear::sample(
-                            textures, g, alpha_channel, s0, s1, s2, s3, n01, n12, n23, n30,
-                            n01max, n12max, n23max, n30max,
+                            textures, g, alpha_channel, s0, s1, s2, s3,
                             minu, maxu, minv, maxv,
                             area, iarea, texture_res_x, texture_res_y);
                     }
@@ -516,8 +512,7 @@ namespace gsplat
                     {
                         anisotropic_bilinear::color_sample_and_update<COLOR_DIM, S>(
                             textures, v_textures,
-                            g, s0, s1, s2, s3, n01, n12, n23, n30,
-                            n01max, n12max, n23max, n30max,
+                            g, s0, s1, s2, s3,
                             minu, maxu, minv, maxv,
                             area, iarea, texture_res_x, texture_res_y,
                             tex_colors, deltas);
@@ -646,8 +641,7 @@ namespace gsplat
                         if (texture_alpha && valid_texture > 0)
                         {
                             anisotropic_bilinear::update(
-                                v_textures, g, alpha_channel, s0, s1, s2, s3, n01, n12, n23, n30,
-                                n01max, n12max, n23max, n30max,
+                                v_textures, g, alpha_channel, s0, s1, s2, s3,
                                 minu, maxu, minv, maxv,
                                 area, iarea, texture_res_x, texture_res_y, vis * opac * v_alpha);
                         }

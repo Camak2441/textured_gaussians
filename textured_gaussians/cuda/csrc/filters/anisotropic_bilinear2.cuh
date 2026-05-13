@@ -21,73 +21,29 @@ namespace gsplat::anisotropic_bilinear2
     }
 
     template <typename T>
-    inline __device__ bool edge_normal(vec2<T> s0, vec2<T> s01, vec2<T> center, vec2<T> *n01)
-    {
-        if (s01.x == 0 && s01.y == 0) *n01 = s0 - center;
-        else *n01 = vec2<T>(s01.y, -s01.x);
-        T l = glm::length(*n01);
-        if (l == 0) return false;
-        *n01 /= l;
-        return true;
-    }
-
-    template <typename T> inline __device__ T max4(T v0,T v1,T v2,T v3){return max(max(v0,v1),max(v2,v3));}
-    template <typename T> inline __device__ T min4(T v0,T v1,T v2,T v3){return min(min(v0,v1),min(v2,v3));}
-
+    inline __device__ T max4(T v0, T v1, T v2, T v3) { return max(max(v0, v1), max(v2, v3)); }
     template <typename T>
-    inline __device__ bool clip_and_compute_moments(
-        vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
-        vec2<T> n01, vec2<T> n12, vec2<T> n23, vec2<T> n30,
-        T n01max, T n12max, T n23max, T n30max,
-        vec2<T> uv, T *A, T *Sx, T *Sy, T *Sxy)
-    {
-        vec2<T> sc = uv + vec2<T>(T(0.5),T(0.5));
-        if (glm::dot(s0-sc,n01)>=n01max && glm::dot(s1-sc,n12)>=n12max &&
-            glm::dot(s2-sc,n23)>=n23max && glm::dot(s3-sc,n30)>=n30max)
-        { *A=T(1);*Sx=T(0.5);*Sy=T(0.5);*Sxy=T(0.25);return true; }
-
-        vec2<T> poly[8],tmp[8]; int n=4;
-        poly[0]=s0-uv;poly[1]=s1-uv;poly[2]=s2-uv;poly[3]=s3-uv;
-        int m=0;
-        for(int i=0;i<n;i++){vec2<T>a=poly[i],b=poly[(i+1)%n];bool ai=(a.x>=T(0)),bi=(b.x>=T(0));if(ai)tmp[m++]=a;if(ai!=bi){T t=a.x/(a.x-b.x);tmp[m++]=vec2<T>(T(0),a.y+t*(b.y-a.y));}}
-        n=m;if(n<3)return false;
-        m=0;
-        for(int i=0;i<n;i++){vec2<T>a=tmp[i],b=tmp[(i+1)%n];bool ai=(a.x<=T(1)),bi=(b.x<=T(1));if(ai)poly[m++]=a;if(ai!=bi){T t=(a.x-T(1))/(a.x-b.x);poly[m++]=vec2<T>(T(1),a.y+t*(b.y-a.y));}}
-        n=m;if(n<3)return false;
-        m=0;
-        for(int i=0;i<n;i++){vec2<T>a=poly[i],b=poly[(i+1)%n];bool ai=(a.y>=T(0)),bi=(b.y>=T(0));if(ai)tmp[m++]=a;if(ai!=bi){T t=a.y/(a.y-b.y);tmp[m++]=vec2<T>(a.x+t*(b.x-a.x),T(0));}}
-        n=m;if(n<3)return false;
-        m=0;
-        for(int i=0;i<n;i++){vec2<T>a=tmp[i],b=tmp[(i+1)%n];bool ai=(a.y<=T(1)),bi=(b.y<=T(1));if(ai)poly[m++]=a;if(ai!=bi){T t=(a.y-T(1))/(a.y-b.y);poly[m++]=vec2<T>(a.x+t*(b.x-a.x),T(1));}}
-        n=m;if(n<3)return false;
-        *A=T(0);*Sx=T(0);*Sy=T(0);*Sxy=T(0);
-        for(int i=0;i<n;i++){vec2<T>a=poly[i],b=poly[(i+1)%n];T c=cross2d(a,b);*A+=c;*Sx+=c*(a.x+b.x);*Sy+=c*(a.y+b.y);*Sxy+=c*(T(2)*a.x*a.y+a.x*b.y+b.x*a.y+T(2)*b.x*b.y);}
-        *A*=T(0.5);*Sx*=T(1)/T(6);*Sy*=T(1)/T(6);*Sxy*=T(1)/T(24);
-        return true;
-    }
+    inline __device__ T min4(T v0, T v1, T v2, T v3) { return min(min(v0, v1), min(v2, v3)); }
 
     template <typename T>
     inline __device__ T precompute(
         vec2<T> *s0, vec2<T> *s1, vec2<T> *s2, vec2<T> *s3,
-        vec2<T> *n01, vec2<T> *n12, vec2<T> *n23, vec2<T> *n30,
-        T *n01max, T *n12max, T *n23max, T *n30max,
         int32_t *minu, int32_t *minv, int32_t *maxu, int32_t *maxv,
         int texture_res_x, int texture_res_y)
     {
-        vec2<T> s01=*s1-*s0,s12=*s2-*s1,s23=*s3-*s2,s30=*s0-*s3;
-        T area=T(0.5)*(cross2d(s01,s12)+cross2d(s23,s30));
-        if(area<0){area*=-1;vec2<T>t=*s1;*s1=*s3;*s3=t;s01=*s1-*s0;s12=*s2-*s1;s23=*s3-*s2;s30=*s0-*s3;}
-        *minu=max(0,(int32_t)floor(min4(s0->x,s1->x,s2->x,s3->x)));
-        *maxu=min(texture_res_x-1,(int32_t)ceil(max4(s0->x,s1->x,s2->x,s3->x)));
-        *minv=max(0,(int32_t)floor(min4(s0->y,s1->y,s2->y,s3->y)));
-        *maxv=min(texture_res_y-1,(int32_t)ceil(max4(s0->y,s1->y,s2->y,s3->y)));
-        vec2<T> cen=(*s0+*s1+*s2+*s3)/T(4);
-        edge_normal(*s0,s01,cen,n01);edge_normal(*s1,s12,cen,n12);
-        edge_normal(*s2,s23,cen,n23);edge_normal(*s3,s30,cen,n30);
-        *n01max=max(abs(glm::dot(*n01,vec2<T>(T(0.5),T( 0.5)))),abs(glm::dot(*n01,vec2<T>(T(0.5),T(-0.5)))));
-        *n12max=max(abs(glm::dot(*n12,vec2<T>(T(0.5),T( 0.5)))),abs(glm::dot(*n12,vec2<T>(T(0.5),T(-0.5)))));
-        *n23max=max(abs(glm::dot(*n23,vec2<T>(T(0.5),T( 0.5)))),abs(glm::dot(*n23,vec2<T>(T(0.5),T(-0.5)))));
-        *n30max=max(abs(glm::dot(*n30,vec2<T>(T(0.5),T( 0.5)))),abs(glm::dot(*n30,vec2<T>(T(0.5),T(-0.5)))));
+        const vec2<T> s01 = *s1 - *s0, s12 = *s2 - *s1, s23 = *s3 - *s2, s30 = *s0 - *s3;
+        T area = T(0.5) * (cross2d(s01, s12) + cross2d(s23, s30));
+        if (area < 0)
+        {
+            area *= -1;
+            vec2<T> t = *s1;
+            *s1 = *s3;
+            *s3 = t;
+        }
+        *minu = max(0, (int32_t)floor(min4(s0->x, s1->x, s2->x, s3->x)));
+        *maxu = min(texture_res_x - 1, (int32_t)ceil(max4(s0->x, s1->x, s2->x, s3->x)));
+        *minv = max(0, (int32_t)floor(min4(s0->y, s1->y, s2->y, s3->y)));
+        *maxv = min(texture_res_y - 1, (int32_t)ceil(max4(s0->y, s1->y, s2->y, s3->y)));
         return area;
     }
 
@@ -96,23 +52,51 @@ namespace gsplat::anisotropic_bilinear2
         vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3, T y0,
         T *xlo, T *xhi, T *slo, T *shi)
     {
-        const vec2<T> verts[4]={s0,s1,s2,s3};
-        T ex[2]; T es[2]; int cnt=0;
-        *xlo=T(1e30f);*xhi=T(-1e30f);*slo=T(0);*shi=T(0);
+        const vec2<T> verts[4] = {s0, s1, s2, s3};
+        T ex[2];
+        T es[2];
+        int cnt = 0;
+        *xlo = T(1e30f);
+        *xhi = T(-1e30f);
+        *slo = T(0);
+        *shi = T(0);
         GSPLAT_PRAGMA_UNROLL
-        for(int i=0;i<4;i++){
-            if(cnt>=2)break;
-            const vec2<T>a=verts[i],b=verts[(i+1)&3];
-            if(a.y==b.y)continue;
-            const T yl=min(a.y,b.y),yh=max(a.y,b.y);
-            if(y0<yl||y0>yh)continue;
-            const T slope=(b.x-a.x)/(b.y-a.y);
-            ex[cnt]=a.x+(y0-a.y)*slope; es[cnt]=slope; cnt++;
+        for (int i = 0; i < 4; i++)
+        {
+            if (cnt >= 2)
+                break;
+            const vec2<T> a = verts[i], b = verts[(i + 1) & 3];
+            if (a.y == b.y)
+                continue;
+            const T yl = min(a.y, b.y), yh = max(a.y, b.y);
+            if (y0 < yl || y0 > yh)
+                continue;
+            const T slope = (b.x - a.x) / (b.y - a.y);
+            ex[cnt] = a.x + (y0 - a.y) * slope;
+            es[cnt] = slope;
+            cnt++;
         }
-        if(cnt==1){*xlo=*xhi=ex[0];*slo=*shi=es[0];}
-        else if(cnt==2){
-            if(ex[0]<=ex[1]){*xlo=ex[0];*xhi=ex[1];*slo=es[0];*shi=es[1];}
-            else             {*xlo=ex[1];*xhi=ex[0];*slo=es[1];*shi=es[0];}
+        if (cnt == 1)
+        {
+            *xlo = *xhi = ex[0];
+            *slo = *shi = es[0];
+        }
+        else if (cnt == 2)
+        {
+            if (ex[0] <= ex[1])
+            {
+                *xlo = ex[0];
+                *xhi = ex[1];
+                *slo = es[0];
+                *shi = es[1];
+            }
+            else
+            {
+                *xlo = ex[1];
+                *xhi = ex[0];
+                *slo = es[1];
+                *shi = es[0];
+            }
         }
     }
 
@@ -123,12 +107,24 @@ namespace gsplat::anisotropic_bilinear2
         T xlo_in, T xhi_in, T slo_in, T shi_in,
         T *xlo_out, T *xhi_out, T *slo_out, T *shi_out)
     {
-        const vec2<T> verts[4]={s0,s1,s2,s3};
-        bool rescan=false;
+        const vec2<T> verts[4] = {s0, s1, s2, s3};
+        bool rescan = false;
         GSPLAT_PRAGMA_UNROLL
-        for(int i=0;i<4;i++) if(verts[i].y>y_curr&&verts[i].y<=y_next){rescan=true;break;}
-        if(rescan) scan_active_edges(s0,s1,s2,s3,y_next,xlo_out,xhi_out,slo_out,shi_out);
-        else{*xlo_out=xlo_in+slo_in;*xhi_out=xhi_in+shi_in;*slo_out=slo_in;*shi_out=shi_in;}
+        for (int i = 0; i < 4; i++)
+            if (verts[i].y > y_curr && verts[i].y <= y_next)
+            {
+                rescan = true;
+                break;
+            }
+        if (rescan)
+            scan_active_edges(s0, s1, s2, s3, y_next, xlo_out, xhi_out, slo_out, shi_out);
+        else
+        {
+            *xlo_out = xlo_in + slo_in;
+            *xhi_out = xhi_in + shi_in;
+            *slo_out = slo_in;
+            *shi_out = shi_in;
+        }
     }
 
     template <typename T>
@@ -136,10 +132,14 @@ namespace gsplat::anisotropic_bilinear2
         vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
         T y_lo, T y_hi, T *xlo, T *xhi)
     {
-        const vec2<T> verts[4]={s0,s1,s2,s3};
+        const vec2<T> verts[4] = {s0, s1, s2, s3};
         GSPLAT_PRAGMA_UNROLL
-        for(int i=0;i<4;i++)
-            if(verts[i].y>y_lo&&verts[i].y<y_hi){*xlo=min(*xlo,verts[i].x);*xhi=max(*xhi,verts[i].x);}
+        for (int i = 0; i < 4; i++)
+            if (verts[i].y > y_lo && verts[i].y < y_hi)
+            {
+                *xlo = min(*xlo, verts[i].x);
+                *xhi = max(*xhi, verts[i].x);
+            }
     }
 
     // ---- Analytical moment integration ----------------------------------------
@@ -149,6 +149,18 @@ namespace gsplat::anisotropic_bilinear2
         T al, T ar, T bl, T br,
         T *A, T *Sx, T *Sy, T *Sxy)
     {
+        if(al<=T(0)&&ar>=T(1)&&bl<=T(0)&&br>=T(1)){
+            *A=T(1);*Sx=T(0.5);*Sy=T(0.5);*Sxy=T(0.25); return;
+        }
+        if(al>=T(0)&&ar<=T(1)&&bl>=T(0)&&br<=T(1)){
+            const T qa=bl-al,qb=br-ar,C=ar-al,D=qb-qa;
+            *A=C+D*T(0.5);
+            *Sy=C*T(0.5)+D*(T(1)/T(3));
+            const T E=ar*ar-al*al,F=T(2)*(ar*qb-al*qa),G=qb*qb-qa*qa;
+            *Sx=(E+F*T(0.5)+G*(T(1)/T(3)))*T(0.5);
+            *Sxy=(E*T(0.5)+F*(T(1)/T(3))+G*T(0.25))*T(0.5);
+            return;
+        }
         *A=T(0);*Sx=T(0);*Sy=T(0);*Sxy=T(0);
         const T dxl=bl-al,dxr=br-ar;
         T bp[7]; int nb=2; bp[0]=T(0); bp[1]=T(1);
@@ -184,13 +196,13 @@ namespace gsplat::anisotropic_bilinear2
         T al, T ar, T bl, T br, T t_lo, T t_hi,
         T *A, T *Sx, T *Sy, T *Sxy)
     {
-        T An,Sxn,Syn,Sxyn;
-        trapezoid_moments(al,ar,bl,br,&An,&Sxn,&Syn,&Sxyn);
-        const T dt=t_hi-t_lo;
-        *A  +=dt*An;
-        *Sx +=dt*Sxn;
-        *Sy +=dt*(t_lo*An  +dt*Syn);
-        *Sxy+=dt*(t_lo*Sxn +dt*Sxyn);
+        T An, Sxn, Syn, Sxyn;
+        trapezoid_moments(al, ar, bl, br, &An, &Sxn, &Syn, &Sxyn);
+        const T dt = t_hi - t_lo;
+        *A += dt * An;
+        *Sx += dt * Sxn;
+        *Sy += dt * (t_lo * An + dt * Syn);
+        *Sxy += dt * (t_lo * Sxn + dt * Sxyn);
     }
 
     template <typename T>
@@ -198,16 +210,21 @@ namespace gsplat::anisotropic_bilinear2
         vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
         T y, T *xl, T *xr)
     {
-        *xl=T(1e30f);*xr=T(-1e30f);
-        const vec2<T> v[4]={s0,s1,s2,s3};
+        *xl = T(1e30f);
+        *xr = T(-1e30f);
+        const vec2<T> v[4] = {s0, s1, s2, s3};
         GSPLAT_PRAGMA_UNROLL
-        for(int i=0;i<4;i++){
-            const vec2<T> a=v[i],b=v[(i+1)&3];
-            if(a.y==b.y)continue;
-            const T yl=min(a.y,b.y),yh=max(a.y,b.y);
-            if(y<yl||y>yh)continue;
-            const T x=a.x+(y-a.y)/(b.y-a.y)*(b.x-a.x);
-            *xl=min(*xl,x);*xr=max(*xr,x);
+        for (int i = 0; i < 4; i++)
+        {
+            const vec2<T> a = v[i], b = v[(i + 1) & 3];
+            if (a.y == b.y)
+                continue;
+            const T yl = min(a.y, b.y), yh = max(a.y, b.y);
+            if (y < yl || y > yh)
+                continue;
+            const T x = a.x + (y - a.y) / (b.y - a.y) * (b.x - a.x);
+            *xl = min(*xl, x);
+            *xr = max(*xr, x);
         }
     }
 
@@ -215,31 +232,37 @@ namespace gsplat::anisotropic_bilinear2
     inline __device__ void process_strip(
         vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
         T y_lo, T y_hi, T xu,
+        T xl_lo, T xr_lo, T xl_hi, T xr_hi,
         T *A_pp, T *Sx_pp, T *Sy_pp, T *Sxy_pp,
         T *A_mp, T *Sx_mp, T *Sy_mp, T *Sxy_mp)
     {
         *A_pp=*Sx_pp=*Sy_pp=*Sxy_pp=T(0);
         *A_mp=*Sx_mp=*Sy_mp=*Sxy_mp=T(0);
+        if(xl_lo>xr_lo) polygon_x_at_y(s0,s1,s2,s3,y_lo,&xl_lo,&xr_lo);
+        if(xl_hi>xr_hi) polygon_x_at_y(s0,s1,s2,s3,y_hi,&xl_hi,&xr_hi);
         T vy[4]; int nv=0;
         const vec2<T> verts[4]={s0,s1,s2,s3};
         GSPLAT_PRAGMA_UNROLL
         for(int i=0;i<4;i++){
             const T y=verts[i].y;
-            if(y>y_lo&&y<y_hi){
-                int j=nv;
-                while(j>0&&vy[j-1]>y){vy[j]=vy[j-1];j--;}
-                vy[j]=y; nv++;
+            if(y>y_lo&&y<y_hi){int j=nv;while(j>0&&vy[j-1]>y){vy[j]=vy[j-1];j--;}vy[j]=y;nv++;}
+        }
+        if(nv==0){
+            if(!(xl_lo>xr_lo)&&!(xl_hi>xr_hi)){
+                trapezoid_moments(xl_lo-xu,      xr_lo-xu,      xl_hi-xu,      xr_hi-xu,      A_pp,Sx_pp,Sy_pp,Sxy_pp);
+                trapezoid_moments(xl_lo-xu+T(1), xr_lo-xu+T(1), xl_hi-xu+T(1), xr_hi-xu+T(1), A_mp,Sx_mp,Sy_mp,Sxy_mp);
             }
+            return;
         }
         T ypts[6]; int ny=0;
         ypts[ny++]=y_lo;
         for(int i=0;i<nv;i++) ypts[ny++]=vy[i];
         ypts[ny++]=y_hi;
-        T xlo_a,xhi_a;
-        polygon_x_at_y(s0,s1,s2,s3,ypts[0],&xlo_a,&xhi_a);
+        T xlo_a=xl_lo, xhi_a=xr_lo;
         for(int i=0;i<ny-1;i++){
             T xlo_b,xhi_b;
-            polygon_x_at_y(s0,s1,s2,s3,ypts[i+1],&xlo_b,&xhi_b);
+            if(i==ny-2){xlo_b=xl_hi;xhi_b=xr_hi;}
+            else polygon_x_at_y(s0,s1,s2,s3,ypts[i+1],&xlo_b,&xhi_b);
             if(!(xlo_a>xhi_a)&&!(xlo_b>xhi_b)){
                 const T t_lo=ypts[i]-y_lo,t_hi=ypts[i+1]-y_lo;
                 accumulate_strip(xlo_a-xu,      xhi_a-xu,      xlo_b-xu,      xhi_b-xu,      t_lo,t_hi,A_pp,Sx_pp,Sy_pp,Sxy_pp);
@@ -252,19 +275,22 @@ namespace gsplat::anisotropic_bilinear2
     template <typename T>
     inline __device__ T tent_weight(
         vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
-        int tu, int tv)
+        int tu, int tv,
+        T xlo_prev, T xhi_prev,
+        T xlo_curr, T xhi_curr,
+        T xlo_next, T xhi_next)
     {
         T W=T(0);
         T A_pp,Sx_pp,Sy_pp,Sxy_pp,A_mp,Sx_mp,Sy_mp,Sxy_mp;
         const T ftu=T(tu),ftv=T(tv);
-        // Top strip [tv,tv+1]: Q++ (1-x)(1-y) and Q-+ x(1-y)
         process_strip(s0,s1,s2,s3,ftv,ftv+T(1),ftu,
+                      xlo_curr,xhi_curr,xlo_next,xhi_next,
                       &A_pp,&Sx_pp,&Sy_pp,&Sxy_pp,
                       &A_mp,&Sx_mp,&Sy_mp,&Sxy_mp);
         W+=A_pp-Sx_pp-Sy_pp+Sxy_pp;
         W+=Sx_mp-Sxy_mp;
-        // Bottom strip [tv-1,tv]: Q+- (1-x)y and Q-- xy
         process_strip(s0,s1,s2,s3,ftv-T(1),ftv,ftu,
+                      xlo_prev,xhi_prev,xlo_curr,xhi_curr,
                       &A_pp,&Sx_pp,&Sy_pp,&Sxy_pp,
                       &A_mp,&Sx_mp,&Sy_mp,&Sxy_mp);
         W+=Sy_pp-Sxy_pp;
@@ -278,58 +304,63 @@ namespace gsplat::anisotropic_bilinear2
         T lo_bot, T hi_bot, T lo_top, T hi_top,
         int *tu_start, int *tu_end)
     {
-        const T fmin=T(minu-2),fmax=T(maxu+2);
-        const T clo=max(fmin,min(fmax,min(lo_bot,lo_top)));
-        const T chi=max(fmin,min(fmax,max(hi_bot,hi_top)));
-        *tu_start=max(minu,(int)floor(clo));
-        *tu_end  =min(maxu,(int)ceil (chi));
+        const T fmin = T(minu - 2), fmax = T(maxu + 2);
+        const T clo = max(fmin, min(fmax, min(lo_bot, lo_top)));
+        const T chi = max(fmin, min(fmax, max(hi_bot, hi_top)));
+        *tu_start = max(minu, (int)floor(clo));
+        *tu_end = min(maxu, (int)ceil(chi));
     }
 
-    #define AB2_INIT_SCANLINE()                                                         \
-        T _xlo,_xhi,_slo,_shi;                                                         \
-        scan_active_edges(s0,s1,s2,s3,T(minv-1),&_xlo,&_xhi,&_slo,&_shi);             \
-        T _xlo_prev=_xlo,_xhi_prev=_xhi;                                               \
-        advance_scanline(s0,s1,s2,s3,T(minv-1),T(minv),                                \
-                         _xlo,_xhi,_slo,_shi,&_xlo,&_xhi,&_slo,&_shi);
+#define AB2_INIT_SCANLINE()                                                     \
+    T _xlo, _xhi, _slo, _shi;                                                   \
+    scan_active_edges(s0, s1, s2, s3, T(minv - 1), &_xlo, &_xhi, &_slo, &_shi); \
+    T _xlo_prev = _xlo, _xhi_prev = _xhi;                                       \
+    advance_scanline(s0, s1, s2, s3, T(minv - 1), T(minv),                      \
+                     _xlo, _xhi, _slo, _shi, &_xlo, &_xhi, &_slo, &_shi);
 
-    #define AB2_ROW_EXTENTS(tv_)                                                        \
-        T _xlo_next,_xhi_next,_slo_next,_shi_next;                                     \
-        advance_scanline(s0,s1,s2,s3,T(tv_),T((tv_)+1),                                \
-                         _xlo,_xhi,_slo,_shi,                                          \
-                         &_xlo_next,&_xhi_next,&_slo_next,&_shi_next);                 \
-        T lo_bot=min(_xlo_prev,_xlo),hi_bot=max(_xhi_prev,_xhi);                       \
-        T lo_top=min(_xlo,_xlo_next), hi_top=max(_xhi,_xhi_next);                      \
-        fold_vertices(s0,s1,s2,s3,T((tv_)-1),T(tv_),   &lo_bot,&hi_bot);               \
-        fold_vertices(s0,s1,s2,s3,T(tv_),    T((tv_)+1),&lo_top,&hi_top);
+#define AB2_ROW_EXTENTS(tv_)                                               \
+    T _xlo_next, _xhi_next, _slo_next, _shi_next;                          \
+    advance_scanline(s0, s1, s2, s3, T(tv_), T((tv_) + 1),                 \
+                     _xlo, _xhi, _slo, _shi,                               \
+                     &_xlo_next, &_xhi_next, &_slo_next, &_shi_next);      \
+    T lo_bot = min(_xlo_prev, _xlo), hi_bot = max(_xhi_prev, _xhi);        \
+    T lo_top = min(_xlo, _xlo_next), hi_top = max(_xhi, _xhi_next);        \
+    fold_vertices(s0, s1, s2, s3, T((tv_) - 1), T(tv_), &lo_bot, &hi_bot); \
+    fold_vertices(s0, s1, s2, s3, T(tv_), T((tv_) + 1), &lo_top, &hi_top);
 
-    #define AB2_SLIDE_WINDOW()                                                          \
-        _xlo_prev=_xlo;_xhi_prev=_xhi;                                                 \
-        _xlo=_xlo_next;_xhi=_xhi_next;                                                 \
-        _slo=_slo_next;_shi=_shi_next;
+#define AB2_SLIDE_WINDOW() \
+    _xlo_prev = _xlo;      \
+    _xhi_prev = _xhi;      \
+    _xlo = _xlo_next;      \
+    _xhi = _xhi_next;      \
+    _slo = _slo_next;      \
+    _shi = _shi_next;
 
     template <typename T>
     inline __device__ T sample(
         at::PackedTensorAccessor32<const T, 4, at::RestrictPtrTraits> textures,
         int32_t g, int32_t k,
         vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
-        vec2<T> n01, vec2<T> n12, vec2<T> n23, vec2<T> n30,
-        T n01max, T n12max, T n23max, T n30max,
         int32_t minu, int32_t maxu, int32_t minv, int32_t maxv,
         T area, T iarea, int texture_res_x, int texture_res_y)
     {
         AB2_INIT_SCANLINE()
-        T value=T(0);
-        for(int tv=minv;tv<=maxv;tv++){
+        T value = T(0);
+        for (int tv = minv; tv <= maxv; tv++)
+        {
             AB2_ROW_EXTENTS(tv)
-            int tu_s,tu_e; tu_range(minu,maxu,lo_bot,hi_bot,lo_top,hi_top,&tu_s,&tu_e);
-            for(int tu=tu_s;tu<=tu_e;tu++){
-                T W=tent_weight(s0,s1,s2,s3,tu,tv);
-                if(W==T(0))continue;
-                value+=textures[g][tv][tu][k]*W;
+            int tu_s, tu_e;
+            tu_range(minu, maxu, lo_bot, hi_bot, lo_top, hi_top, &tu_s, &tu_e);
+            for (int tu = tu_s; tu <= tu_e; tu++)
+            {
+                T W = tent_weight(s0,s1,s2,s3,tu,tv,_xlo_prev,_xhi_prev,_xlo,_xhi,_xlo_next,_xhi_next);
+                if (W == T(0))
+                    continue;
+                value += textures[g][tv][tu][k] * W;
             }
             AB2_SLIDE_WINDOW()
         }
-        return value*iarea;
+        return value * iarea;
     }
 
     template <uint32_t COLOR_DIM, typename T>
@@ -337,24 +368,27 @@ namespace gsplat::anisotropic_bilinear2
         at::PackedTensorAccessor32<const T, 4, at::RestrictPtrTraits> textures,
         int32_t g,
         vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
-        vec2<T> n01, vec2<T> n12, vec2<T> n23, vec2<T> n30,
-        T n01max, T n12max, T n23max, T n30max,
         int32_t minu, int32_t maxu, int32_t minv, int32_t maxv,
         T area, T iarea, int texture_res_x, int texture_res_y,
         T *alpha, T col[COLOR_DIM])
     {
-        const int alpha_k=textures.size(3)-1;
+        const int alpha_k = textures.size(3) - 1;
         AB2_INIT_SCANLINE()
-        for(int tv=minv;tv<=maxv;tv++){
+        for (int tv = minv; tv <= maxv; tv++)
+        {
             AB2_ROW_EXTENTS(tv)
-            int tu_s,tu_e; tu_range(minu,maxu,lo_bot,hi_bot,lo_top,hi_top,&tu_s,&tu_e);
-            for(int tu=tu_s;tu<=tu_e;tu++){
-                T W=tent_weight(s0,s1,s2,s3,tu,tv);
-                if(W==T(0))continue;
-                T wi=W*iarea;
+            int tu_s, tu_e;
+            tu_range(minu, maxu, lo_bot, hi_bot, lo_top, hi_top, &tu_s, &tu_e);
+            for (int tu = tu_s; tu <= tu_e; tu++)
+            {
+                T W = tent_weight(s0,s1,s2,s3,tu,tv,_xlo_prev,_xhi_prev,_xlo,_xhi,_xlo_next,_xhi_next);
+                if (W == T(0))
+                    continue;
+                T wi = W * iarea;
                 GSPLAT_PRAGMA_UNROLL
-                for(int k=0;k<COLOR_DIM;++k) col[k]+=textures[g][tv][tu][k]*wi;
-                *alpha+=textures[g][tv][tu][alpha_k]*wi;
+                for (int k = 0; k < COLOR_DIM; ++k)
+                    col[k] += textures[g][tv][tu][k] * wi;
+                *alpha += textures[g][tv][tu][alpha_k] * wi;
             }
             AB2_SLIDE_WINDOW()
         }
@@ -365,22 +399,25 @@ namespace gsplat::anisotropic_bilinear2
         at::PackedTensorAccessor32<const T, 4, at::RestrictPtrTraits> textures,
         int32_t g,
         vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
-        vec2<T> n01, vec2<T> n12, vec2<T> n23, vec2<T> n30,
-        T n01max, T n12max, T n23max, T n30max,
         int32_t minu, int32_t maxu, int32_t minv, int32_t maxv,
         T area, T iarea, int texture_res_x, int texture_res_y,
         T col[COLOR_DIM])
     {
         AB2_INIT_SCANLINE()
-        for(int tv=minv;tv<=maxv;tv++){
+        for (int tv = minv; tv <= maxv; tv++)
+        {
             AB2_ROW_EXTENTS(tv)
-            int tu_s,tu_e; tu_range(minu,maxu,lo_bot,hi_bot,lo_top,hi_top,&tu_s,&tu_e);
-            for(int tu=tu_s;tu<=tu_e;tu++){
-                T W=tent_weight(s0,s1,s2,s3,tu,tv);
-                if(W==T(0))continue;
-                T wi=W*iarea;
+            int tu_s, tu_e;
+            tu_range(minu, maxu, lo_bot, hi_bot, lo_top, hi_top, &tu_s, &tu_e);
+            for (int tu = tu_s; tu <= tu_e; tu++)
+            {
+                T W = tent_weight(s0,s1,s2,s3,tu,tv,_xlo_prev,_xhi_prev,_xlo,_xhi,_xlo_next,_xhi_next);
+                if (W == T(0))
+                    continue;
+                T wi = W * iarea;
                 GSPLAT_PRAGMA_UNROLL
-                for(int k=0;k<COLOR_DIM;++k) col[k]+=textures[g][tv][tu][k]*wi;
+                for (int k = 0; k < COLOR_DIM; ++k)
+                    col[k] += textures[g][tv][tu][k] * wi;
             }
             AB2_SLIDE_WINDOW()
         }
@@ -391,20 +428,22 @@ namespace gsplat::anisotropic_bilinear2
         at::PackedTensorAccessor32<T, 4, at::RestrictPtrTraits> v_textures,
         int32_t g, int32_t k,
         vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
-        vec2<T> n01, vec2<T> n12, vec2<T> n23, vec2<T> n30,
-        T n01max, T n12max, T n23max, T n30max,
         int32_t minu, int32_t maxu, int32_t minv, int32_t maxv,
         T area, T iarea, int texture_res_x, int texture_res_y, T delta)
     {
-        T ndelta=delta*iarea;
+        T ndelta = delta * iarea;
         AB2_INIT_SCANLINE()
-        for(int tv=minv;tv<=maxv;tv++){
+        for (int tv = minv; tv <= maxv; tv++)
+        {
             AB2_ROW_EXTENTS(tv)
-            int tu_s,tu_e; tu_range(minu,maxu,lo_bot,hi_bot,lo_top,hi_top,&tu_s,&tu_e);
-            for(int tu=tu_s;tu<=tu_e;tu++){
-                T W=tent_weight(s0,s1,s2,s3,tu,tv);
-                if(W==T(0))continue;
-                gpuAtomicAdd(&v_textures[g][tv][tu][k],ndelta*W);
+            int tu_s, tu_e;
+            tu_range(minu, maxu, lo_bot, hi_bot, lo_top, hi_top, &tu_s, &tu_e);
+            for (int tu = tu_s; tu <= tu_e; tu++)
+            {
+                T W = tent_weight(s0,s1,s2,s3,tu,tv,_xlo_prev,_xhi_prev,_xlo,_xhi,_xlo_next,_xhi_next);
+                if (W == T(0))
+                    continue;
+                gpuAtomicAdd(&v_textures[g][tv][tu][k], ndelta * W);
             }
             AB2_SLIDE_WINDOW()
         }
@@ -416,36 +455,40 @@ namespace gsplat::anisotropic_bilinear2
         at::PackedTensorAccessor32<T, 4, at::RestrictPtrTraits> v_textures,
         int32_t g,
         vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
-        vec2<T> n01, vec2<T> n12, vec2<T> n23, vec2<T> n30,
-        T n01max, T n12max, T n23max, T n30max,
         int32_t minu, int32_t maxu, int32_t minv, int32_t maxv,
         T area, T iarea, int texture_res_x, int texture_res_y,
         T col[COLOR_DIM], T deltas[COLOR_DIM])
     {
         T ndeltas[COLOR_DIM];
         GSPLAT_PRAGMA_UNROLL
-        for(int k=0;k<COLOR_DIM;k++) ndeltas[k]=deltas[k]*iarea;
+        for (int k = 0; k < COLOR_DIM; k++)
+            ndeltas[k] = deltas[k] * iarea;
         AB2_INIT_SCANLINE()
-        for(int tv=minv;tv<=maxv;tv++){
+        for (int tv = minv; tv <= maxv; tv++)
+        {
             AB2_ROW_EXTENTS(tv)
-            int tu_s,tu_e; tu_range(minu,maxu,lo_bot,hi_bot,lo_top,hi_top,&tu_s,&tu_e);
-            for(int tu=tu_s;tu<=tu_e;tu++){
-                T W=tent_weight(s0,s1,s2,s3,tu,tv);
-                if(W==T(0))continue;
-                T wi=W*iarea;
+            int tu_s, tu_e;
+            tu_range(minu, maxu, lo_bot, hi_bot, lo_top, hi_top, &tu_s, &tu_e);
+            for (int tu = tu_s; tu <= tu_e; tu++)
+            {
+                T W = tent_weight(s0,s1,s2,s3,tu,tv,_xlo_prev,_xhi_prev,_xlo,_xhi,_xlo_next,_xhi_next);
+                if (W == T(0))
+                    continue;
+                T wi = W * iarea;
                 GSPLAT_PRAGMA_UNROLL
-                for(int k=0;k<COLOR_DIM;++k){
-                    col[k]+=textures[g][tv][tu][k]*wi;
-                    gpuAtomicAdd(&v_textures[g][tv][tu][k],ndeltas[k]*W);
+                for (int k = 0; k < COLOR_DIM; ++k)
+                {
+                    col[k] += textures[g][tv][tu][k] * wi;
+                    gpuAtomicAdd(&v_textures[g][tv][tu][k], ndeltas[k] * W);
                 }
             }
             AB2_SLIDE_WINDOW()
         }
     }
 
-    #undef AB2_INIT_SCANLINE
-    #undef AB2_ROW_EXTENTS
-    #undef AB2_SLIDE_WINDOW
+#undef AB2_INIT_SCANLINE
+#undef AB2_ROW_EXTENTS
+#undef AB2_SLIDE_WINDOW
 
 } // namespace gsplat::anisotropic_bilinear2
 
