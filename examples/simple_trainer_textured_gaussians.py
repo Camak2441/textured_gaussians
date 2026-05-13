@@ -2366,6 +2366,25 @@ class Runner:
 
 
 def main(cfg: Config):
+    # When resuming from a checkpoint, the textures may have been resized during
+    # the previous training run. Update cfg to match the checkpoint texture
+    # dimensions so the runner (and its optimizer) are created at the correct size
+    # from the start, avoiding a shape mismatch between the initial Parameter and
+    # the optimizer state that will be loaded.
+    if cfg.checkpoint_path is not None:
+        ckpt_path, _ = cfg.checkpoint_path
+        _ckpt_preview = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        if (
+            "splats" in _ckpt_preview
+            and "textures" in _ckpt_preview["splats"]
+            and cfg.filtering
+            not in ("dct3", "dct3_bwd2")  # DCT3 has a non-spatial texture layout
+        ):
+            _t = _ckpt_preview["splats"]["textures"]
+            cfg.texture_height = _t.shape[1]
+            cfg.texture_width = _t.shape[2]
+        del _ckpt_preview
+
     runner = Runner(cfg)
 
     if cfg.viewer_only:
