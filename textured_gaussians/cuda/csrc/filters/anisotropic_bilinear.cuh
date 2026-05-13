@@ -115,27 +115,31 @@ namespace gsplat::anisotropic_bilinear
     // Advance x-boundary state from y=y_curr to y=y_next (= y_curr + 1).
     // If any vertex lies in (y_curr, y_next] a full re-scan is done (O(4));
     // otherwise just x += slope  (O(1)).
+    // nv_out receives count of vertices strictly inside (y_curr, y_next),
+    // computed in the same pass to avoid a redundant loop in AB_ROW_EXTENTS.
     template <typename T>
     inline __device__ void advance_scanline(
         vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
         T y_curr, T y_next,
         T xlo_in, T xhi_in, T slo_in, T shi_in,
-        T *xlo_out, T *xhi_out, T *slo_out, T *shi_out)
+        T *xlo_out, T *xhi_out, T *slo_out, T *shi_out,
+        int *nv_out)
     {
         const vec2<T> verts[4] = {s0, s1, s2, s3};
         bool rescan = false;
+        *nv_out = 0;
         GSPLAT_PRAGMA_UNROLL
         for (int i = 0; i < 4; i++)
-            if (verts[i].y > y_curr && verts[i].y <= y_next)
+        {
+            const T vy = verts[i].y;
+            if (vy > y_curr && vy <= y_next)
             {
                 rescan = true;
-                break;
+                if (vy < y_next) (*nv_out)++;
             }
-
-        if (rescan)
-        {
-            scan_active_edges(s0, s1, s2, s3, y_next, xlo_out, xhi_out, slo_out, shi_out);
         }
+        if (rescan)
+            scan_active_edges(s0, s1, s2, s3, y_next, xlo_out, xhi_out, slo_out, shi_out);
         else
         {
             *xlo_out = xlo_in + slo_in;
@@ -143,24 +147,6 @@ namespace gsplat::anisotropic_bilinear
             *slo_out = slo_in;
             *shi_out = shi_in;
         }
-    }
-
-    // Extend [*xlo, *xhi] with any vertex whose y is strictly inside (y_lo, y_hi).
-    // Needed because a convex polygon vertex can be the extreme x within a strip
-    // even though it doesn't lie on an integer y-boundary.
-    template <typename T>
-    inline __device__ void fold_vertices(
-        vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
-        T y_lo, T y_hi, T *xlo, T *xhi)
-    {
-        const vec2<T> verts[4] = {s0, s1, s2, s3};
-        GSPLAT_PRAGMA_UNROLL
-        for (int i = 0; i < 4; i++)
-            if (verts[i].y > y_lo && verts[i].y < y_hi)
-            {
-                *xlo = min(*xlo, verts[i].x);
-                *xhi = max(*xhi, verts[i].x);
-            }
     }
 
     // ---- Analytical moment integration ----------------------------------------
@@ -217,6 +203,47 @@ namespace gsplat::anisotropic_bilinear
         }
     }
 
+    // trapezoid_sy_sxy: like trapezoid_moments but computes only Sy and Sxy.
+    // Used for Q+- where A and Sx are never needed, saving ~3 FMAs per texel.
+    template <typename T>
+    inline __device__ void trapezoid_sy_sxy(T al, T ar, T bl, T br, T *Sy, T *Sxy)
+    {
+        if(al<=T(0)&&ar>=T(1)&&bl<=T(0)&&br>=T(1)){*Sy=T(0.5);*Sxy=T(0.25);return;}
+        if(al>=T(0)&&ar<=T(1)&&bl>=T(0)&&br<=T(1)){
+            const T qa=bl-al,qb=br-ar,C=ar-al,D=qb-qa;
+            *Sy=C*T(0.5)+D*(T(1)/T(3));
+            const T E=ar*ar-al*al,F=T(2)*(ar*qb-al*qa),G=qb*qb-qa*qa;
+            *Sxy=(E*T(0.5)+F*(T(1)/T(3))+G*T(0.25))*T(0.5);
+            return;
+        }
+        *Sy=T(0);*Sxy=T(0);
+        const T dxl=bl-al,dxr=br-ar;
+        T bp[7]; int nb=2; bp[0]=T(0); bp[1]=T(1);
+        #define TSS_ADD(t_) do{T _t=(t_);if(_t>T(0)&&_t<T(1))bp[nb++]=_t;}while(0)
+        if(dxl!=T(0)){TSS_ADD(-al/dxl);TSS_ADD((T(1)-al)/dxl);}
+        if(dxr!=T(0)){TSS_ADD(-ar/dxr);TSS_ADD((T(1)-ar)/dxr);}
+        {T den=dxl-dxr;if(den!=T(0))TSS_ADD((ar-al)/den);}
+        #undef TSS_ADD
+        for(int i=1;i<nb;i++){T key=bp[i];int j=i-1;while(j>=0&&bp[j]>key){bp[j+1]=bp[j];j--;}bp[j+1]=key;}
+        for(int i=0;i<nb-1;i++){
+            const T t0=bp[i],t1=bp[i+1],dt=t1-t0;
+            if(dt<=T(0))continue;
+            const T la=min(max(al+dxl*t0,T(0)),T(1));
+            const T lb=min(max(al+dxl*t1,T(0)),T(1));
+            const T ra=min(max(ar+dxr*t0,T(0)),T(1));
+            const T rb=min(max(ar+dxr*t1,T(0)),T(1));
+            const T C=ra-la;
+            if(C<=T(0)&&(rb-lb)<=T(0))continue;
+            const T qa=(lb-la)/dt,qb=(rb-ra)/dt,D=qb-qa;
+            const T dt2=dt*dt,dt3=dt2*dt,dt4=dt3*dt;
+            const T dA=C*dt+D*dt2*T(0.5);
+            *Sy+=t0*dA+C*dt2*T(0.5)+D*dt3*(T(1)/T(3));
+            const T E=ra*ra-la*la,F=T(2)*(ra*qb-la*qa),G=qb*qb-qa*qa;
+            const T dSx=(E*dt+F*dt2*T(0.5)+G*dt3*(T(1)/T(3)))*T(0.5);
+            *Sxy+=t0*dSx+(E*dt2*T(0.5)+F*dt3*(T(1)/T(3))+G*dt4*T(0.25))*T(0.5);
+        }
+    }
+
     // accumulate_strip: add sub-strip contribution (y_local in [t_lo,t_hi]) to moments.
     template <typename T>
     inline __device__ void accumulate_strip(
@@ -257,26 +284,18 @@ namespace gsplat::anisotropic_bilinear
         }
     }
 
-    // process_strip: moments for cells [xu,xu+1] (_pp) and [xu-1,xu] (_mp) clipped
-    // to strip [y_lo,y_hi].  xl_lo/xr_lo and xl_hi/xr_hi are pre-computed scanline
-    // x-bounds (inverted sentinel if the polygon doesn't reach that y).  Falls back
-    // to polygon_x_at_y only when the scanline value is degenerate or for interior
-    // y-vertices.  Fast path for the common nv=0 case skips all loop overhead.
+    // single_cell_moments: moments for ONE cell [xu,xu+1]×[y_lo,y_hi].
+    // Same logic as the _pp half of process_strip; used by the column-cache loop.
     template <typename T>
-    inline __device__ void process_strip(
+    inline __device__ void single_cell_moments(
         vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
         T y_lo, T y_hi, T xu,
-        T xl_lo, T xr_lo,   // scanline polygon x at y_lo (xl>xr = degenerate)
-        T xl_hi, T xr_hi,   // scanline polygon x at y_hi
-        T *A_pp, T *Sx_pp, T *Sy_pp, T *Sxy_pp,
-        T *A_mp, T *Sx_mp, T *Sy_mp, T *Sxy_mp)
+        T xl_lo, T xr_lo,   // polygon x at y_lo (xl>xr = degenerate)
+        T xl_hi, T xr_hi,   // polygon x at y_hi
+        T *A, T *Sx, T *Sy, T *Sxy)
     {
-        *A_pp=*Sx_pp=*Sy_pp=*Sxy_pp=T(0);
-        *A_mp=*Sx_mp=*Sy_mp=*Sxy_mp=T(0);
-        // Validate scanline bounds; fall back to exact scan when degenerate
         if(xl_lo>xr_lo) polygon_x_at_y(s0,s1,s2,s3,y_lo,&xl_lo,&xr_lo);
         if(xl_hi>xr_hi) polygon_x_at_y(s0,s1,s2,s3,y_hi,&xl_hi,&xr_hi);
-        // Collect interior y-vertices (insertion-sorted, up to 4)
         T vy[4]; int nv=0;
         const vec2<T> verts[4]={s0,s1,s2,s3};
         GSPLAT_PRAGMA_UNROLL
@@ -285,62 +304,78 @@ namespace gsplat::anisotropic_bilinear
             if(y>y_lo&&y<y_hi){int j=nv;while(j>0&&vy[j-1]>y){vy[j]=vy[j-1];j--;}vy[j]=y;nv++;}
         }
         if(nv==0){
-            // Common case: single sub-strip spanning full [0,1] y range.
-            // For dt=1, t_lo=0: trapezoid_moments output is already cell-local.
-            if(!(xl_lo>xr_lo)&&!(xl_hi>xr_hi)){
-                trapezoid_moments(xl_lo-xu,    xr_lo-xu,    xl_hi-xu,    xr_hi-xu,    A_pp,Sx_pp,Sy_pp,Sxy_pp);
-                trapezoid_moments(xl_lo-xu+T(1),xr_lo-xu+T(1),xl_hi-xu+T(1),xr_hi-xu+T(1),A_mp,Sx_mp,Sy_mp,Sxy_mp);
-            }
+            if(!(xl_lo>xr_lo)&&!(xl_hi>xr_hi))
+                trapezoid_moments(xl_lo-xu,xr_lo-xu,xl_hi-xu,xr_hi-xu,A,Sx,Sy,Sxy);
+            else *A=*Sx=*Sy=*Sxy=T(0);
             return;
         }
-        // Slow path: multiple sub-strips
+        *A=*Sx=*Sy=*Sxy=T(0);
         T ypts[6]; int ny=0;
         ypts[ny++]=y_lo;
         for(int i=0;i<nv;i++) ypts[ny++]=vy[i];
         ypts[ny++]=y_hi;
-        T xlo_a=xl_lo, xhi_a=xr_lo;
+        T xlo_a=xl_lo,xhi_a=xr_lo;
         for(int i=0;i<ny-1;i++){
             T xlo_b,xhi_b;
             if(i==ny-2){xlo_b=xl_hi;xhi_b=xr_hi;}
             else polygon_x_at_y(s0,s1,s2,s3,ypts[i+1],&xlo_b,&xhi_b);
             if(!(xlo_a>xhi_a)&&!(xlo_b>xhi_b)){
                 const T t_lo=ypts[i]-y_lo,t_hi=ypts[i+1]-y_lo;
-                accumulate_strip(xlo_a-xu,      xhi_a-xu,      xlo_b-xu,      xhi_b-xu,      t_lo,t_hi,A_pp,Sx_pp,Sy_pp,Sxy_pp);
-                accumulate_strip(xlo_a-xu+T(1), xhi_a-xu+T(1), xlo_b-xu+T(1), xhi_b-xu+T(1), t_lo,t_hi,A_mp,Sx_mp,Sy_mp,Sxy_mp);
+                accumulate_strip(xlo_a-xu,xhi_a-xu,xlo_b-xu,xhi_b-xu,t_lo,t_hi,A,Sx,Sy,Sxy);
             }
             xlo_a=xlo_b; xhi_a=xhi_b;
         }
     }
 
-    // tent_weight: bilinear tent weight for texel (tu,tv).
-    // Scanline x-bounds are passed in to avoid redundant polygon_x_at_y calls
-    // at the strip boundaries (they are already computed by AB_ROW_EXTENTS).
+    // single_cell_moments_simple: nv=0 fast path — no vertex scan, no fallback.
+    // Returns zero moments when either boundary is degenerate (xl>xr).
     template <typename T>
-    inline __device__ T tent_weight(
-        vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
-        int tu, int tv,
-        T xlo_prev, T xhi_prev,   // polygon x at y=tv-1
-        T xlo_curr, T xhi_curr,   // polygon x at y=tv
-        T xlo_next, T xhi_next)   // polygon x at y=tv+1
+    inline __device__ void single_cell_moments_simple(
+        T xl_lo, T xr_lo, T xl_hi, T xr_hi, T xu,
+        T *A, T *Sx, T *Sy, T *Sxy)
     {
-        T W=T(0);
-        T A_pp,Sx_pp,Sy_pp,Sxy_pp,A_mp,Sx_mp,Sy_mp,Sxy_mp;
-        const T ftu=T(tu),ftv=T(tv);
-        // Top strip [tv,tv+1]: Q++ (1-x)(1-y) and Q-+ x(1-y)
-        process_strip(s0,s1,s2,s3,ftv,ftv+T(1),ftu,
-                      xlo_curr,xhi_curr,xlo_next,xhi_next,
-                      &A_pp,&Sx_pp,&Sy_pp,&Sxy_pp,
-                      &A_mp,&Sx_mp,&Sy_mp,&Sxy_mp);
-        W+=A_pp-Sx_pp-Sy_pp+Sxy_pp;
-        W+=Sx_mp-Sxy_mp;
-        // Bottom strip [tv-1,tv]: Q+- (1-x)y and Q-- xy
-        process_strip(s0,s1,s2,s3,ftv-T(1),ftv,ftu,
-                      xlo_prev,xhi_prev,xlo_curr,xhi_curr,
-                      &A_pp,&Sx_pp,&Sy_pp,&Sxy_pp,
-                      &A_mp,&Sx_mp,&Sy_mp,&Sxy_mp);
-        W+=Sy_pp-Sxy_pp;
-        W+=Sxy_mp;
-        return W;
+        if(xl_lo<=xr_lo&&xl_hi<=xr_hi)
+            trapezoid_moments(xl_lo-xu,xr_lo-xu,xl_hi-xu,xr_hi-xu,A,Sx,Sy,Sxy);
+        else *A=*Sx=*Sy=*Sxy=T(0);
+    }
+
+    // single_cell_sy_sxy_simple: nv=0 fast path, Sy and Sxy only.
+    template <typename T>
+    inline __device__ void single_cell_sy_sxy_simple(
+        T xl_lo, T xr_lo, T xl_hi, T xr_hi, T xu,
+        T *Sy, T *Sxy)
+    {
+        if(xl_lo<=xr_lo&&xl_hi<=xr_hi)
+            trapezoid_sy_sxy(xl_lo-xu,xr_lo-xu,xl_hi-xu,xr_hi-xu,Sy,Sxy);
+        else *Sy=*Sxy=T(0);
+    }
+
+    // single_cell_sy_sxy: full version with vertex detection.  Used in the rare nv>0 case
+    // and for AB_COL_CACHE_INIT initialisation where s0-s3 are available.
+    template <typename T>
+    inline __device__ void single_cell_sy_sxy(
+        vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
+        T y_lo, T y_hi, T xu,
+        T xl_lo, T xr_lo, T xl_hi, T xr_hi,
+        T *Sy, T *Sxy)
+    {
+        if(xl_lo>xr_lo) polygon_x_at_y(s0,s1,s2,s3,y_lo,&xl_lo,&xr_lo);
+        if(xl_hi>xr_hi) polygon_x_at_y(s0,s1,s2,s3,y_hi,&xl_hi,&xr_hi);
+        T vy[4]; int nv=0;
+        const vec2<T> verts[4]={s0,s1,s2,s3};
+        GSPLAT_PRAGMA_UNROLL
+        for(int i=0;i<4;i++){
+            const T y=verts[i].y;
+            if(y>y_lo&&y<y_hi){int j=nv;while(j>0&&vy[j-1]>y){vy[j]=vy[j-1];j--;}vy[j]=y;nv++;}
+        }
+        if(nv==0){
+            if(xl_lo<=xr_lo&&xl_hi<=xr_hi)
+                trapezoid_sy_sxy(xl_lo-xu,xr_lo-xu,xl_hi-xu,xr_hi-xu,Sy,Sxy);
+            else *Sy=*Sxy=T(0);
+            return;
+        }
+        T Adum,Sxdum;
+        single_cell_moments(s0,s1,s2,s3,y_lo,y_hi,xu,xl_lo,xr_lo,xl_hi,xr_hi,&Adum,&Sxdum,Sy,Sxy);
     }
 
     template <typename T>
@@ -362,32 +397,104 @@ namespace gsplat::anisotropic_bilinear
 // fold vertices, sample, slide the three-snapshot window.
 
 // Shared scanline initialisation and first advance.
-#define AB_INIT_SCANLINE()                                                      \
-    T _xlo, _xhi, _slo, _shi;                                                   \
-    scan_active_edges(s0, s1, s2, s3, T(minv - 1), &_xlo, &_xhi, &_slo, &_shi); \
-    T _xlo_prev = _xlo, _xhi_prev = _xhi;                                       \
-    advance_scanline(s0, s1, s2, s3, T(minv - 1), T(minv),                      \
-                     _xlo, _xhi, _slo, _shi, &_xlo, &_xhi, &_slo, &_shi);       \
-    /* _xlo_prev/xhi_prev = x at y=minv-1; _xlo/xhi = x at y=minv */
+#define AB_INIT_SCANLINE()                                                                       \
+    T _xlo, _xhi, _slo, _shi;                                                                    \
+    scan_active_edges(s0, s1, s2, s3, T(minv - 1), &_xlo, &_xhi, &_slo, &_shi);                 \
+    T _xlo_prev = _xlo, _xhi_prev = _xhi;                                                        \
+    int _prev_nv_top;                                                                             \
+    advance_scanline(s0, s1, s2, s3, T(minv - 1), T(minv),                                       \
+                     _xlo, _xhi, _slo, _shi, &_xlo, &_xhi, &_slo, &_shi, &_prev_nv_top);        \
+    T _lo_bot_carry = min(_xlo_prev, _xlo);                                                       \
+    T _hi_bot_carry = max(_xhi_prev, _xhi);                                                       \
+    if(_prev_nv_top!=0) {                                                                         \
+        const T _fi_=T(minv);                                                                     \
+        if(s0.y>_fi_-T(1)&&s0.y<_fi_){_lo_bot_carry=min(_lo_bot_carry,s0.x);_hi_bot_carry=max(_hi_bot_carry,s0.x);} \
+        if(s1.y>_fi_-T(1)&&s1.y<_fi_){_lo_bot_carry=min(_lo_bot_carry,s1.x);_hi_bot_carry=max(_hi_bot_carry,s1.x);} \
+        if(s2.y>_fi_-T(1)&&s2.y<_fi_){_lo_bot_carry=min(_lo_bot_carry,s2.x);_hi_bot_carry=max(_hi_bot_carry,s2.x);} \
+        if(s3.y>_fi_-T(1)&&s3.y<_fi_){_lo_bot_carry=min(_lo_bot_carry,s3.x);_hi_bot_carry=max(_hi_bot_carry,s3.x);} \
+    }                                                                                             \
+    int _bfl_carry=(int)ceilf((float)max(_xlo_prev,_xlo));                                       \
+    int _bfh_carry=(int)floorf((float)min(_xhi_prev,_xhi))-1;
 
 // Per-row: advance to tv+1, form strip extents, update window.
-#define AB_ROW_EXTENTS(tv_)                                                \
-    T _xlo_next, _xhi_next, _slo_next, _shi_next;                          \
-    advance_scanline(s0, s1, s2, s3, T(tv_), T((tv_) + 1),                 \
-                     _xlo, _xhi, _slo, _shi,                               \
-                     &_xlo_next, &_xhi_next, &_slo_next, &_shi_next);      \
-    T lo_bot = min(_xlo_prev, _xlo), hi_bot = max(_xhi_prev, _xhi);        \
-    T lo_top = min(_xlo, _xlo_next), hi_top = max(_xhi, _xhi_next);        \
-    fold_vertices(s0, s1, s2, s3, T((tv_) - 1), T(tv_), &lo_bot, &hi_bot); \
-    fold_vertices(s0, s1, s2, s3, T(tv_), T((tv_) + 1), &lo_top, &hi_top);
+// lo_bot/hi_bot come from the previous row's lo_top/hi_top carry (A).
+#define AB_ROW_EXTENTS(tv_)                                                                         \
+    T _xlo_next, _xhi_next, _slo_next, _shi_next;                                                   \
+    int _nv_top;                                                                                     \
+    advance_scanline(s0, s1, s2, s3, T(tv_), T((tv_) + 1),                                          \
+                     _xlo, _xhi, _slo, _shi,                                                        \
+                     &_xlo_next, &_xhi_next, &_slo_next, &_shi_next, &_nv_top);                    \
+    T lo_bot = _lo_bot_carry, hi_bot = _hi_bot_carry;                                               \
+    T lo_top = min(_xlo, _xlo_next), hi_top = max(_xhi, _xhi_next);                                 \
+    if(_nv_top!=0) {                                                                                 \
+        const T _f_=T(tv_);                                                                          \
+        if(s0.y>_f_&&s0.y<_f_+T(1)){lo_top=min(lo_top,s0.x);hi_top=max(hi_top,s0.x);}             \
+        if(s1.y>_f_&&s1.y<_f_+T(1)){lo_top=min(lo_top,s1.x);hi_top=max(hi_top,s1.x);}             \
+        if(s2.y>_f_&&s2.y<_f_+T(1)){lo_top=min(lo_top,s2.x);hi_top=max(hi_top,s2.x);}             \
+        if(s3.y>_f_&&s3.y<_f_+T(1)){lo_top=min(lo_top,s3.x);hi_top=max(hi_top,s3.x);}             \
+    }
 
-#define AB_SLIDE_WINDOW() \
-    _xlo_prev = _xlo;     \
-    _xhi_prev = _xhi;     \
-    _xlo = _xlo_next;     \
-    _xhi = _xhi_next;     \
-    _slo = _slo_next;     \
-    _shi = _shi_next;
+#define AB_SLIDE_WINDOW()               \
+    _xlo_prev = _xlo;                   \
+    _xhi_prev = _xhi;                   \
+    _xlo = _xlo_next;                   \
+    _xhi = _xhi_next;                   \
+    _slo = _slo_next;                   \
+    _shi = _shi_next;                   \
+    _lo_bot_carry = lo_top;             \
+    _hi_bot_carry = hi_top;
+
+// AB_COL_CACHE_INIT: call after tu_s/tu_e are known.
+// Finding 1: column cache trimmed to 3 floats (_pSxt, _pSxyt, _pSxyb).
+// Finding 2: bottom cell uses single_cell_sy_sxy* (skips A and Sx).
+// Finding 3: full-coverage integer ranges for fast-path bypass.
+// Finding 4: _nv_top computed in AB_ROW_EXTENTS; _nv_bot = prev row _nv_top (B).
+// Finding 5: priming cell is zero when tu_s==minu — skip both single_cell calls (C).
+#define AB_COL_CACHE_INIT(tv_)                                                          \
+    int _nv_bot = _prev_nv_top;                                                         \
+    T _pSxt,_pSxyt,_pSxyb;                                                              \
+    if(tu_s==minu) {                                                                    \
+        _pSxt=T(0);_pSxyt=T(0);_pSxyb=T(0);                                            \
+    } else {                                                                            \
+        T _dam,_Syt;                                                                    \
+        if(_nv_top==0) single_cell_moments_simple(_xlo,_xhi,_xlo_next,_xhi_next,       \
+            T(tu_s-1),&_dam,&_pSxt,&_Syt,&_pSxyt);                                    \
+        else single_cell_moments(s0,s1,s2,s3,T(tv_),T((tv_)+1),T(tu_s-1),             \
+            _xlo,_xhi,_xlo_next,_xhi_next,&_dam,&_pSxt,&_Syt,&_pSxyt);                \
+        if(_nv_bot==0) single_cell_sy_sxy_simple(_xlo_prev,_xhi_prev,_xlo,_xhi,       \
+            T(tu_s-1),&_Syt,&_pSxyb);                                                  \
+        else single_cell_sy_sxy(s0,s1,s2,s3,T((tv_)-1),T(tv_),T(tu_s-1),             \
+            _xlo_prev,_xhi_prev,_xlo,_xhi,&_Syt,&_pSxyb);                             \
+    }                                                                                   \
+    _prev_nv_top = _nv_top;                                                             \
+    const int _tfl=(int)ceilf((float)max(_xlo,_xlo_next));                              \
+    const int _tfh=(int)floorf((float)min(_xhi,_xhi_next))-1;                          \
+    const int _bfl=_bfl_carry;                                                          \
+    const int _bfh=_bfh_carry;                                                          \
+    _bfl_carry=_tfl; _bfh_carry=_tfh;
+
+// AB_COMPUTE_W: compute W using column cache.
+// Finding 1: only 3 cache values written per iteration.
+// Finding 2: bottom cell uses Sy+Sxy-only path.
+// Finding 3: full-coverage bypass.
+// Finding 4: nv-aware dispatch (simple vs full variant).
+#define AB_COMPUTE_W(tu_, tv_, W_)                                                      \
+    {                                                                                   \
+    T _At,_Sxt,_Syt,_Sxyt;                                                             \
+    if((tu_)>=_tfl&&(tu_)<=_tfh){_At=T(1);_Sxt=T(0.5);_Syt=T(0.5);_Sxyt=T(0.25);}  \
+    else if(_nv_top==0) single_cell_moments_simple(_xlo,_xhi,_xlo_next,_xhi_next,     \
+                             T(tu_),&_At,&_Sxt,&_Syt,&_Sxyt);                         \
+    else single_cell_moments(s0,s1,s2,s3,T(tv_),T((tv_)+1),T(tu_),                    \
+             _xlo,_xhi,_xlo_next,_xhi_next,&_At,&_Sxt,&_Syt,&_Sxyt);                 \
+    T _Syb,_Sxyb_c;                                                                     \
+    if((tu_)>=_bfl&&(tu_)<=_bfh){_Syb=T(0.5);_Sxyb_c=T(0.25);}                       \
+    else if(_nv_bot==0) single_cell_sy_sxy_simple(_xlo_prev,_xhi_prev,_xlo,_xhi,      \
+                             T(tu_),&_Syb,&_Sxyb_c);                                   \
+    else single_cell_sy_sxy(s0,s1,s2,s3,T((tv_)-1),T(tv_),T(tu_),                     \
+             _xlo_prev,_xhi_prev,_xlo,_xhi,&_Syb,&_Sxyb_c);                           \
+    (W_)=(_At-_Sxt-_Syt+_Sxyt)+(_pSxt-_pSxyt)+(_Syb-_Sxyb_c)+(_pSxyb);              \
+    _pSxt=_Sxt; _pSxyt=_Sxyt; _pSxyb=_Sxyb_c;                                        \
+    }
 
     template <typename T>
     inline __device__ T sample(
@@ -404,11 +511,10 @@ namespace gsplat::anisotropic_bilinear
             AB_ROW_EXTENTS(tv)
             int tu_s, tu_e;
             tu_range(minu, maxu, lo_bot, hi_bot, lo_top, hi_top, &tu_s, &tu_e);
+            AB_COL_CACHE_INIT(tv)
             for (int tu = tu_s; tu <= tu_e; tu++)
             {
-                T W = tent_weight(s0,s1,s2,s3,tu,tv,_xlo_prev,_xhi_prev,_xlo,_xhi,_xlo_next,_xhi_next);
-                if (W == T(0))
-                    continue;
+                T W; AB_COMPUTE_W(tu, tv, W)
                 value += textures[g][tv][tu][k] * W;
             }
             AB_SLIDE_WINDOW()
@@ -431,18 +537,19 @@ namespace gsplat::anisotropic_bilinear
             AB_ROW_EXTENTS(tv)
             int tu_s, tu_e;
             tu_range(minu, maxu, lo_bot, hi_bot, lo_top, hi_top, &tu_s, &tu_e);
+            AB_COL_CACHE_INIT(tv)
             for (int tu = tu_s; tu <= tu_e; tu++)
             {
-                T W = tent_weight(s0,s1,s2,s3,tu,tv,_xlo_prev,_xhi_prev,_xlo,_xhi,_xlo_next,_xhi_next);
-                if (W == T(0))
-                    continue;
-                T wi = W * iarea;
+                T W; AB_COMPUTE_W(tu, tv, W)
                 GSPLAT_PRAGMA_UNROLL
                 for (int k = 0; k < COLOR_DIM; ++k)
-                    col[k] += textures[g][tv][tu][k] * wi;
+                    col[k] += textures[g][tv][tu][k] * W;
             }
             AB_SLIDE_WINDOW()
         }
+        GSPLAT_PRAGMA_UNROLL
+        for (int k = 0; k < COLOR_DIM; ++k)
+            col[k] *= iarea;
     }
 
     template <uint32_t COLOR_DIM, typename T>
@@ -461,19 +568,21 @@ namespace gsplat::anisotropic_bilinear
             AB_ROW_EXTENTS(tv)
             int tu_s, tu_e;
             tu_range(minu, maxu, lo_bot, hi_bot, lo_top, hi_top, &tu_s, &tu_e);
+            AB_COL_CACHE_INIT(tv)
             for (int tu = tu_s; tu <= tu_e; tu++)
             {
-                T W = tent_weight(s0,s1,s2,s3,tu,tv,_xlo_prev,_xhi_prev,_xlo,_xhi,_xlo_next,_xhi_next);
-                if (W == T(0))
-                    continue;
-                T wi = W * iarea;
+                T W; AB_COMPUTE_W(tu, tv, W)
                 GSPLAT_PRAGMA_UNROLL
                 for (int k = 0; k < COLOR_DIM; ++k)
-                    col[k] += textures[g][tv][tu][k] * wi;
-                *alpha += textures[g][tv][tu][alpha_k] * wi;
+                    col[k] += textures[g][tv][tu][k] * W;
+                *alpha += textures[g][tv][tu][alpha_k] * W;
             }
             AB_SLIDE_WINDOW()
         }
+        GSPLAT_PRAGMA_UNROLL
+        for (int k = 0; k < COLOR_DIM; ++k)
+            col[k] *= iarea;
+        *alpha *= iarea;
     }
 
     template <typename T>
@@ -491,11 +600,10 @@ namespace gsplat::anisotropic_bilinear
             AB_ROW_EXTENTS(tv)
             int tu_s, tu_e;
             tu_range(minu, maxu, lo_bot, hi_bot, lo_top, hi_top, &tu_s, &tu_e);
+            AB_COL_CACHE_INIT(tv)
             for (int tu = tu_s; tu <= tu_e; tu++)
             {
-                T W = tent_weight(s0,s1,s2,s3,tu,tv,_xlo_prev,_xhi_prev,_xlo,_xhi,_xlo_next,_xhi_next);
-                if (W == T(0))
-                    continue;
+                T W; AB_COMPUTE_W(tu, tv, W)
                 gpuAtomicAdd(&v_textures[g][tv][tu][k], ndelta * W);
             }
             AB_SLIDE_WINDOW()
@@ -522,26 +630,29 @@ namespace gsplat::anisotropic_bilinear
             AB_ROW_EXTENTS(tv)
             int tu_s, tu_e;
             tu_range(minu, maxu, lo_bot, hi_bot, lo_top, hi_top, &tu_s, &tu_e);
+            AB_COL_CACHE_INIT(tv)
             for (int tu = tu_s; tu <= tu_e; tu++)
             {
-                T W = tent_weight(s0,s1,s2,s3,tu,tv,_xlo_prev,_xhi_prev,_xlo,_xhi,_xlo_next,_xhi_next);
-                if (W == T(0))
-                    continue;
-                T wi = W * iarea;
+                T W; AB_COMPUTE_W(tu, tv, W)
                 GSPLAT_PRAGMA_UNROLL
                 for (int k = 0; k < COLOR_DIM; ++k)
                 {
-                    col[k] += textures[g][tv][tu][k] * wi;
+                    col[k] += textures[g][tv][tu][k] * W;
                     gpuAtomicAdd(&v_textures[g][tv][tu][k], ndeltas[k] * W);
                 }
             }
             AB_SLIDE_WINDOW()
         }
+        GSPLAT_PRAGMA_UNROLL
+        for (int k = 0; k < COLOR_DIM; ++k)
+            col[k] *= iarea;
     }
 
 #undef AB_INIT_SCANLINE
 #undef AB_ROW_EXTENTS
 #undef AB_SLIDE_WINDOW
+#undef AB_COL_CACHE_INIT
+#undef AB_COMPUTE_W
 
 } // namespace gsplat::anisotropic_bilinear
 
