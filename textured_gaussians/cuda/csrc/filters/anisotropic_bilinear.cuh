@@ -592,56 +592,62 @@ namespace gsplat::anisotropic_bilinear
     _hi_bot_carry = hi_top;
 
 // AB_COL_CACHE_INIT: call after tu_s/tu_e are known.
-// Row cache: bot Sxyb primed from _row_Sxyb (written by the previous row's top cells).
-// Priming cell is zero when tu_s==minu (polygon is to the right of [minu-1,minu]).
-#define AB_COL_CACHE_INIT(tv_)                                                                    \
-    T _pSxt, _pSxyt;                                                                              \
-    if (tu_s == minu)                                                                             \
-    {                                                                                             \
-        _pSxt = T(0);                                                                             \
-        _pSxyt = T(0);                                                                            \
-    }                                                                                             \
-    else                                                                                          \
-    {                                                                                             \
-        if (_nv_top == 0)                                                                         \
-            single_cell_sx_sxy_simple(_xlo, _xhi, _xlo_next, _xhi_next,                           \
-                                      T(tu_s - 1), &_pSxt, &_pSxyt);                              \
-        else                                                                                      \
-        {                                                                                         \
-            T _dam, _Syt;                                                                         \
-            single_cell_moments(s0, s1, s2, s3, _ftv_, _ftv1_, T(tu_s - 1),                       \
-                                _xlo, _xhi, _xlo_next, _xhi_next, &_dam, &_pSxt, &_Syt, &_pSxyt); \
-        }                                                                                         \
-    }                                                                                             \
-    const int _tfl = (int)ceilf((float)max(_xlo, _xlo_next));                                     \
+// _pSxmSxy = Sx-Sxy of left-neighbour top cell (current row).
+// _pSxyb   = Sxyt of left-neighbour bot cell (previous row), carried as column register
+//            to avoid reading _row_Sxyb[tu-1-minu] after the current row has overwritten it.
+#define AB_COL_CACHE_INIT(tv_)                                                                  \
+    T _pSxmSxy, _pSxyb;                                                                         \
+    if (tu_s == minu)                                                                           \
+    {                                                                                           \
+        _pSxmSxy = T(0);                                                                        \
+        _pSxyb = T(0);                                                                          \
+    }                                                                                           \
+    else                                                                                        \
+    {                                                                                           \
+        T _tsx, _tsxy;                                                                          \
+        if (_nv_top == 0)                                                                       \
+            single_cell_sx_sxy_simple(_xlo, _xhi, _xlo_next, _xhi_next,                         \
+                                      T(tu_s - 1), &_tsx, &_tsxy);                              \
+        else                                                                                    \
+        {                                                                                       \
+            T _dam, _Syt;                                                                       \
+            single_cell_moments(s0, s1, s2, s3, _ftv_, _ftv1_, T(tu_s - 1),                     \
+                                _xlo, _xhi, _xlo_next, _xhi_next, &_dam, &_tsx, &_Syt, &_tsxy); \
+        }                                                                                       \
+        _pSxmSxy = _tsx - _tsxy;                                                                \
+        _pSxyb = _row_Sxyb[tu_s - 1 - minu];                                                    \
+    }                                                                                           \
+    const int _tfl = (int)ceilf((float)max(_xlo, _xlo_next));                                   \
     const int _tfh = (int)floorf((float)min(_xhi, _xhi_next)) - 1;
 
 // AB_COMPUTE_W: compute W using column cache and row cache.
-// _row_Delta[i] = Syt-Sxyt of last row's top cell at column minu+i (bot contribution).
-// _row_Sxyb[i]  = Sxyt of last row's top cell at column minu+i (Q-- contribution).
-// Read both BEFORE computing the top cell, then overwrite with current row's values.
-#define AB_COMPUTE_W(tu_, tv_, W_)                                                                 \
-    {                                                                                              \
-        const T _bd = _row_Delta[(tu_) - minu];                                                    \
-        T _At, _Sxt, _Syt, _Sxyt;                                                                  \
-        if ((tu_) >= _tfl && (tu_) <= _tfh)                                                        \
-        {                                                                                          \
-            _At = T(1);                                                                            \
-            _Sxt = T(0.5);                                                                         \
-            _Syt = T(0.5);                                                                         \
-            _Sxyt = T(0.25);                                                                       \
-        }                                                                                          \
-        else if (_nv_top == 0)                                                                     \
-            single_cell_moments_simple(_xlo, _xhi, _xlo_next, _xhi_next,                           \
-                                       T(tu_), &_At, &_Sxt, &_Syt, &_Sxyt);                        \
-        else                                                                                       \
-            single_cell_moments(s0, s1, s2, s3, _ftv_, _ftv1_, T(tu_),                             \
-                                _xlo, _xhi, _xlo_next, _xhi_next, &_At, &_Sxt, &_Syt, &_Sxyt);     \
-        _row_Delta[(tu_) - minu] = _Syt - _Sxyt;                                                   \
-        _row_Sxyb[(tu_) - minu] = _Sxyt;                                                           \
-        (W_) = (_At - _Sxt - _Syt + _Sxyt) + (_pSxt - _pSxyt) + _bd + _row_Sxyb[(tu_) - 1 - minu]; \
-        _pSxt = _Sxt;                                                                              \
-        _pSxyt = _Sxyt;                                                                            \
+// _row_Delta[i] = Syt-Sxyt of last row's top cell at column minu+i.
+// _row_Sxyb[i]  = Sxyt    of last row's top cell at column minu+i.
+// _Sxyb_c is read BEFORE the write to avoid the stale-value bug: _row_Sxyb[tu-1-minu]
+// would be wrong after iteration tu-1 overwrites it with the current row's value.
+#define AB_COMPUTE_W(tu_, tv_, W_)                                                             \
+    {                                                                                          \
+        const T _bd = _row_Delta[(tu_) - minu];                                                \
+        const T _Sxyb_c = _row_Sxyb[(tu_) - minu];                                             \
+        T _At, _Sxt, _Syt, _Sxyt;                                                              \
+        if ((tu_) >= _tfl && (tu_) <= _tfh)                                                    \
+        {                                                                                      \
+            _At = T(1);                                                                        \
+            _Sxt = T(0.5);                                                                     \
+            _Syt = T(0.5);                                                                     \
+            _Sxyt = T(0.25);                                                                   \
+        }                                                                                      \
+        else if (_nv_top == 0)                                                                 \
+            single_cell_moments_simple(_xlo, _xhi, _xlo_next, _xhi_next,                       \
+                                       T(tu_), &_At, &_Sxt, &_Syt, &_Sxyt);                    \
+        else                                                                                   \
+            single_cell_moments(s0, s1, s2, s3, _ftv_, _ftv1_, T(tu_),                         \
+                                _xlo, _xhi, _xlo_next, _xhi_next, &_At, &_Sxt, &_Syt, &_Sxyt); \
+        _row_Delta[(tu_) - minu] = _Syt - _Sxyt;                                               \
+        _row_Sxyb[(tu_) - minu] = _Sxyt;                                                       \
+        (W_) = (_At - _Sxt - _Syt + _Sxyt) + _pSxmSxy + _bd + _pSxyb;                          \
+        _pSxmSxy = _Sxt - _Sxyt;                                                               \
+        _pSxyb = _Sxyb_c;                                                                      \
     }
 
     template <typename T>

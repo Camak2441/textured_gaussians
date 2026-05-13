@@ -336,7 +336,7 @@ namespace gsplat
                 vec2<S> s1;
                 vec2<S> s2;
                 vec2<S> s3;
-                int32_t minu, maxu, minv, maxv;
+                int32_t minu, maxu, minv, maxv, minv_full, maxv_full;
                 S area, iarea;
 
                 int32_t valid_texture = -1;
@@ -409,7 +409,8 @@ namespace gsplat
 
                     area = anisotropic_bilinear2::precompute(
                         &s0, &s1, &s2, &s3,
-                        &minu, &minv, &maxu, &maxv, texture_res_x, texture_res_y);
+                        &minu, &minv, &maxu, &maxv, &minv_full, &maxv_full,
+                        texture_res_x, texture_res_y);
 
                     // compute texture coordinates and bilinear interpolation weights
                     valid_texture = 1;
@@ -427,7 +428,7 @@ namespace gsplat
                     {
                         alpha_scaling_factor = anisotropic_bilinear2::sample(
                             textures, g, alpha_channel, s0, s1, s2, s3,
-                            minu, maxu, minv, maxv,
+                            minu, maxu, minv, maxv, minv_full, maxv_full,
                             area, iarea, texture_res_x, texture_res_y);
                     }
                     else if (!texture_alpha)
@@ -547,7 +548,7 @@ namespace gsplat
                         anisotropic_bilinear2::color_sample_and_update<COLOR_DIM, S>(
                             textures, v_textures,
                             g, s0, s1, s2, s3,
-                            minu, maxu, minv, maxv,
+                            minu, maxu, minv, maxv, minv_full, maxv_full,
                             area, iarea, texture_res_x, texture_res_y,
                             tex_colors, deltas);
                     }
@@ -696,7 +697,7 @@ namespace gsplat
                         {
                             anisotropic_bilinear2::update(
                                 v_textures, g, alpha_channel, s0, s1, s2, s3,
-                                minu, maxu, minv, maxv,
+                                minu, maxu, minv, maxv, minv_full, maxv_full,
                                 area, iarea, texture_res_x, texture_res_y, vis * opac * v_alpha);
                         }
                     }

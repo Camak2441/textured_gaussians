@@ -29,6 +29,7 @@ namespace gsplat::anisotropic_bilinear2
     inline __device__ T precompute(
         vec2<T> *s0, vec2<T> *s1, vec2<T> *s2, vec2<T> *s3,
         int32_t *minu, int32_t *minv, int32_t *maxu, int32_t *maxv,
+        int32_t *minv_full, int32_t *maxv_full,
         int texture_res_x, int texture_res_y)
     {
         const vec2<T> s01 = *s1 - *s0, s12 = *s2 - *s1, s23 = *s3 - *s2, s30 = *s0 - *s3;
@@ -42,9 +43,35 @@ namespace gsplat::anisotropic_bilinear2
         }
         *minu = max(0, (int32_t)floor(min4(s0->x, s1->x, s2->x, s3->x)));
         *maxu = min(texture_res_x - 1, (int32_t)ceil(max4(s0->x, s1->x, s2->x, s3->x)));
-        *minv = max(0, (int32_t)floor(min4(s0->y, s1->y, s2->y, s3->y)));
-        *maxv = min(texture_res_y - 1, (int32_t)ceil(max4(s0->y, s1->y, s2->y, s3->y)));
+        *minv_full = (int32_t)floor(min4(s0->y, s1->y, s2->y, s3->y));
+        *maxv_full = (int32_t)ceil(max4(s0->y, s1->y, s2->y, s3->y));
+        *minv = max(0, *minv_full);
+        *maxv = min(texture_res_y - 1, *maxv_full);
         return area;
+    }
+
+    // Area and v-moment of polygon row ∩ {u < 0}, given left edge varies linearly
+    // from xlo_bot (at t=0) to xlo_top (at t=1).
+    template <typename T>
+    inline __device__ void left_overflow_moments(T xlo_bot, T xlo_top, T *A, T *Sy)
+    {
+        *A = T(0);
+        *Sy = T(0);
+        if (xlo_bot >= T(0) && xlo_top >= T(0))
+            return;
+        T t0 = T(0), t1 = T(1), w0 = -xlo_bot, w1 = -xlo_top;
+        if (xlo_bot >= T(0)) { t0 = xlo_bot / (xlo_bot - xlo_top); w0 = T(0); }
+        else if (xlo_top >= T(0)) { t1 = xlo_bot / (xlo_bot - xlo_top); w1 = T(0); }
+        const T dt = t1 - t0;
+        *A = dt * (w0 + w1) * T(0.5);
+        *Sy = t0 * (*A) + dt * dt * (w0 * T(1.0f / 6) + w1 * T(1.0f / 3));
+    }
+
+    // Area and v-moment of polygon row ∩ {u > max_u}, right edge xhi_bot→xhi_top.
+    template <typename T>
+    inline __device__ void right_overflow_moments(T xhi_bot, T xhi_top, T max_u, T *A, T *Sy)
+    {
+        left_overflow_moments(-xhi_bot + max_u, -xhi_top + max_u, A, Sy);
     }
 
     template <typename T>
@@ -466,47 +493,90 @@ namespace gsplat::anisotropic_bilinear2
         *tu_end = min(maxu, (int)ceil(chi));
     }
 
-#define AB2_INIT_SCANLINE()                                                          \
-    T _xlo, _xhi, _slo, _shi;                                                        \
-    scan_active_edges(s0, s1, s2, s3, T(minv - 1), &_xlo, &_xhi, &_slo, &_shi);      \
-    T _lo_bot_carry, _hi_bot_carry;                                                  \
-    {                                                                                \
-        T _xp = _xlo, _xhp = _xhi;                                                   \
-        int _pnv;                                                                    \
-        advance_scanline(s0, s1, s2, s3, T(minv - 1), T(minv),                       \
-                         _xlo, _xhi, _slo, _shi, &_xlo, &_xhi, &_slo, &_shi, &_pnv); \
-        _lo_bot_carry = min(_xp, _xlo);                                              \
-        _hi_bot_carry = max(_xhp, _xhi);                                             \
-        if (_pnv != 0)                                                               \
-        {                                                                            \
-            const T _fi_ = T(minv);                                                  \
-            if (s0.y > _fi_ - T(1) && s0.y < _fi_)                                   \
-            {                                                                        \
-                _lo_bot_carry = min(_lo_bot_carry, s0.x);                            \
-                _hi_bot_carry = max(_hi_bot_carry, s0.x);                            \
-            }                                                                        \
-            if (s1.y > _fi_ - T(1) && s1.y < _fi_)                                   \
-            {                                                                        \
-                _lo_bot_carry = min(_lo_bot_carry, s1.x);                            \
-                _hi_bot_carry = max(_hi_bot_carry, s1.x);                            \
-            }                                                                        \
-            if (s2.y > _fi_ - T(1) && s2.y < _fi_)                                   \
-            {                                                                        \
-                _lo_bot_carry = min(_lo_bot_carry, s2.x);                            \
-                _hi_bot_carry = max(_hi_bot_carry, s2.x);                            \
-            }                                                                        \
-            if (s3.y > _fi_ - T(1) && s3.y < _fi_)                                   \
-            {                                                                        \
-                _lo_bot_carry = min(_lo_bot_carry, s3.x);                            \
-                _hi_bot_carry = max(_hi_bot_carry, s3.x);                            \
-            }                                                                        \
-        }                                                                            \
-    }                                                                                \
-    T _row_Delta_s[33], _row_Sxyb_s[33];                                             \
-    GSPLAT_PRAGMA_UNROLL                                                             \
-    for (int _i = 0; _i < 33; _i++)                                                  \
-        _row_Delta_s[_i] = _row_Sxyb_s[_i] = T(0);                                   \
-    T *const _row_Delta = _row_Delta_s + 1, *const _row_Sxyb = _row_Sxyb_s + 1;
+#define AB2_INIT_SCANLINE()                                                                            \
+    T _row_Delta_s[33], _row_Sxyb_s[33];                                                               \
+    GSPLAT_PRAGMA_UNROLL                                                                               \
+    for (int _i = 0; _i < 33; _i++)                                                                    \
+        _row_Delta_s[_i] = _row_Sxyb_s[_i] = T(0);                                                    \
+    T *const _row_Delta = _row_Delta_s + 1, *const _row_Sxyb = _row_Sxyb_s + 1;                       \
+    T _rb_extra = T(0);                                                                                \
+    T _left_carry = T(0), _right_carry = T(0);                                                         \
+    /* Bottom-overflow pre-pass uses a SEPARATE scanline so the main-loop state stays clean */         \
+    if (minv_full < minv)                                                                              \
+    {                                                                                                  \
+        T _xlo_p, _xhi_p, _slo_p, _shi_p;                                                             \
+        scan_active_edges(s0, s1, s2, s3, T(minv_full - 1), &_xlo_p, &_xhi_p, &_slo_p, &_shi_p);      \
+        for (int _tv_ovf = minv_full; _tv_ovf < minv; _tv_ovf++)                                      \
+        {                                                                                              \
+            T _xlo_n, _xhi_n, _slo_n, _shi_n;                                                         \
+            int _nv_n;                                                                                 \
+            advance_scanline(s0, s1, s2, s3, T(_tv_ovf), T(_tv_ovf + 1),                               \
+                             _xlo_p, _xhi_p, _slo_p, _shi_p,                                           \
+                             &_xlo_n, &_xhi_n, &_slo_n, &_shi_n, &_nv_n);                             \
+            /* LB corner: left overflow area → _row_Sxyb_s[0], which is _pSxyb for texel (0,0) */     \
+            T _dA_lb, _dSy_lb;                                                                         \
+            left_overflow_moments(_xlo_p, _xlo_n, &_dA_lb, &_dSy_lb);                                  \
+            _row_Sxyb_s[0] += _dA_lb;                                                                  \
+            /* CB strip: accumulate per-column (A-Sx) into _row_Delta, Sx into _row_Sxyb */            \
+            const int _tu_s_ovf = max(minu, (int)floorf((float)min(_xlo_p, _xlo_n)));                  \
+            const int _tu_e_ovf = min(maxu, (int)ceilf((float)max(_xhi_p, _xhi_n)));                   \
+            for (int _tu_ovf = _tu_s_ovf; _tu_ovf <= _tu_e_ovf; _tu_ovf++)                            \
+            {                                                                                          \
+                T _A_c, _Sx_c, _Sy_c, _Sxy_c;                                                         \
+                if (_nv_n == 0)                                                                        \
+                    single_cell_moments_simple(_xlo_p, _xhi_p, _xlo_n, _xhi_n,                         \
+                                               T(_tu_ovf), &_A_c, &_Sx_c, &_Sy_c, &_Sxy_c);           \
+                else                                                                                   \
+                    single_cell_moments(s0, s1, s2, s3, T(_tv_ovf), T(_tv_ovf + 1), T(_tu_ovf),        \
+                                        _xlo_p, _xhi_p, _xlo_n, _xhi_n,                               \
+                                        &_A_c, &_Sx_c, &_Sy_c, &_Sxy_c);                              \
+                _row_Delta[_tu_ovf - minu] += _A_c - _Sx_c;                                            \
+                _row_Sxyb[_tu_ovf - minu] += _Sx_c;                                                    \
+            }                                                                                          \
+            /* RB corner: right overflow area + orphaned Sx of column maxu → _rb_extra */              \
+            T _dA_rb, _dSy_rb;                                                                         \
+            right_overflow_moments(_xhi_p, _xhi_n, T(maxu), &_dA_rb, &_dSy_rb);                        \
+            _rb_extra += _dA_rb + _row_Sxyb[maxu - minu];                                              \
+            _row_Sxyb[maxu - minu] = T(0);                                                             \
+            _xlo_p = _xlo_n; _xhi_p = _xhi_n; _slo_p = _slo_n; _shi_p = _shi_n;                       \
+        }                                                                                              \
+    }                                                                                                  \
+    /* Main-loop scanline: (re-)initialise independently from T(minv-1) */                             \
+    T _xlo, _xhi, _slo, _shi;                                                                         \
+    scan_active_edges(s0, s1, s2, s3, T(minv - 1), &_xlo, &_xhi, &_slo, &_shi);                       \
+    T _lo_bot_carry, _hi_bot_carry;                                                                    \
+    {                                                                                                  \
+        T _xp = _xlo, _xhp = _xhi;                                                                    \
+        int _pnv;                                                                                      \
+        advance_scanline(s0, s1, s2, s3, T(minv - 1), T(minv),                                         \
+                         _xlo, _xhi, _slo, _shi, &_xlo, &_xhi, &_slo, &_shi, &_pnv);                  \
+        _lo_bot_carry = min(_xp, _xlo);                                                                \
+        _hi_bot_carry = max(_xhp, _xhi);                                                               \
+        if (_pnv != 0)                                                                                 \
+        {                                                                                              \
+            const T _fi_ = T(minv);                                                                    \
+            if (s0.y > _fi_ - T(1) && s0.y < _fi_)                                                    \
+            {                                                                                          \
+                _lo_bot_carry = min(_lo_bot_carry, s0.x);                                              \
+                _hi_bot_carry = max(_hi_bot_carry, s0.x);                                              \
+            }                                                                                          \
+            if (s1.y > _fi_ - T(1) && s1.y < _fi_)                                                    \
+            {                                                                                          \
+                _lo_bot_carry = min(_lo_bot_carry, s1.x);                                              \
+                _hi_bot_carry = max(_hi_bot_carry, s1.x);                                              \
+            }                                                                                          \
+            if (s2.y > _fi_ - T(1) && s2.y < _fi_)                                                    \
+            {                                                                                          \
+                _lo_bot_carry = min(_lo_bot_carry, s2.x);                                              \
+                _hi_bot_carry = max(_hi_bot_carry, s2.x);                                              \
+            }                                                                                          \
+            if (s3.y > _fi_ - T(1) && s3.y < _fi_)                                                    \
+            {                                                                                          \
+                _lo_bot_carry = min(_lo_bot_carry, s3.x);                                              \
+                _hi_bot_carry = max(_hi_bot_carry, s3.x);                                              \
+            }                                                                                          \
+        }                                                                                              \
+    }
 
 #define AB2_ROW_EXTENTS(tv_)                                                    \
     T _xlo_next, _xhi_next, _slo_next, _shi_next;                               \
@@ -550,50 +620,107 @@ namespace gsplat::anisotropic_bilinear2
     _lo_bot_carry = lo_top; \
     _hi_bot_carry = hi_top;
 
-#define AB2_COL_CACHE_INIT(tv_)                                                                   \
-    T _pSxt, _pSxyt;                                                                              \
-    if (tu_s == minu)                                                                             \
-    {                                                                                             \
-        _pSxt = T(0);                                                                             \
-        _pSxyt = T(0);                                                                            \
-    }                                                                                             \
-    else                                                                                          \
-    {                                                                                             \
-        if (_nv_top == 0)                                                                         \
-            single_cell_sx_sxy_simple(_xlo, _xhi, _xlo_next, _xhi_next,                           \
-                                      T(tu_s - 1), &_pSxt, &_pSxyt);                              \
-        else                                                                                      \
-        {                                                                                         \
-            T _dam, _Syt;                                                                         \
-            single_cell_moments(s0, s1, s2, s3, _ftv_, _ftv1_, T(tu_s - 1),                       \
-                                _xlo, _xhi, _xlo_next, _xhi_next, &_dam, &_pSxt, &_Syt, &_pSxyt); \
-        }                                                                                         \
-    }                                                                                             \
-    const int _tfl = (int)ceilf((float)max(_xlo, _xlo_next));                                     \
+// Per-row left/right overflow moments (call after AB2_ROW_EXTENTS).
+// Produces _dA_L/_dSy_L (left strip) and _dA_R/_dSy_R (right strip).
+#define AB2_ROW_OVERFLOW()                                                          \
+    T _dA_L, _dSy_L, _dA_R, _dSy_R;                                                \
+    left_overflow_moments(_xlo, _xlo_next, &_dA_L, &_dSy_L);                       \
+    right_overflow_moments(_xhi, _xhi_next, T(maxu), &_dA_R, &_dSy_R);
+
+// _pSxmSxy = Sx-Sxy of left-neighbour top cell (current row).
+// _pSxyb   = Sxyt of left-neighbour bot cell (previous row), carried as column register.
+#define AB2_COL_CACHE_INIT(tv_)                                                                 \
+    T _pSxmSxy, _pSxyb;                                                                         \
+    if (tu_s == minu)                                                                           \
+    {                                                                                           \
+        _pSxmSxy = T(0);                                                                        \
+        _pSxyb = T(0);                                                                          \
+    }                                                                                           \
+    else                                                                                        \
+    {                                                                                           \
+        T _tsx, _tsxy;                                                                          \
+        if (_nv_top == 0)                                                                       \
+            single_cell_sx_sxy_simple(_xlo, _xhi, _xlo_next, _xhi_next,                         \
+                                      T(tu_s - 1), &_tsx, &_tsxy);                              \
+        else                                                                                    \
+        {                                                                                       \
+            T _dam, _Syt;                                                                       \
+            single_cell_moments(s0, s1, s2, s3, _ftv_, _ftv1_, T(tu_s - 1),                     \
+                                _xlo, _xhi, _xlo_next, _xhi_next, &_dam, &_tsx, &_Syt, &_tsxy); \
+        }                                                                                       \
+        _pSxmSxy = _tsx - _tsxy;                                                                \
+        _pSxyb = _row_Sxyb[tu_s - 1 - minu];                                                    \
+    }                                                                                           \
+    const int _tfl = (int)ceilf((float)max(_xlo, _xlo_next));                                   \
     const int _tfh = (int)floorf((float)min(_xhi, _xhi_next)) - 1;
 
-#define AB2_COMPUTE_W(tu_, tv_, W_)                                                                \
-    {                                                                                              \
-        const T _bd = _row_Delta[(tu_) - minu];                                                    \
-        T _At, _Sxt, _Syt, _Sxyt;                                                                  \
-        if ((tu_) >= _tfl && (tu_) <= _tfh)                                                        \
-        {                                                                                          \
-            _At = T(1);                                                                            \
-            _Sxt = T(0.5);                                                                         \
-            _Syt = T(0.5);                                                                         \
-            _Sxyt = T(0.25);                                                                       \
-        }                                                                                          \
-        else if (_nv_top == 0)                                                                     \
-            single_cell_moments_simple(_xlo, _xhi, _xlo_next, _xhi_next,                           \
-                                       T(tu_), &_At, &_Sxt, &_Syt, &_Sxyt);                        \
-        else                                                                                       \
-            single_cell_moments(s0, s1, s2, s3, _ftv_, _ftv1_, T(tu_),                             \
-                                _xlo, _xhi, _xlo_next, _xhi_next, &_At, &_Sxt, &_Syt, &_Sxyt);     \
-        _row_Delta[(tu_) - minu] = _Syt - _Sxyt;                                                   \
-        _row_Sxyb[(tu_) - minu] = _Sxyt;                                                           \
-        (W_) = (_At - _Sxt - _Syt + _Sxyt) + (_pSxt - _pSxyt) + _bd + _row_Sxyb[(tu_) - 1 - minu]; \
-        _pSxt = _Sxt;                                                                              \
-        _pSxyt = _Sxyt;                                                                            \
+#define AB2_COMPUTE_W(tu_, tv_, W_)                                                            \
+    {                                                                                          \
+        const T _bd = _row_Delta[(tu_) - minu];                                                \
+        const T _Sxyb_c = _row_Sxyb[(tu_) - minu];                                             \
+        T _At, _Sxt, _Syt, _Sxyt;                                                              \
+        if ((tu_) >= _tfl && (tu_) <= _tfh)                                                    \
+        {                                                                                      \
+            _At = T(1);                                                                        \
+            _Sxt = T(0.5);                                                                     \
+            _Syt = T(0.5);                                                                     \
+            _Sxyt = T(0.25);                                                                   \
+        }                                                                                      \
+        else if (_nv_top == 0)                                                                 \
+            single_cell_moments_simple(_xlo, _xhi, _xlo_next, _xhi_next,                       \
+                                       T(tu_), &_At, &_Sxt, &_Syt, &_Sxyt);                    \
+        else                                                                                   \
+            single_cell_moments(s0, s1, s2, s3, _ftv_, _ftv1_, T(tu_),                         \
+                                _xlo, _xhi, _xlo_next, _xhi_next, &_At, &_Sxt, &_Syt, &_Sxyt); \
+        _row_Delta[(tu_) - minu] = _Syt - _Sxyt;                                               \
+        _row_Sxyb[(tu_) - minu] = _Sxyt;                                                       \
+        (W_) = (_At - _Sxt - _Syt + _Sxyt) + _pSxmSxy + _bd + _pSxyb;                          \
+        _pSxmSxy = _Sxt - _Sxyt;                                                               \
+        _pSxyb = _Sxyb_c;                                                                      \
+    }
+
+// Top-overflow post-pass: rows [maxv+1, maxv_full] contribute to texels in row maxv.
+// acc_ is a statement that uses `_tu_top` (column) and `_W_top` (weight).
+#define AB2_TOP_OVERFLOW(acc_)                                                                        \
+    /* Flush left/right carries from the last main-loop row to their clamped destinations */          \
+    if (maxv >= minv) {                                                                               \
+        { const int _tu_top = 0;    const T _W_top = _left_carry;  acc_ }                            \
+        { const int _tu_top = maxu; const T _W_top = _right_carry; acc_ }                            \
+    }                                                                                                 \
+    for (int _tv_top = maxv + 1; _tv_top <= maxv_full; _tv_top++)                                    \
+    {                                                                                                 \
+        T _xlo_tn, _xhi_tn, _slo_tn, _shi_tn; int _nv_tn;                                            \
+        advance_scanline(s0, s1, s2, s3, T(_tv_top), T(_tv_top + 1),                                  \
+                         _xlo, _xhi, _slo, _shi, &_xlo_tn, &_xhi_tn, &_slo_tn, &_shi_tn, &_nv_tn);  \
+        /* LT corner: left overflow area → texel (0, maxv) */                                         \
+        { T _dA_lt, _dSy_lt; left_overflow_moments(_xlo, _xlo_tn, &_dA_lt, &_dSy_lt);                \
+          const int _tu_top = 0; const T _W_top = _dA_lt; acc_ }                                     \
+        /* CT strip */                                                                                \
+        const int _tu_s_tn = max(minu, (int)floorf((float)min(_xlo, _xlo_tn)));                       \
+        const int _tu_e_tn = min(maxu, (int)ceilf((float)max(_xhi, _xhi_tn)));                        \
+        T _sx_c_tn = T(0);                                                                            \
+        for (int _tu_top = _tu_s_tn; _tu_top <= _tu_e_tn; _tu_top++)                                 \
+        {                                                                                             \
+            T _At_tn, _Sxt_tn, _Syt_tn, _Sxyt_tn;                                                    \
+            if (_nv_tn == 0)                                                                          \
+                single_cell_moments_simple(_xlo, _xhi, _xlo_tn, _xhi_tn,                              \
+                                           T(_tu_top), &_At_tn, &_Sxt_tn, &_Syt_tn, &_Sxyt_tn);      \
+            else                                                                                      \
+                single_cell_moments(s0, s1, s2, s3, T(_tv_top), T(_tv_top + 1), T(_tu_top),           \
+                                    _xlo, _xhi, _xlo_tn, _xhi_tn,                                     \
+                                    &_At_tn, &_Sxt_tn, &_Syt_tn, &_Sxyt_tn);                         \
+            { const T _W_top = _At_tn - _Sxt_tn + _sx_c_tn; acc_ }                                   \
+            _sx_c_tn = _Sxt_tn;                                                                       \
+        }                                                                                             \
+        /* Flush Sx carry (clamped) */                                                                \
+        if (_tu_e_tn >= _tu_s_tn) {                                                                   \
+            const int _tu_top = min(maxu, _tu_e_tn + 1);                                              \
+            const T _W_top = _sx_c_tn; acc_                                                           \
+        }                                                                                             \
+        /* RT corner: right overflow area → texel (maxu, maxv) */                                     \
+        { T _dA_rt, _dSy_rt; right_overflow_moments(_xhi, _xhi_tn, T(maxu), &_dA_rt, &_dSy_rt);      \
+          const int _tu_top = maxu; const T _W_top = _dA_rt; acc_ }                                   \
+        _xlo = _xlo_tn; _xhi = _xhi_tn; _slo = _slo_tn; _shi = _shi_tn;                               \
     }
 
     template <typename T>
@@ -602,6 +729,7 @@ namespace gsplat::anisotropic_bilinear2
         int32_t g, int32_t k,
         vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
         int32_t minu, int32_t maxu, int32_t minv, int32_t maxv,
+        int32_t minv_full, int32_t maxv_full,
         T area, T iarea, int texture_res_x, int texture_res_y)
     {
         AB2_INIT_SCANLINE()
@@ -609,6 +737,7 @@ namespace gsplat::anisotropic_bilinear2
         for (int tv = minv; tv <= maxv; tv++)
         {
             AB2_ROW_EXTENTS(tv)
+            AB2_ROW_OVERFLOW()
             int tu_s, tu_e;
             tu_range(minu, maxu, lo_bot, hi_bot, lo_top, hi_top, &tu_s, &tu_e);
             AB2_COL_CACHE_INIT(tv)
@@ -616,10 +745,15 @@ namespace gsplat::anisotropic_bilinear2
             {
                 T W;
                 AB2_COMPUTE_W(tu, tv, W)
+                if (tu == 0)    W += _left_carry + _dA_L - _dSy_L;
+                if (tu == maxu) { W += _right_carry + _dA_R - _dSy_R; if (tv == minv) W += _rb_extra; }
                 value += textures[g][tv][tu][k] * W;
             }
+            _left_carry = _dSy_L;
+            _right_carry = _dSy_R;
             AB2_SLIDE_WINDOW()
         }
+        AB2_TOP_OVERFLOW(value += textures[g][maxv][_tu_top][k] * _W_top;)
         return value * iarea;
     }
 
@@ -629,6 +763,7 @@ namespace gsplat::anisotropic_bilinear2
         int32_t g,
         vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
         int32_t minu, int32_t maxu, int32_t minv, int32_t maxv,
+        int32_t minv_full, int32_t maxv_full,
         T area, T iarea, int texture_res_x, int texture_res_y,
         T *alpha, T col[COLOR_DIM])
     {
@@ -637,6 +772,7 @@ namespace gsplat::anisotropic_bilinear2
         for (int tv = minv; tv <= maxv; tv++)
         {
             AB2_ROW_EXTENTS(tv)
+            AB2_ROW_OVERFLOW()
             int tu_s, tu_e;
             tu_range(minu, maxu, lo_bot, hi_bot, lo_top, hi_top, &tu_s, &tu_e);
             AB2_COL_CACHE_INIT(tv)
@@ -644,13 +780,20 @@ namespace gsplat::anisotropic_bilinear2
             {
                 T W;
                 AB2_COMPUTE_W(tu, tv, W)
+                if (tu == 0)    W += _left_carry + _dA_L - _dSy_L;
+                if (tu == maxu) { W += _right_carry + _dA_R - _dSy_R; if (tv == minv) W += _rb_extra; }
                 GSPLAT_PRAGMA_UNROLL
                 for (int k = 0; k < COLOR_DIM; ++k)
                     col[k] += textures[g][tv][tu][k] * W;
                 *alpha += textures[g][tv][tu][alpha_k] * W;
             }
+            _left_carry = _dSy_L;
+            _right_carry = _dSy_R;
             AB2_SLIDE_WINDOW()
         }
+        AB2_TOP_OVERFLOW(
+            GSPLAT_PRAGMA_UNROLL for (int k = 0; k < COLOR_DIM; ++k) col[k] += textures[g][maxv][_tu_top][k] * _W_top;
+            *alpha += textures[g][maxv][_tu_top][alpha_k] * _W_top;)
         GSPLAT_PRAGMA_UNROLL
         for (int k = 0; k < COLOR_DIM; ++k)
             col[k] *= iarea;
@@ -663,6 +806,7 @@ namespace gsplat::anisotropic_bilinear2
         int32_t g,
         vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
         int32_t minu, int32_t maxu, int32_t minv, int32_t maxv,
+        int32_t minv_full, int32_t maxv_full,
         T area, T iarea, int texture_res_x, int texture_res_y,
         T col[COLOR_DIM])
     {
@@ -670,6 +814,7 @@ namespace gsplat::anisotropic_bilinear2
         for (int tv = minv; tv <= maxv; tv++)
         {
             AB2_ROW_EXTENTS(tv)
+            AB2_ROW_OVERFLOW()
             int tu_s, tu_e;
             tu_range(minu, maxu, lo_bot, hi_bot, lo_top, hi_top, &tu_s, &tu_e);
             AB2_COL_CACHE_INIT(tv)
@@ -677,12 +822,18 @@ namespace gsplat::anisotropic_bilinear2
             {
                 T W;
                 AB2_COMPUTE_W(tu, tv, W)
+                if (tu == 0)    W += _left_carry + _dA_L - _dSy_L;
+                if (tu == maxu) { W += _right_carry + _dA_R - _dSy_R; if (tv == minv) W += _rb_extra; }
                 GSPLAT_PRAGMA_UNROLL
                 for (int k = 0; k < COLOR_DIM; ++k)
                     col[k] += textures[g][tv][tu][k] * W;
             }
+            _left_carry = _dSy_L;
+            _right_carry = _dSy_R;
             AB2_SLIDE_WINDOW()
         }
+        AB2_TOP_OVERFLOW(
+            GSPLAT_PRAGMA_UNROLL for (int k = 0; k < COLOR_DIM; ++k) col[k] += textures[g][maxv][_tu_top][k] * _W_top;)
         GSPLAT_PRAGMA_UNROLL
         for (int k = 0; k < COLOR_DIM; ++k)
             col[k] *= iarea;
@@ -694,6 +845,7 @@ namespace gsplat::anisotropic_bilinear2
         int32_t g, int32_t k,
         vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
         int32_t minu, int32_t maxu, int32_t minv, int32_t maxv,
+        int32_t minv_full, int32_t maxv_full,
         T area, T iarea, int texture_res_x, int texture_res_y, T delta)
     {
         T ndelta = delta * iarea;
@@ -701,6 +853,7 @@ namespace gsplat::anisotropic_bilinear2
         for (int tv = minv; tv <= maxv; tv++)
         {
             AB2_ROW_EXTENTS(tv)
+            AB2_ROW_OVERFLOW()
             int tu_s, tu_e;
             tu_range(minu, maxu, lo_bot, hi_bot, lo_top, hi_top, &tu_s, &tu_e);
             AB2_COL_CACHE_INIT(tv)
@@ -708,10 +861,15 @@ namespace gsplat::anisotropic_bilinear2
             {
                 T W;
                 AB2_COMPUTE_W(tu, tv, W)
+                if (tu == 0)    W += _left_carry + _dA_L - _dSy_L;
+                if (tu == maxu) { W += _right_carry + _dA_R - _dSy_R; if (tv == minv) W += _rb_extra; }
                 gpuAtomicAdd(&v_textures[g][tv][tu][k], ndelta * W);
             }
+            _left_carry = _dSy_L;
+            _right_carry = _dSy_R;
             AB2_SLIDE_WINDOW()
         }
+        AB2_TOP_OVERFLOW(gpuAtomicAdd(&v_textures[g][maxv][_tu_top][k], ndelta * _W_top);)
     }
 
     template <uint32_t COLOR_DIM, typename T>
@@ -721,6 +879,7 @@ namespace gsplat::anisotropic_bilinear2
         int32_t g,
         vec2<T> s0, vec2<T> s1, vec2<T> s2, vec2<T> s3,
         int32_t minu, int32_t maxu, int32_t minv, int32_t maxv,
+        int32_t minv_full, int32_t maxv_full,
         T area, T iarea, int texture_res_x, int texture_res_y,
         T col[COLOR_DIM], T deltas[COLOR_DIM])
     {
@@ -732,6 +891,7 @@ namespace gsplat::anisotropic_bilinear2
         for (int tv = minv; tv <= maxv; tv++)
         {
             AB2_ROW_EXTENTS(tv)
+            AB2_ROW_OVERFLOW()
             int tu_s, tu_e;
             tu_range(minu, maxu, lo_bot, hi_bot, lo_top, hi_top, &tu_s, &tu_e);
             AB2_COL_CACHE_INIT(tv)
@@ -739,6 +899,8 @@ namespace gsplat::anisotropic_bilinear2
             {
                 T W;
                 AB2_COMPUTE_W(tu, tv, W)
+                if (tu == 0)    W += _left_carry + _dA_L - _dSy_L;
+                if (tu == maxu) { W += _right_carry + _dA_R - _dSy_R; if (tv == minv) W += _rb_extra; }
                 GSPLAT_PRAGMA_UNROLL
                 for (int k = 0; k < COLOR_DIM; ++k)
                 {
@@ -746,8 +908,15 @@ namespace gsplat::anisotropic_bilinear2
                     gpuAtomicAdd(&v_textures[g][tv][tu][k], ndeltas[k] * W);
                 }
             }
+            _left_carry = _dSy_L;
+            _right_carry = _dSy_R;
             AB2_SLIDE_WINDOW()
         }
+        AB2_TOP_OVERFLOW(
+            GSPLAT_PRAGMA_UNROLL for (int k = 0; k < COLOR_DIM; ++k) {
+                col[k] += textures[g][maxv][_tu_top][k] * _W_top;
+                gpuAtomicAdd(&v_textures[g][maxv][_tu_top][k], ndeltas[k] * _W_top);
+            })
         GSPLAT_PRAGMA_UNROLL
         for (int k = 0; k < COLOR_DIM; ++k)
             col[k] *= iarea;
@@ -756,8 +925,10 @@ namespace gsplat::anisotropic_bilinear2
 #undef AB2_INIT_SCANLINE
 #undef AB2_ROW_EXTENTS
 #undef AB2_SLIDE_WINDOW
+#undef AB2_ROW_OVERFLOW
 #undef AB2_COL_CACHE_INIT
 #undef AB2_COMPUTE_W
+#undef AB2_TOP_OVERFLOW
 
 } // namespace gsplat::anisotropic_bilinear2
 

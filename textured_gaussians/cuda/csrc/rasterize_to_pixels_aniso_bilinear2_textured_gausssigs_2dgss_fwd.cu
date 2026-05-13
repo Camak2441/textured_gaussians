@@ -329,12 +329,13 @@ namespace gsplat
                     vec2<S>(s3ray_cross.x / s3ray_cross.z, s3ray_cross.y / s3ray_cross.z),
                     texture_res_x, texture_res_y, texture_range.x, texture_range.y);
 
-                int32_t minu, maxu, minv, maxv;
+                int32_t minu, maxu, minv, maxv, minv_full, maxv_full;
                 S iarea;
 
                 const S area = anisotropic_bilinear2::precompute(
                     &s0, &s1, &s2, &s3,
-                    &minu, &minv, &maxu, &maxv, texture_res_x, texture_res_y);
+                    &minu, &minv, &maxu, &maxv, &minv_full, &maxv_full,
+                    texture_res_x, texture_res_y);
 
                 int32_t valid_texture = 1;
                 if (area == 0 || minu > maxu || minv > maxv)
@@ -382,7 +383,7 @@ namespace gsplat
                         S alpha_scaling_factor = S(0);
                         anisotropic_bilinear2::alpha_color_sample<COLOR_DIM, S>(
                             textures, g, s0, s1, s2, s3,
-                            minu, maxu, minv, maxv,
+                            minu, maxu, minv, maxv, minv_full, maxv_full,
                             area, iarea,
                             texture_res_x, texture_res_y,
                             &alpha_scaling_factor,
@@ -393,7 +394,7 @@ namespace gsplat
                     {
                         anisotropic_bilinear2::color_sample<COLOR_DIM, S>(
                             textures, g, s0, s1, s2, s3,
-                            minu, maxu, minv, maxv,
+                            minu, maxu, minv, maxv, minv_full, maxv_full,
                             area, iarea,
                             texture_res_x, texture_res_y,
                             tex_color);
@@ -402,7 +403,7 @@ namespace gsplat
                     {
                         S alpha_scaling_factor = anisotropic_bilinear2::sample<S>(
                             textures, g, alpha_channel, s0, s1, s2, s3,
-                            minu, maxu, minv, maxv,
+                            minu, maxu, minv, maxv, minv_full, maxv_full,
                             area, iarea,
                             texture_res_x, texture_res_y);
                         alpha *= alpha_scaling_factor;
