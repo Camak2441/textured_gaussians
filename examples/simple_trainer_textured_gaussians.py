@@ -16,7 +16,11 @@ import tyro
 import yaml
 import viser
 from datasets.colmap import Dataset, Parser, BlenderDataset
-from datasets.traj import generate_interpolated_path
+from datasets.traj import (
+    generate_interpolated_path,
+    load_or_compute_val_sort_order,
+    val_gt_video_cache_path,
+)
 from torch import Tensor
 from torch.utils.tensorboard import SummaryWriter
 from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
@@ -31,6 +35,11 @@ from examples.coordinate_normalization import (
     compute_scene_bbox_from_cameras,
     compute_bbox_normalization,
 )
+
+import pycvvdp
+
+color_video_vdp = pycvvdp.cvvdp()
+
 from utils import (
     AppearanceOptModule,
     CameraOptModule,
@@ -290,6 +299,12 @@ class Runner:
                 load_depths=cfg.depth_loss,
             )
             self.valset = Dataset(self.parser, split="val")
+            self.val_split_id = str(cfg.test_every)
+            self.val_sort_order = load_or_compute_val_sort_order(
+                self.parser.camtoworlds[self.valset.indices],
+                cfg.data_dir,
+                self.val_split_id,
+            )
             self.scene_scale = self.parser.scene_scale * 1.1 * cfg.global_scale
         elif cfg.dataset_type == "blender":
             self.parser = None
@@ -309,9 +324,29 @@ class Runner:
                 bg_color=bg_color,
                 factor=cfg.data_factor,
             )
+            self.val_split_id = "blender_val"
+            self.val_sort_order = load_or_compute_val_sort_order(
+                self.valset.camtoworlds,
+                cfg.data_dir,
+                self.val_split_id,
+            )
             self.scene_scale = 1.0  # no scaling required
         else:
             raise ValueError(f"Dataset mode {cfg.dataset_type} not supported!")
+
+        # Cache GT val video once at load time; it never changes across training steps.
+        gt_cache_path = val_gt_video_cache_path(cfg.data_dir, self.val_split_id)
+        if not gt_cache_path.exists():
+            print("Caching ground-truth val video...")
+            gt_cache_path.parent.mkdir(parents=True, exist_ok=True)
+            gt_writer = imageio.get_writer(str(gt_cache_path), fps=30)
+            for idx in self.val_sort_order:
+                frame = np.asarray(self.valset[int(idx)]["image"])
+                if frame.dtype != np.uint8:
+                    frame = frame.clip(0, 255).astype(np.uint8)
+                gt_writer.append_data(frame)
+            gt_writer.close()
+            print(f"GT video cached to {gt_cache_path}")
 
         if cfg.opac_loss:
             self.opac_loss = load_loss_fn(cfg.opac_loss_fn)
@@ -1974,8 +2009,12 @@ class Runner:
         cfg = self.cfg
         device = self.device
 
+        # Iterate in smooth sorted order so the video can be written frame-by-frame.
         valloader = torch.utils.data.DataLoader(
-            self.valset, batch_size=1, shuffle=False, num_workers=0
+            self.valset,
+            batch_size=1,
+            sampler=self.val_sort_order.tolist(),
+            num_workers=0,
         )
         elapsed = 0
         metrics = {"psnr": [], "ssim": [], "lpips": []}
@@ -1983,6 +2022,10 @@ class Runner:
         render_zip = zipfile.ZipFile(
             render_zip_path, "w", compression=zipfile.ZIP_STORED
         )
+        video_dir = f"{cfg.result_dir}/videos"
+        os.makedirs(video_dir, exist_ok=True)
+        video_path = f"{video_dir}/eval_{step}.mp4"
+        video_writer = imageio.get_writer(video_path, fps=30)
         for i, data in enumerate(valloader):
             camtoworlds = data["camtoworld"].to(device)
             Ks = data["K"].to(device)
@@ -2045,6 +2088,9 @@ class Runner:
                         f"Background mode {cfg.background_mode} not supported!"
                     )
             colors = torch.clamp(colors, 0.0, 1.0)
+            video_writer.append_data(
+                (colors.squeeze(0).cpu().numpy() * 255).astype(np.uint8)
+            )
 
             torch.cuda.synchronize()
             elapsed += time.time() - tic
@@ -2113,7 +2159,16 @@ class Runner:
             metrics["lpips"].append(self.lpips(colors, pixels))
 
         render_zip.close()
+        video_writer.close()
         print(f"Saved render images to {render_zip_path}")
+        print(f"Saved eval video to {video_path}")
+
+        # ColorVideoVDP: compare rendered video against cached GT video from files.
+        gt_cache_path = val_gt_video_cache_path(cfg.data_dir, self.val_split_id)
+        vs = pycvvdp.video_source_file(video_path, str(gt_cache_path), fps=30)
+        cvvdp_jod, _ = color_video_vdp.predict_video_source(vs)
+        cvvdp_jod = cvvdp_jod.item()
+        print(f"ColorVideoVDP: {cvvdp_jod:.4f} JOD")
 
         elapsed /= len(valloader)
 
@@ -2122,6 +2177,7 @@ class Runner:
         lpips = torch.stack(metrics["lpips"]).mean()
         print(
             f"PSNR: {psnr.item():.3f}, SSIM: {ssim.item():.4f}, LPIPS: {lpips.item():.3f} "
+            f"ColorVideoVDP: {cvvdp_jod:.4f} JOD "
             f"Time: {elapsed:.3f}s/image "
             f"Number of GS: {len(self.splats['means'])}"
         )
@@ -2130,6 +2186,7 @@ class Runner:
             "psnr": psnr.item(),
             "ssim": ssim.item(),
             "lpips": lpips.item(),
+            "cvvdp_jod": cvvdp_jod,
             "elapsed_time": elapsed,
             "num_GS": len(self.splats["means"]),
         }

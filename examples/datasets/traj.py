@@ -4,8 +4,13 @@ Code borrowed from
 https://github.com/google-research/multinerf/blob/5b4d4f64608ec8077222c52fdf814d40acc10bc1/internal/camera_utils.py
 """
 
+import hashlib
+import json
 import numpy as np
 import scipy
+from pathlib import Path
+
+_VAL_ORDER_CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "cache" / "val_order"
 
 
 def normalize(x: np.ndarray) -> np.ndarray:
@@ -307,3 +312,51 @@ def sort_poses_smoothly(
 
     order = np.array(order, dtype=np.intp)
     return poses[order], order
+
+
+def val_gt_video_cache_path(data_dir: str, split_id: str) -> Path:
+    """Return the cache path for the ground-truth val video (sorted by sort order)."""
+    params = {"data_dir": str(Path(data_dir).resolve()), "split_id": split_id}
+    key = hashlib.sha256(json.dumps(params, sort_keys=True).encode()).hexdigest()[:12]
+    name = Path(data_dir).name
+    return _VAL_ORDER_CACHE_DIR / f"{name}_{key}_gt.mp4"
+
+
+def load_or_compute_val_sort_order(
+    poses: np.ndarray,
+    data_dir: str,
+    split_id: str,
+    seed: int = 0,
+) -> np.ndarray:
+    """Return the greedy SE(3) sort order for *poses*, loading from cache if available.
+
+    The result is cached in data/cache/val_order/ so subsequent runs skip the
+    O(N²) distance-matrix computation.
+
+    Args:
+        poses: (N, 4, 4) c2w matrices for the validation split.
+        data_dir: dataset root directory (used as cache key).
+        split_id: string that identifies the val split within this dataset,
+            e.g. str(test_every) for COLMAP or "blender_val" for Blender.
+        seed: RNG seed for the random starting pose.
+
+    Returns:
+        order: (N,) integer index permutation into *poses*.
+    """
+    params = {"data_dir": str(Path(data_dir).resolve()), "split_id": split_id}
+    key = hashlib.sha256(json.dumps(params, sort_keys=True).encode()).hexdigest()[:12]
+    name = Path(data_dir).name
+    cache_path = _VAL_ORDER_CACHE_DIR / f"{name}_{key}.npy"
+
+    if cache_path.exists():
+        order = np.load(cache_path)
+        if len(order) == len(poses):
+            print(f"Loaded val sort order from cache: {cache_path}")
+            return order
+
+    print("Computing val sort order...")
+    _, order = sort_poses_smoothly(poses, seed=seed)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    np.save(cache_path, order)
+    print(f"Cached val sort order to {cache_path}")
+    return order

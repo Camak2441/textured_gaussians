@@ -4,7 +4,7 @@ cd ../examples
 export CUDA_VISIBLE_DEVICES=${2:-0}
 python simple_trainer_textured_gaussians.py mcmc \
     --scene "$1" \
-    --ckpt "../results/tgs/$1/ckpts/ckpt_29999.pt" \
+    --ckpt "../results/tgs_b2_psfm/$1/ckpts/ckpt_29999.pt" \
     --init_extent 1 \
     --init_type=pretrained \
     --background_mode "white" \
@@ -12,7 +12,7 @@ python simple_trainer_textured_gaussians.py mcmc \
     --init_num_pts=10000 \
     --strategy.cap-max=10000 \
     --strategy.refine-start-iter=1000000000000 \
-    --filtering=bilinear \
+    --filtering=bilinear_bwd2 \
     --alpha_loss \
     --dist_loss \
     --normal_loss \
