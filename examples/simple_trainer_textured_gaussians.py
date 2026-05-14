@@ -2003,7 +2003,7 @@ class Runner:
                 self.viewer.update(step, num_train_rays_per_step)
 
     @torch.no_grad()
-    def eval(self, step: int):
+    def eval(self, step: int, return_mem: bool = False):
         """Entry for evaluation."""
         print("Running evaluation...")
         cfg = self.cfg
@@ -2158,6 +2158,9 @@ class Runner:
             metrics["ssim"].append(self.ssim(colors, pixels))
             metrics["lpips"].append(self.lpips(colors, pixels))
 
+        mem = torch.cuda.max_memory_allocated() / 1024**3
+        elapsed /= len(valloader)
+
         render_zip.close()
         video_writer.close()
         print(f"Saved render images to {render_zip_path}")
@@ -2168,9 +2171,6 @@ class Runner:
         vs = pycvvdp.video_source_file(video_path, str(gt_cache_path), fps=30)
         cvvdp_jod, _ = color_video_vdp.predict_video_source(vs)
         cvvdp_jod = cvvdp_jod.item()
-        print(f"ColorVideoVDP: {cvvdp_jod:.4f} JOD")
-
-        elapsed /= len(valloader)
 
         psnr = torch.stack(metrics["psnr"]).mean()
         ssim = torch.stack(metrics["ssim"]).mean()
@@ -2196,6 +2196,8 @@ class Runner:
         for k, v in stats.items():
             self.writer.add_scalar(f"val/{k}", v, step)
         self.writer.flush()
+        if return_mem:
+            return mem
 
     @torch.no_grad()
     def render_traj(self, step: int):
@@ -2492,9 +2494,7 @@ def main(cfg: Config):
             runner.sigmoid_factor = ckpt["sigmoid_factor"]
         if "gaussian_factor" in ckpt:
             runner.gaussian_factor = ckpt["gaussian_factor"]
-        runner.eval(step=ckpt["step"])
-
-        mem = torch.cuda.max_memory_allocated() / 1024**3
+        mem = runner.eval(step=ckpt["step"], return_mem=True)
 
         # save mem json
         stats = {"mem": mem}
