@@ -6,8 +6,7 @@ python simple_trainer_textured_gaussians.py mcmc \
     --scene "$1" \
     --ckpt "../results/tgss4_b2_g1999_ot01-0_ott03-0_sgc02_swc08_po_pswc08/$1/ckpts/ckpt_29999.pt" \
     --init_extent 1 \
-    --init_type=pretrained \
-    --pretrained_path "../results/2dgss_g1999_oquad1-1000_swc08/$1/ckpts/ckpt_29999.pt" \
+    --init_type=random \
     --result_dir_suffix "po_pswc08" \
     --background_mode "white" \
     --model_type=tgss \
