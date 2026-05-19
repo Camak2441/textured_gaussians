@@ -1,1 +1,1 @@
-bash train/run_mip_nerf_360.sh "eval/2dgs/g9833.sh"
+bash train/run_mip_nerf_360.sh "eval/2dgss/g9833.sh"

@@ -9,8 +9,12 @@ python simple_trainer_textured_gaussians.py mcmc \
     --init_type=random \
     --background_mode "white" \
     --model_type=2dgss \
-    --init_num_pts=2000 \
-    --strategy.cap-max=2000 \
+    --sigmoid_factor=c08 \
+    --init_num_pts=1966 \
+    --strategy.cap-max=1966 \
+    --opac_loss \
+    --opac_loss_fn="quad1" \
+    --opac_loss_start_iter 1000 \
     --alpha_loss \
     --dist_loss \
     --normal_loss \
