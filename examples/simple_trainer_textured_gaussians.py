@@ -2137,7 +2137,6 @@ class Runner:
             )
 
             # write distortions
-
             render_dist = render_distort
             dist_max = torch.max(render_dist)
             dist_min = torch.min(render_dist)

@@ -6,6 +6,7 @@ python image_grid.py \
     --models gt tgs_b2_ta_t6 dtgs3_b2_ta_t8 \
     --col_labels "gt=Ground Truth" "tgs_b2_ta_t6=TGS" "dtgs3_b2_ta_t8=DTGS" \
     --scenes chair ficus lego mic \
+    --val_ordering original \
     --val_nums 99 59 6 5 \
     --row_labels "chair,99=Chair" "ficus,59=Ficus" "lego,6=Lego" "mic,5=Mic" \
     --zoom "chair,99,*,150,50,625,750" \

@@ -1,0 +1,18 @@
+#!/usr/bin/bash
+
+cd ../examples
+export CUDA_VISIBLE_DEVICES=${2:-0}
+python simple_trainer_textured_gaussians.py mcmc \
+    --scene "$1" \
+    --init_extent 1 \
+    --init_type=sfm \
+    --background_mode "white" \
+    --model_type=2dgs \
+    --init_num_pts=10000 \
+    --strategy.cap-max=10000 \
+    --alpha_loss \
+    --normal_loss \
+    --opac_loss \
+    --opac_loss_fn="quad1" \
+    --opac_loss_start_iter 1000 \
+    --port 6070

@@ -4,9 +4,10 @@ python image_grid.py \
     --dpi 900 --cell_gap 0 --font_size 9 --inset_rect \
     --border_lw 0.6 --rect_lw 0.4 \
     --models gt tgs_psfm tgs_b2_psfm tgss4_b2_g9999_ot01-0_ott03-0_sgc02_swc08_psfm_po_pswc08 \
-    --col_labels "gt=Ground Truth" "tgs_psfm=TGS" "tgs_b2_psfm=TGS w/ TexGrad" "tgss4_b2_g9999_ot01-0_ott03-0_sgc02_swc08_psfm_po_pswc08=TGSS" \
+    --col_labels "gt=Ground Truth" "tgs_psfm=TGS" "tgs_b2_psfm=TGS w/ TexGrad" "tgss4_b2_g9999_ot01-0_ott03-0_sgc02_swc08_psfm_po_pswc08=TG-SS" \
     --scenes bonsai counter garden room chair drums lego mic ship \
     --val_nums 5 9 1 29 12 3 5 3 5 \
+    --val_ordering original \
     --row_labels "bonsai,5=Bonsai" "counter,9=Counter" "garden,1=Garden" "room,29=Room" \
     "chair,12=Chair" "drums,3=Drums" "lego,5=Lego" "mic,3=Mic" "ship,5=Ship" \
     --row_models "chair,12,gt,tgs_g2000,tgs_b2_g2000,tgss4_b2_g1999_ot01-0_ott03-0_sgc02_swc08_po_pswc08" \

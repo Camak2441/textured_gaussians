@@ -46,7 +46,9 @@ Examples
 """
 
 import argparse
+import hashlib
 import io
+import json
 import re
 import zipfile
 from pathlib import Path
@@ -63,6 +65,7 @@ matplotlib.rcParams["font.family"] = "STIXGeneral"
 
 RESULTS_DIR = Path(__file__).parent.parent / "results"
 DATA_DIR = Path(__file__).parent.parent / "data"
+_VAL_ORDER_CACHE_DIR = DATA_DIR / "cache" / "val_order"
 
 # Pixel gap between main image and each inset panel (in source-image pixel units).
 # This gap is reserved in the column-width budget so layout is correct.
@@ -72,6 +75,37 @@ _RECT_COLOR_DEFAULT = "red"
 # Line width (pts) for inset spine borders and indicate_inset rectangles
 _BORDER_LW = 0.8
 _RECT_LW = 1.0
+
+
+# ---------------------------------------------------------------------------
+# Val sort order helpers
+# ---------------------------------------------------------------------------
+
+
+def _val_order_cache_path(scene_dir: Path, split_id: str) -> Path:
+    params = {"data_dir": str(scene_dir.resolve()), "split_id": split_id}
+    key = hashlib.sha256(json.dumps(params, sort_keys=True).encode()).hexdigest()[:12]
+    return _VAL_ORDER_CACHE_DIR / f"{scene_dir.name}_{key}.npy"
+
+
+def _load_val_inv_order_for_scene(
+    scene: str, data_dir: Path, test_every: int
+) -> "np.ndarray | None":
+    """Return inverse val sort order (original_idx → render_idx) for a scene, or None."""
+    candidates = [
+        (data_dir / "nerf_synthetic" / scene, "blender_val"),
+        (data_dir / "mip_nerf_360" / scene, str(test_every)),
+    ]
+    for scene_dir, split_id in candidates:
+        if not scene_dir.exists():
+            continue
+        cache = _val_order_cache_path(scene_dir, split_id)
+        if cache.exists():
+            order = np.load(cache)
+            inv = np.empty(len(order), dtype=order.dtype)
+            inv[order] = np.arange(len(order), dtype=order.dtype)
+            return inv
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -400,8 +434,12 @@ def get_image(
     gt_source: str,
     data_dir: Path,
     gt_fallback_model: str | None,
+    zip_val_num: int | None = None,
 ) -> np.ndarray | None:
-    filename = f"val_{val_num:04d}.png"
+    # zip_val_num is the sort-order index used to name val_XXXX.png files.
+    # val_num is the original dataset index used for --gt_source=dataset lookups.
+    actual_zip_num = zip_val_num if zip_val_num is not None else val_num
+    filename = f"val_{actual_zip_num:04d}.png"
 
     if model == "gt":
         if gt_source == "dataset":
@@ -467,6 +505,7 @@ def make_grid(
     title: str | None = None,
     dpi: int = 150,
     output: str | None = None,
+    val_order_maps: "dict[str, np.ndarray] | None" = None,
 ) -> None:
     rows = list(zip(scenes, val_nums))
 
@@ -479,6 +518,16 @@ def make_grid(
     # cell_data[r][c] = (base_img | None, zoom, left_insets, right_insets)
     cell_data: list[list] = []
     for r, (scene, val_num) in enumerate(rows):
+        zip_val_num = val_num
+        if val_order_maps and scene in val_order_maps:
+            inv = val_order_maps[scene]
+            if val_num < len(inv):
+                zip_val_num = int(inv[val_num])
+            else:
+                print(
+                    f"Warning: original val_num {val_num} out of range for '{scene}' "
+                    f"(N={len(inv)}), using val_num as sort-order index"
+                )
         fetch_models = (row_model_overrides or {}).get((scene, val_num), models)
         gt_fallback = next((m for m in fetch_models if m != "gt"), None)
         row_data = []
@@ -493,6 +542,7 @@ def make_grid(
                 gt_source,
                 data_dir,
                 gt_fallback,
+                zip_val_num=zip_val_num,
             )
             if base is not None:
                 base = apply_white_bg(base)
@@ -679,6 +729,27 @@ def main() -> None:
         default=[0],
         metavar="N",
         help="Validation frame indices (default: 0).",
+    )
+    parser.add_argument(
+        "--val_ordering",
+        choices=["sorted", "original"],
+        default="sorted",
+        help=(
+            '"sorted" (default): val_nums are sort-order indices matching val_XXXX.png filenames. '
+            '"original": val_nums are original dataset val indices; the cached sort order is used '
+            "to map them to the correct val_XXXX.png files. "
+            "Use print_val_order.py to inspect the mapping."
+        ),
+    )
+    parser.add_argument(
+        "--test_every",
+        type=int,
+        default=8,
+        metavar="N",
+        help=(
+            "test_every value used during training for COLMAP/mip_nerf_360 scenes (default: 8). "
+            "Only needed when --val_ordering=original to locate the val sort order cache."
+        ),
     )
     parser.add_argument(
         "--step",
@@ -879,6 +950,19 @@ def main() -> None:
     zoom_specs = [_parse_zoom(s) for s in args.zoom]
     inset_specs = [_parse_inset(s) for s in args.inset]
 
+    val_order_maps: dict[str, np.ndarray] | None = None
+    if args.val_ordering == "original":
+        val_order_maps = {}
+        for scene in args.scenes:
+            inv = _load_val_inv_order_for_scene(scene, Path(args.data_dir), args.test_every)
+            if inv is not None:
+                val_order_maps[scene] = inv
+            else:
+                print(
+                    f"Warning: no val sort order cache found for scene '{scene}' under "
+                    f"{args.data_dir!r}; val_nums will be used as sort-order indices."
+                )
+
     make_grid(
         models=args.models,
         scenes=args.scenes,
@@ -904,6 +988,7 @@ def main() -> None:
         title=args.title,
         dpi=args.dpi,
         output=args.output,
+        val_order_maps=val_order_maps,
     )
 
 
