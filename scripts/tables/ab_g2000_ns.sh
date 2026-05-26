@@ -3,7 +3,12 @@ python compile_latex_table.py \
     --cell-highlights "color_hla" "color_hlb" \
     --metrics psnr ssim lpips cvvdp \
     --metric-sep 1em \
-    --models tgs_g2000_to0_tgs_b2_g2000_abp aniso_bilinear_tgs_g2000_to0_tgs_b2_g2000_abp \
+    --value-sep 0.2em \
+    --models tgs_g2000_to0_tgs_b2_g2000_abp mip_tgs_g2000_to0_tgs_b2_g2000_abp aniso_bilinear_tgs_g2000_to0_tgs_b2_g2000_abp \
+    --model-names \
+    tgs_g2000_to0_tgs_b2_g2000_abp=Bilin \
+    mip_tgs_g2000_to0_tgs_b2_g2000_abp=Mip \
+    aniso_bilinear_tgs_g2000_to0_tgs_b2_g2000_abp=Aniso \
     --smaller-models 1 \
     --datasets ns
     

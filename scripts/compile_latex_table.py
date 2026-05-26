@@ -46,6 +46,15 @@ def get_font_size_index(size: str | int) -> int:
     return LATEX_FONT_SIZES.index(size)
 
 
+DEFAULT_VALUES = {
+    "tex_grad": False,
+    "opac_loss": False,
+    "splats": 10000,
+    "init": "Random",
+    "tex_size": None,
+}
+
+
 MODEL_NAMES = {
     "2dgs": {
         "base": "2DGS",
@@ -54,9 +63,25 @@ MODEL_NAMES = {
         "init": "Random",
         "tex_size": None,
     },
+    "2dgs_oquad1-1000": {
+        "base": "2DGS",
+        "tex_grad": False,
+        "opac_loss": True,
+        "splats": 10000,
+        "init": "Random",
+        "tex_size": None,
+    },
     "2dgs_g2000": {
         "base": "2DG-SS",
         "tex_grad": False,
+        "splats": 2000,
+        "init": "Random",
+        "tex_size": None,
+    },
+    "2dgs_g2000_oquad1-1000": {
+        "base": "2DG-SS",
+        "tex_grad": False,
+        "opac_loss": True,
         "splats": 2000,
         "init": "Random",
         "tex_size": None,
@@ -106,6 +131,14 @@ MODEL_NAMES = {
     "2dgs_sfm": {
         "base": "2DGS",
         "tex_grad": False,
+        "splats": 10000,
+        "init": "SfM",
+        "tex_size": None,
+    },
+    "2dgs_sfm_oquad1-1000": {
+        "base": "2DGS",
+        "tex_grad": False,
+        "opac_loss": True,
         "splats": 10000,
         "init": "SfM",
         "tex_size": None,
@@ -187,6 +220,14 @@ MODEL_NAMES = {
         "init": "SfM",
         "tex_size": 64,
     },
+    "tgs_b2_psfm_poquad1": {
+        "base": "TGS",
+        "opac_loss": True,
+        "tex_grad": True,
+        "splats": 10000,
+        "init": "SfM",
+        "tex_size": 64,
+    },
     "tgss4_b2_g9999_ot01-0_ott03-0_sgc02_swc08_psfm_po_pswc08": {
         "base": "TG-SS",
         "tex_grad": False,
@@ -205,7 +246,21 @@ MODEL_NAMES = {
         "base": "BilinearTGS",
         "tex_grad": False,
         "splats": 10000,
+        "init": "SfM",
+        "tex_size": 64,
+    },
+    "mip_tgs_g2000_to0_tgs_b2_g2000_abp": {
+        "base": "MipTGS",
+        "tex_grad": False,
+        "splats": 2000,
         "init": "Random",
+        "tex_size": 64,
+    },
+    "mip_tgs_to0_tgs_b2_psfm_abp": {
+        "base": "MipTGS",
+        "tex_grad": False,
+        "splats": 10000,
+        "init": "SfM",
         "tex_size": 64,
     },
     "aniso_bilinear_tgs_g2000_to0_tgs_b2_g2000_abp": {
@@ -219,7 +274,7 @@ MODEL_NAMES = {
         "base": "AnisoTGS",
         "tex_grad": False,
         "splats": 10000,
-        "init": "Random",
+        "init": "SfM",
         "tex_size": 64,
     },
     "tgs_b2_ta_t6": {
@@ -244,7 +299,7 @@ import argparse, json, os, glob, re
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "..", "results")
 
 # Fields that can be used in --model-params / --group-params / --group-by
-ANNOTATABLE_PARAMS = ["tex_grad", "splats", "init"]
+ANNOTATABLE_PARAMS = ["tex_grad", "opac_loss", "splats", "init"]
 
 
 def _step_number(path):
@@ -475,7 +530,9 @@ PARAM_LABELS = {
 def _short_param_value(param, value):
     """Short value string for group header labels (no redundant unit)."""
     if param == "tex_grad":
-        return r"$\partial$" if value else r"w/o"
+        return r"$\partial$" if value else r"w/o $\partial$"
+    if param == "opac_loss":
+        return r"$\lopac$" if value else r"w/o $\lopac$"
     elif param == "splats":
         return str(value)
     return str(value)
@@ -512,12 +569,15 @@ def get_model_display_name(model_key, model_params=None, model_name_overrides=No
     bracket_parts = []
     if model_params:
         for p in model_params:
-            val = info.get(p)
+            val = info.get(p, DEFAULT_VALUES[p])
             if val is None:
                 continue
             if p == "tex_grad":
                 if val:
                     name += r"$\partial$"
+            elif p == "opac_loss":
+                if val:
+                    name += r"$\lopac$"
             else:
                 bracket_parts.append(_format_param_value(p, val))
     if bracket_parts:
@@ -680,6 +740,7 @@ def build_table(
     group_params=None,
     rotate_models=False,
     metric_vlines=False,
+    value_sep=None,
     metric_sep=None,
     cell_highlights=None,
     group_left_label="",
@@ -716,6 +777,7 @@ def build_table(
     all_models = [m for _, gm in resolved_groups for m in gm]
 
     font_size_index = get_font_size_index(font_size)
+    font_size = LATEX_FONT_SIZES[font_size_index]
     model_font_size = LATEX_FONT_SIZES[max(0, font_size_index - smaller_models)]
     metric_font_size = LATEX_FONT_SIZES[max(0, font_size_index - smaller_metrics)]
 
@@ -752,6 +814,9 @@ def build_table(
         # sep between metric blocks only (not before the first)
         col_spec = "l" + metric_block + (sep + metric_block) * (n_metrics - 1)
     lines = []
+    lines.append(rf"\{font_size}")
+    if value_sep is not None:
+        lines.append(rf"\setlength{{\tabcolsep}}{{{value_sep}}}")
     lines.append(r"\begin{tabular}{" + col_spec + "}")
     lines.append(r"\toprule")
 
@@ -890,8 +955,10 @@ def build_table(
             lines.append(avg_row(name, total_agg, cell_highlights))
         elif scene.startswith("rename_to_"):
             rename_next = scene[len("rename_to_") :]
+        elif scene == "remove_prev":
+            lines.pop()
         else:
-            name = rename_next or scene.capitalize().replace("_", r"\_")
+            name = rename_next or r"\ "[0] + scene.capitalize().replace("_", r"\_")
             rename_next = None
             row = name
             for mkey in metrics:
@@ -953,10 +1020,59 @@ DATASETS = {
         "rename_to_Overall",
         "total_average",
     ],
+    "mip_nerf_360_ave": [
+        "bonsai",
+        "remove_prev",
+        "counter",
+        "remove_prev",
+        "kitchen",
+        "remove_prev",
+        "room",
+        "remove_prev",
+        "rename_to_Indoor",
+        "average",
+        "bicycle",
+        "remove_prev",
+        "flowers",
+        "remove_prev",
+        "garden",
+        "remove_prev",
+        "stump",
+        "remove_prev",
+        "treehill",
+        "remove_prev",
+        "rename_to_Outdoor",
+        "average",
+        "midline",
+        "rename_to_Overall",
+        "total_average",
+    ],
+    "nerf_synthetic_ave": [
+        "chair",
+        "remove_prev",
+        "drums",
+        "remove_prev",
+        "ficus",
+        "remove_prev",
+        "hotdog",
+        "remove_prev",
+        "lego",
+        "remove_prev",
+        "materials",
+        "remove_prev",
+        "mic",
+        "remove_prev",
+        "ship",
+        "remove_prev",
+        "rename_to_Overall",
+        "total_average",
+    ],
 }
 
 DATASETS["mn360"] = DATASETS["mip_nerf_360"]
 DATASETS["ns"] = DATASETS["nerf_synthetic"]
+DATASETS["mn360a"] = DATASETS["mip_nerf_360_ave"]
+DATASETS["nsa"] = DATASETS["nerf_synthetic_ave"]
 
 
 def _parse_group(s):
@@ -1118,6 +1234,16 @@ def main():
         help="Add vertical lines between metric groups in the column spec",
     )
     parser.add_argument(
+        "--value-sep",
+        "-vs",
+        default=None,
+        metavar="LENGTH",
+        help=(
+            "Horizontal space between values (base column separation), as a LaTeX length. "
+            "Example: --value-sep 6pt  or  -value-sep 1em"
+        ),
+    )
+    parser.add_argument(
         "--metric-sep",
         "-ms",
         default=None,
@@ -1200,6 +1326,7 @@ def main():
         rotate_models=args.rotate_models,
         metric_vlines=args.metric_vlines,
         metric_sep=args.metric_sep,
+        value_sep=args.value_sep,
         cell_highlights=args.cell_highlights,
         group_left_label=group_left_label,
         model_name_overrides=model_name_overrides,

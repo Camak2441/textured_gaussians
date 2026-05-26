@@ -1,0 +1,1 @@
+bash train/run_mip_nerf_360.sh "eval/tgs/bwd2_g2000_poquad1.sh"

@@ -195,7 +195,7 @@ def create_splats_with_optimizers(
             steepnesses = ckpt["steepnesses"][sampled_pts_idx]
         else:
             N = scales.shape[0]
-            steepnesses = torch.full((N,), 1.0)
+            steepnesses = torch.full((N,), cfg.init_steepnesses)
         params.append(("steepnesses", torch.nn.Parameter(steepnesses), 1e-3))
 
     if getattr(cfg, "freq_guidance_orient", False):
@@ -1837,9 +1837,19 @@ class Runner:
 
             # optimize
             if self.cfg.freeze_geometry is None or step < self.cfg.freeze_geometry:
-                for optimizer in self.optimizers.values():
-                    optimizer.step()
-                    optimizer.zero_grad(set_to_none=True)
+                for param in self.optimizers:
+                    if param == "steepnesses":
+                        if (
+                            self.cfg.freeze_steepnesses is None
+                            or step < self.cfg.freeze_steepnesses
+                        ):
+                            optimizer = self.optimizers[param]
+                            optimizer.step()
+                            optimizer.zero_grad(set_to_none=True)
+                    else:
+                        optimizer = self.optimizers[param]
+                        optimizer.step()
+                        optimizer.zero_grad(set_to_none=True)
             else:
                 for opt_key in [
                     "opacities",

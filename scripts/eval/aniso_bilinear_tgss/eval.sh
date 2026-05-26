@@ -1,0 +1,4 @@
+#!/usr/bin/bash
+
+bash eval/aniso_bilinear_tgss/g1999_post_static_tgss_nerf_synthetic.sh
+bash eval/aniso_bilinear_tgss/g9999_post_static_tgss_psfm_mip_nerf_360.sh

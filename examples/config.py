@@ -58,6 +58,7 @@ class Config:
     save_steps: list[int] | None = None
     save_every: int | None = 500
     freeze_geometry: int | None = None
+    freeze_steepnesses: int | None = None
     # Steps to save the model textures
     render_traj_steps: list[int] = field(
         default_factory=lambda: [
@@ -100,6 +101,8 @@ class Config:
     init_opa: float = 0.1
     # Initial scale of GS
     init_scale: float = 1.0
+    # Initial steepness of GS
+    init_steepnesses: float = 1.0
     # Weight for SSIM loss
     ssim_lambda: float = 0.2
 
@@ -303,6 +306,8 @@ class Config:
             self.save_steps = [int(i * factor) for i in self.save_steps]
         if self.freeze_geometry != None:
             self.freeze_geometry = int(self.freeze_geometry * factor)
+        if self.freeze_steepnesses != None:
+            self.freeze_steepnesses = int(self.freeze_steepnesses * factor)
         self.render_traj_steps = [int(i * factor) for i in self.render_traj_steps]
         self.render_texture_steps = [int(i * factor) for i in self.render_texture_steps]
         self.max_steps = int(self.max_steps * factor)

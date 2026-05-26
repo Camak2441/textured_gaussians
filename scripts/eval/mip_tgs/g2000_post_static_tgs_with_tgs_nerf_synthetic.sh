@@ -1,0 +1,1 @@
+bash train/run_nerf_synthetic.sh "eval/mip_tgs/g2000_post_static_tgs_with_tgs.sh"

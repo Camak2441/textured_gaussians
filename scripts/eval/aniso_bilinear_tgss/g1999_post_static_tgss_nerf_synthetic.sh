@@ -1,0 +1,1 @@
+bash train/run_nerf_synthetic.sh "eval/aniso_bilinear_tgss/g1999_post_static_tgss.sh"

@@ -1,10 +1,12 @@
 python compile_latex_table.py \
-    --font-size footnotesize \
+    --font-size scriptsize \
     --cell-highlights "color_hla" "color_hlb" \
     --metrics psnr ssim lpips cvvdp \
     --metric-sep 1em \
-    --models tgs_psfm tgs_b2_psfm tgss4_b2_g9999_ot01-0_ott03-0_sgc02_swc08_psfm_po_pswc08 \
-    --model-params tex_grad \
+    --value-sep 0.2em \
+    --models tgs_psfm tgs_b2_psfm tgs_b2_psfm_poquad1 tgss4_b2_g9999_ot01-0_ott03-0_sgc02_swc08_psfm_po_pswc08 \
+    --model-params tex_grad opac_loss \
+    --model-names tgs_psfm=GS 'tgs_b2_psfm=GS$\partial$' 'tgs_b2_psfm_poquad1=GS$\lopac$' 'tgss4_b2_g9999_ot01-0_ott03-0_sgc02_swc08_psfm_po_pswc08=G-SS' \
     --smaller-models \
     --datasets mn360
     
