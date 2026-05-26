@@ -21,6 +21,8 @@ The code was tested on:
 - **Python Version**: 3.12.7
 - **Torch Version**: 2.9.1
 
+If you are running this project on a fresh Ubuntu 22.04 VM, then you can run `setup_scripts/setup_blank_ubuntun_vm.sh` to complete much of the installation process of installing CUDA and miniconda. 
+
 Clone this repository and install the Textured Gaussians codebase by running:
 ```bash
 git clone https://github.com/Camak2441/textured_gaussians --recursive
