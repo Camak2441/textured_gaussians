@@ -629,8 +629,8 @@ namespace gsplat
                         const S d_bw_dv[4] = {-(S(1) - w_u), -w_u, (S(1) - w_u), w_u};
 
                         // d(u)/d(s.x) and d(v)/d(s.y) from the bilinear::precompute mapping
-                        const S du_dsx = S(texture_res_x - 1) / (texture_range.x);
-                        const S dv_dsy = S(texture_res_y - 1) / (texture_range.y);
+                        const S du_dsx = S(texture_res_x - 1) / (texture_range.x * 2);
+                        const S dv_dsy = S(texture_res_y - 1) / (texture_range.y * 2);
 
                         vec2<S> v_s_tex = {S(0), S(0)};
 
