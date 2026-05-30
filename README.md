@@ -30,7 +30,10 @@ cd textured-gaussians
 ```
 
 There is no need to use --recursive if you already have GLM correctly installed. 
-
+Alternatively, if you already have the codebase, and need to pull in GLM, run
+```bash
+git submodule update --init
+```
 
 To create a conda environment with the same dependencies as the codebase, please run:
 ```bash
