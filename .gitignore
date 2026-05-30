@@ -33,6 +33,9 @@ build/
 .DS_Store
 Thumbs.db
 
+# WSL files
+*Zone.Identifier
+
 # Existing project folders
 results/
 temp/
