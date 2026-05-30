@@ -21,11 +21,11 @@ The code was tested on:
 - **Python Version**: 3.12.7
 - **Torch Version**: 2.9.1
 
-If you are running this project on a fresh Ubuntu 22.04 VM, then you can run `setup_scripts/setup_blank_ubuntun_vm.sh` to complete much of the installation process of installing CUDA and miniconda. 
+If you are running this project on a fresh Ubuntu 22.04 VM, then you can run `setup_scripts/setup_blank_ubuntu_vm.sh` to complete much of the installation process of installing CUDA and miniconda. 
 
 Clone this repository and install the Textured Gaussians codebase by running:
 ```bash
-git clone https://github.com/Camak2441/textured_gaussians --recursive
+git clone --recursive https://github.com/Camak2441/textured_gaussians
 cd textured-gaussians
 ```
 
@@ -47,6 +47,12 @@ conda activate textured_gaussians
 python -m pip install -e . # install in editable mode for development
 ```
 
+You also need to create a `cfg.yml` in the root directory. It contains:
+- data_dir: The path to your datasets
+- results_dir: The path to your results folder
+- cuda_path: The path to where your cuda install is located
+- max_jobs: The default MAX_JOBS you want to use (optional)
+
 
 ## Datasets
 
@@ -58,10 +64,47 @@ python -m pip install -e . # install in editable mode for development
 
 Textured Gaussians are optimized in two stages: the 2DGS pre-training stage and the Textured Gaussians refinement stage. 
 
-Please refer to the `scripts/` folder for examples on how to run the code. The default trainer Python script is `examples/simple_trainer_textured_gaussians.py` that supports both 2DGS and Textured Gaussians optimization. The script also automatically computes the image quality metrics (PSNR, SSIM, LPIPS, CVVDP) and saves them to a json file.
+For example, to run the 2dgs model on the scene chair, run in `examples/`
+```bash
+python simple_trainer_textured_gaussians.py mcmc \
+    --scene chair \
+    --init_extent 1 \
+    --init_type=random \
+    --background_mode "white" \
+    --model_type=2dgs \
+    --init_num_pts=10000 \
+    --strategy.cap-max=10000 \
+    --alpha_loss \
+    --dist_loss \
+    --normal_loss \
+    --steps_scaler=1 \
+    --port 6070
+```
+
+Then to train the textures, run
+```bash
+python simple_trainer_textured_gaussians.py mcmc \
+    --scene chair \
+    --init_extent 1 \
+    --init_type=pretrained \
+    --background_mode "white" \
+    --model_type=tgs \
+    --init_num_pts=10000 \
+    --strategy.cap-max=10000 \
+    --strategy.refine-start-iter=1000000000000 \
+    --alpha_loss \
+    --dist_loss \
+    --normal_loss \
+    --textured_rgb \
+    --textured_alpha \
+    --resume \
+    --port 6070
+
+```
+
+Please refer to the `scripts/` folder for further examples on how to run the code. The trainer Python script is `examples/simple_trainer_textured_gaussians.py` that supports both 2DGS and Textured Gaussians optimization. The script also automatically computes the image quality metrics (PSNR, SSIM, LPIPS, CVVDP) and saves them to a json file.
 
 
 ## License
 
 This codebase is Apache 2.0 licensed. Please refer to the [LICENSE](LICENSE) file for more details.
-
