@@ -10,7 +10,9 @@ python image_grid.py \
     --col_labels "gt=Ground Truth" \
     "2dgs_g2000=2DGS 2k" "2dgs_g2000_oquad1-1000=2DGS 2k w/ OpacLoss" "2dgss_g1966_oquad1-1000_swc08=2DG-SS 2k" \
     "2dgs=2DGS 10k" "2dgs_oquad1-1000=2DGS 10k w/ OpacLoss" "2dgss_g9833_oquad1-1000_swc08=2DG-SS 10k" \
-    --scenes lego lego lego lego lego \
-    --val_nums 45 46 47 48 49 \
+    --scenes ship \
+    --val_nums 44 \
     --val_ordering original \
+    --zoom "ship,44,*,50,125,775,800" \
+    --inset "ship,44,*,300,200,600,600,right,1.0" \
     --output ../results/images/2dgs_ns_test.png
