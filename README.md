@@ -26,7 +26,7 @@ If you are running this project on a fresh Ubuntu 22.04 VM, then you can run `se
 Clone this repository and install the Textured Gaussians codebase by running:
 ```bash
 git clone --recursive https://github.com/Camak2441/textured_gaussians
-cd textured-gaussians
+cd textured_gaussians
 ```
 
 There is no need to use --recursive if you already have GLM correctly installed. 
@@ -46,6 +46,11 @@ conda create -n textured_gaussians python=3.12.7
 conda activate textured_gaussians
 ```
 
+Then install the required pip dependencies:
+```bash
+pip install requirements.txt
+```
+
 ```bash
 python -m pip install -e . # install in editable mode for development
 ```
@@ -55,6 +60,8 @@ You also need to create a `cfg.yml` in the root directory. It contains:
 - results_dir: The path to your results folder
 - cuda_path: The path to where your cuda install is located
 - max_jobs: The default MAX_JOBS you want to use (optional)
+
+An example of such a file is `cfg_example.yml`.
 
 
 ## Datasets

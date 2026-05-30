@@ -1,0 +1,4 @@
+data_dir: "../data"
+results_dir: "../results"
+cuda_path: "/usr/local/cuda-12.8"
+max_jobs: 5
