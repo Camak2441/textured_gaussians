@@ -247,7 +247,12 @@ class Config:
     world_sample_normalisation: Literal[
         "none", "unit_sphere", "unit_sphere_strict", "bbox"
     ] = "none"
+
+    # Factors for base color strength
     base_color_factor: str | None = None
+
+    # Factors for the Gaussian-sigmoid kernel
+    # And for the kernel strength for textured splatting
     sigmoid_factor: str | None = None
     gaussian_factor: str | None = None
 
@@ -266,21 +271,28 @@ class Config:
 
     # textured gaussians
     texture_resolution: int = 64
+    # Set this for anisotropic textures
     texture_height: int | None = None
+    # How the range of the texture is mapped to the splat
     texture_range: float | None = None
     texture_range_height: float | None = None
+    # How sample textures should be saved
     saved_texture_resolution: int | None = None
     saved_texture_width: int | None = None
     saved_texture_height: int | None = None
+    # Which channels to use, and how to clamp them
     textured_rgb: bool = False
     textured_rgb_clamp: Literal["none", "normalize", "clamp", "sigmoid"] = "clamp"
     textured_alpha: bool = False
     textured_alpha_clamp: Literal["none", "normalize", "clamp", "sigmoid"] = "normalize"
 
+    # For texture resizing training
     texture_resize_steps: list[int] | None = None
     texture_resize_values: list[int] | None = None
     texture_resize_heights: list[int] | None = None
 
+    # Texture filtering to use
+    # bwd2 propagates the gradient from sampling the texture to the splat pose
     filtering: Literal[
         "bilinear",
         "bilinear_bwd2",

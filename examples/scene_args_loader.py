@@ -17,6 +17,7 @@ _PATHS_FILE = os.path.join(os.path.dirname(__file__), "..", "cfg.yml")
 _PATHS_FILE = os.path.normpath(_PATHS_FILE)
 
 
+# Get the config file for the key paths
 def _load_paths():
     if os.path.exists(_PATHS_FILE):
         with open(_PATHS_FILE) as f:
@@ -122,6 +123,7 @@ LOSS_SHORTHANDS = {
     "hquad09": """HalfQuadratic(valley=0.9)""",
 }
 
+# Dataset parameter settings
 NERF_SYNTHETIC = {
     "data_dir": "nerf_synthetic/{path_name}",
     "pretrained_dir": "2dgs/{name}/ckpts",
@@ -145,6 +147,7 @@ MIP_NERF_360 = {
 }
 
 
+# Create dataset parameters
 def make_args(base: dict[str, any], name: str, path_name: str | None = None):
     if path_name is None:
         path_name = name
@@ -155,6 +158,7 @@ def make_args(base: dict[str, any], name: str, path_name: str | None = None):
     return args
 
 
+# The scenes that the args loader recognises
 SCENES = {
     **{
         name: make_args(NERF_SYNTHETIC, name)
@@ -197,6 +201,7 @@ SCENES = {
 }
 
 
+# Add the scene arguments (and some texture arguments) as needed
 def process_config(cfg: Config):
 
     # Load texture dimensions
@@ -204,6 +209,7 @@ def process_config(cfg: Config):
     if cfg.texture_height is None:
         cfg.texture_height = cfg.texture_resolution
 
+    # Load texture range
     if cfg.texture_range == None:
         match cfg.model_type:
             case "tgs":
@@ -258,6 +264,7 @@ def process_config(cfg: Config):
         scene_args = SCENES[cfg.scene]
         cfg.data_dir = _DATA_DIR + "/" + scene_args["data_dir"]
 
+        # Create results directory
         args = []
 
         def create_args_suffix():
@@ -417,10 +424,12 @@ def process_config(cfg: Config):
 
         cfg.dataset_type = scene_args["dataset_type"]
 
+        # Disable alpha loss if dataset images do not have alpha channel
         if cfg.alpha_loss and not scene_args["alpha"]:
             print("Dataset does not have alpha channels. Disabling alpha loss.")
             cfg.alpha_loss = False
 
+        # Use the default pretrained checkpoint
         if cfg.pretrained_path is None and cfg.init_type == "pretrained":
             pretrained_dir = f"{_RESULTS_DIR}/{scene_args["pretrained_dir"]}"
             _, ckpt_path = get_file_with_max_int(pretrained_dir, "ckpt_", ".pt")
@@ -430,6 +439,7 @@ def process_config(cfg: Config):
             else:
                 cfg.pretrained_path = f"{pretrained_dir}/{ckpt_path}"
 
+    # Get the latest stored checkpoint to resume
     if cfg.resume:
         ckpt_dir = cfg.result_dir + "/ckpts"
         os.makedirs(cfg.result_dir, exist_ok=True)
@@ -448,6 +458,7 @@ def process_config(cfg: Config):
                     f"{ckpt_dir}/train_state_{start}.pt",
                 )
 
+    # Load texture model
     if cfg.texture_model is not None:
         if cfg.texture_model in MODEL_SHORTHANDS:
             if cfg.texture_batch_size == 0:
@@ -478,6 +489,7 @@ def process_config(cfg: Config):
             if sample_norm is not None:
                 cfg.world_sample_normalisation = sample_norm
 
+    # Load factors
     if cfg.base_color_factor is not None:
         if cfg.base_color_factor in FACTOR_SHORTHANDS:
             cfg.base_color_factor = canonical_factor_name(

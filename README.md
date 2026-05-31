@@ -71,6 +71,7 @@ An example of such a file is `cfg_example.yml`.
 
 - You can download the NeRF synthetic dataset [here](https://drive.google.com/file/d/1OsiBs2udl32-1CqTXCitmov4NQCYdA9g/view?usp=share_link) and the Mip-NeRF 360 dataset [here](https://jonbarron.info/mipnerf360/).
 - Custom data loaders that support NeRF synthetic dataset and COLMAP dataset formats are defined in `examples/datasets/`. You can easily extend the code to support your own dataset. 
+- To correctly support loading relevant arguments with the scene only, update `examples/scene_args_loader.py`. 
 
 
 ## Optimization
