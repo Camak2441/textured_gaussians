@@ -2,6 +2,7 @@
 
 python image_grid.py \
     --dpi 150 --cell_gap 0 --font_size 9 --inset_rect \
+    --fig_width 100 \
     --border_lw 0.6 --rect_lw 0.4 \
     --models gt tgs_psfm tgss4_b2_g9999_sgc02_swc08_psfm_po_pswc08 \
     --col_labels "gt=Ground Truth" "tgs_psfm=TGS (Base)" "tgss4_b2_g9999_sgc02_swc08_psfm_po_pswc08=TG-SS (Ours)" \
