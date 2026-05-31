@@ -1,5 +1,6 @@
+<h1 align="center"> Textured Gaussian-Sigmoid Splatting </h1>
 
-## Textured Gaussian-Sigmoid Splatting
+![teaser](assets/teaser.png)
 
 This project extends [Textured Gaussian Splatting](https://textured-gaussians.github.io/), which itself extends [gsplat](https://github.com/nerfstudio-project/gsplat) to explore the following changes to the pipelines:
 
