@@ -29,6 +29,7 @@ def main() -> None:
     parser.add_argument(
         "--tile-res", type=int, default=64, help="pixel resolution of each tile"
     )
+    parser.add_argument("--highlight-upper", type=bool, default=False)
     parser.add_argument("--out", type=str, default="dct_basis.png")
     args = parser.parse_args()
 
@@ -36,16 +37,22 @@ def main() -> None:
     gap = 2
     canvas_w = N * res + (N + 1) * gap
     canvas_h = N * res + (N + 1) * gap
-    canvas = np.full((canvas_h, canvas_w), 0.5, dtype=np.float32)
+    canvas = np.full((canvas_h, canvas_w, 3), 0.5, dtype=np.float32)
 
     for u in range(N):
         for v in range(N):
             tile = dct_basis(u, v, N, res) / 2.0 + 0.5
             y0 = gap + u * (res + gap)
             x0 = gap + v * (res + gap)
-            canvas[y0 : y0 + res, x0 : x0 + res] = tile
 
-    img = Image.fromarray((canvas * 255).clip(0, 255).astype(np.uint8), mode="L")
+            if args.highlight_upper and u + v < N:
+                col_tile = np.stack([np.ones((res, res)), tile, tile], axis=-1)
+            else:
+                col_tile = np.tile(tile[:, :, None], 3)
+
+            canvas[y0 : y0 + res, x0 : x0 + res, :] = col_tile
+
+    img = Image.fromarray((canvas * 255).clip(0, 255).astype(np.uint8), mode="RGB")
     img.save(args.out)
     print(f"Saved {N}×{N} DCT basis grid ({canvas_w}×{canvas_h} px) → {args.out}")
 

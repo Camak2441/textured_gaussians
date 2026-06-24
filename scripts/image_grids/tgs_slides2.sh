@@ -1,0 +1,41 @@
+#!/usr/bin/bash
+
+python image_grid.py \
+    --dpi 900 --cell_gap 0 --font_size 9 --inset_rect \
+    --border_lw 0.6 --rect_lw 0.4 \
+    --models gt  tgs_b2_psfm tgs_b2_psfm_poquad1 tgss4_b2_g9999_sgc02_swc08_psfm_po_pswc08 \
+    --col_labels "gt=Ground Truth" "tgs_b2_psfm=TGS w/ TexGrad" "tgs_b2_psfm_poquad1=TGS w/ OpacLoss" "tgss4_b2_g9999_sgc02_swc08_psfm_po_pswc08=TG-SS" \
+    --scenes bonsai lego mic ship \
+    --val_nums 5 5 3 5 \
+    --val_ordering original \
+    --row_labels "bonsai,5=Bonsai" "counter,9=Counter" "garden,1=Garden" "room,29=Room" \
+    "chair,12=Chair" "drums,3=Drums" "lego,5=Lego" "mic,3=Mic" "ship,5=Ship" \
+    --row_models "chair,12,gt,tgs_b2_g2000,tgs_b2_g2000_poquad1,tgss4_b2_g1999_sgc02_swc08_po_pswc08" \
+    --row_models "drums,3,gt,tgs_b2_g2000,tgs_b2_g2000_poquad1,tgss4_b2_g1999_sgc02_swc08_po_pswc08" \
+    --row_models "lego,5,gt,tgs_b2_g2000,tgs_b2_g2000_poquad1,tgss4_b2_g1999_sgc02_swc08_po_pswc08" \
+    --row_models "mic,3,gt,tgs_b2_g2000,tgs_b2_g2000_poquad1,tgss4_b2_g1999_sgc02_swc08_po_pswc08" \
+    --row_models "ship,5,gt,tgs_b2_g2000,tgs_b2_g2000_poquad1,tgss4_b2_g1999_sgc02_swc08_po_pswc08" \
+    --inset "bonsai,5,*,200,100,300,250,left,1.0" \
+    --zoom "counter,9,*,0,0,500,1000" \
+    --inset "counter,9,*,75,250,150,390,left,1.0" \
+    --inset "counter,9,*,360,350,450,500,right,1.0" \
+    --zoom "garden,1,*,250,0,1100,750" \
+    --inset "garden,1,*,500,25,700,350,left,1.0" \
+    --inset "garden,1,*,500,400,650,700,right,1.0" \
+    --zoom "room,29,*,150,0,2000,750" \
+    --inset "room,29,*,650,100,750,300,right,1.0" \
+    --zoom "chair,12,*,150,0,650,750" \
+    --inset "chair,12,*,350,50,450,190,left,1.0" \
+    --inset "chair,12,*,350,360,450,500,right,1.0" \
+    --zoom "drums,3,*,50,50,750,750" \
+    --inset "drums,3,*,150,375,300,525,right,1.0" \
+    --zoom "lego,5,*,25,100,750,650" \
+    --inset "lego,5,*,100,250,200,550,left,1.0" \
+    --inset "lego,5,*,300,150,450,500,right,1.0" \
+    --zoom "mic,3,*,0,0,650,700" \
+    --inset "mic,3,*,500,0,600,200,left,1.0" \
+    --inset "mic,3,*,500,500,575,700,right,1.0" \
+    --zoom "ship,5,*,100,100,725,650" \
+    --inset "ship,5,*,100,250,250,550,left,1.0" \
+    --inset "ship,5,*,500,250,650,500,right,1.0" \
+    --output ../results/images/tgs_slides2.png
